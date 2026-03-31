@@ -24,7 +24,10 @@ You might build:
 - A tool that solves a real problem
 - A story, poem, or piece of creative writing
 - Data, visualizations, or analyses
+- A news digest or research report on a topic you find interesting
 - Anything else that intrigues you
+
+You also have access to the web — you can search and fetch pages to gather real information, inspiration, or data before building.
 
 Guidelines:
 - Think deeply about what you want to create BEFORE you start writing code or files.
@@ -114,6 +117,34 @@ GEMINI_TOOLS = types.Tool(
                     ),
                 },
                 required=["summary"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="search_web",
+            description="Search the web using DuckDuckGo and return relevant results for a query.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "query": types.Schema(
+                        type="STRING",
+                        description="The search query.",
+                    ),
+                },
+                required=["query"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="fetch_url",
+            description="Fetch the text content of any web page by URL.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "url": types.Schema(
+                        type="STRING",
+                        description="The full URL to fetch (e.g. 'https://example.com/article').",
+                    ),
+                },
+                required=["url"],
             ),
         ),
     ]

@@ -1,6 +1,10 @@
 import os
 import subprocess
 import json
+import re
+from html.parser import HTMLParser
+
+import httpx
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 
@@ -71,6 +75,90 @@ def run_python(filename: str) -> str:
 
 def done(summary: str) -> str:
     return f"DONE: {summary}"
+
+
+class _TextExtractor(HTMLParser):
+    """Strip HTML tags and return plain text."""
+    def __init__(self):
+        super().__init__()
+        self._parts = []
+        self._skip = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style", "nav", "header", "footer"):
+            self._skip = True
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style", "nav", "header", "footer"):
+            self._skip = False
+        if tag in ("p", "div", "br", "li", "h1", "h2", "h3", "h4", "tr"):
+            self._parts.append("\n")
+
+    def handle_data(self, data):
+        if not self._skip:
+            self._parts.append(data)
+
+    def get_text(self):
+        text = "".join(self._parts)
+        # Collapse excessive whitespace
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+
+def fetch_url(url: str) -> str:
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; PinpointBot/1.0)"}
+        resp = httpx.get(url, headers=headers, timeout=15, follow_redirects=True)
+        content_type = resp.headers.get("content-type", "")
+        if "html" in content_type:
+            parser = _TextExtractor()
+            parser.feed(resp.text)
+            text = parser.get_text()
+            # Truncate to keep response manageable
+            if len(text) > 8000:
+                text = text[:8000] + "\n\n[... truncated ...]"
+            return text
+        else:
+            return resp.text[:8000]
+    except Exception as e:
+        return f"Error fetching URL: {e}"
+
+
+def search_web(query: str) -> str:
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; PinpointBot/1.0)",
+            "Accept": "application/json",
+        }
+        params = {"q": query, "format": "json", "no_html": "1", "skip_disambig": "1"}
+        resp = httpx.get(
+            "https://api.duckduckgo.com/",
+            params=params,
+            headers=headers,
+            timeout=10,
+        )
+        data = resp.json()
+        results = []
+
+        # Abstract (best direct answer)
+        if data.get("AbstractText"):
+            results.append(f"Summary: {data['AbstractText']}")
+            if data.get("AbstractURL"):
+                results.append(f"Source: {data['AbstractURL']}")
+            results.append("")
+
+        # Related topics
+        for topic in data.get("RelatedTopics", [])[:8]:
+            if isinstance(topic, dict) and topic.get("Text"):
+                results.append(f"- {topic['Text']}")
+                if topic.get("FirstURL"):
+                    results.append(f"  URL: {topic['FirstURL']}")
+
+        if not results:
+            return f"No results found for: {query}"
+        return "\n".join(results)
+    except Exception as e:
+        return f"Error searching web: {e}"
 
 
 # Tool definitions for the Anthropic API
@@ -151,6 +239,34 @@ TOOL_DEFINITIONS = [
                 }
             },
             "required": ["summary"],
+        },
+    },
+    {
+        "name": "search_web",
+        "description": "Search the web using DuckDuckGo and return relevant results for a query.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query.",
+                }
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "fetch_url",
+        "description": "Fetch the text content of any web page by URL.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The full URL to fetch (e.g. 'https://example.com/article').",
+                }
+            },
+            "required": ["url"],
         },
     },
 ]
@@ -265,5 +381,9 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return run_python(tool_input["filename"])
     elif tool_name == "done":
         return done(tool_input["summary"])
+    elif tool_name == "search_web":
+        return search_web(tool_input["query"])
+    elif tool_name == "fetch_url":
+        return fetch_url(tool_input["url"])
     else:
         return f"Unknown tool: {tool_name}"
