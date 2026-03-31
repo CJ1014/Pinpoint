@@ -40,7 +40,14 @@ def run(logger: Optional[logging.Logger] = None) -> str:
     base_url = os.environ.get("ANTHROPIC_BASE_URL", "https://agentrouter.org/v1/")
     api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
 
-    client = OpenAI(base_url=base_url, api_key=api_key)
+    client = OpenAI(
+        base_url=base_url,
+        api_key=api_key,
+        default_headers={
+            "User-Agent": "claude-code/1.0.57",
+            "x-stainless-os": "Windows",
+        },
+    )
 
     if logger is None:
         logger = logging.getLogger("agent")
