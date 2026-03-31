@@ -7,7 +7,7 @@ from openai import OpenAI
 
 from tools import OPENAI_TOOL_DEFINITIONS, dispatch
 
-MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-6")
+MODEL = os.environ.get("ANTHROPIC_MODEL", "anthropic/claude-opus-4-5")
 MAX_ITERATIONS = 50
 
 SYSTEM_PROMPT = """You are a fully autonomous AI with complete creative freedom.
