@@ -66,7 +66,7 @@ def run(logger: Optional[logging.Logger] = None) -> str:
             model=MODEL,
             max_tokens=16000,
             thinking={
-                "type": "enabled",
+                "type": "adaptive",
                 "budget_tokens": THINKING_BUDGET,
             },
             system=SYSTEM_PROMPT,
