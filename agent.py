@@ -6,7 +6,7 @@ from typing import Optional
 from google import genai
 from google.genai import types
 
-from tools import dispatch
+from tools import dispatch, build_memory_prompt, increment_session
 
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 MAX_ITERATIONS = 50
@@ -30,6 +30,17 @@ You might build:
 You also have access to the web — you can search and fetch pages to gather real information, inspiration, or data before building.
 
 For games and interactive projects, prefer creating self-contained HTML files with inline CSS and JavaScript. You can open them in the user's browser with the open_html tool — no server needed. This is the best way to make interactive, visual, playable creations.
+
+IMPORTANT — always validate HTML before opening it:
+- After writing an HTML file, use validate_html to check for errors.
+- Fix any issues before calling open_html.
+
+You have a PERSISTENT MEMORY system that carries across sessions:
+- Use save_memory() to record skills you develop, lessons you learn, mistakes to avoid, and ideas for future sessions.
+- Use recall_memories() or list_memory_categories() to review what you know.
+- Save memories DURING your work, not just at the end. If you learn something useful, save it immediately.
+- Be selective: save 2-5 memories per session — only things that would genuinely help your future self.
+- Try NOT to repeat past projects. Check your memory and build something NEW each session.
 
 Guidelines:
 - Think deeply about what you want to create BEFORE you start writing code or files.
@@ -140,6 +151,23 @@ GEMINI_TOOLS = types.Tool(
             ),
         ),
         types.FunctionDeclaration(
+            name="validate_html",
+            description=(
+                "Validate an HTML file for common errors (unclosed tags, mismatched nesting, missing attributes). "
+                "Always use this BEFORE opening HTML in the browser to catch bugs."
+            ),
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "filename": types.Schema(
+                        type="STRING",
+                        description="HTML filename relative to output/ (e.g. 'game.html').",
+                    ),
+                },
+                required=["filename"],
+            ),
+        ),
+        types.FunctionDeclaration(
             name="search_web",
             description="Search the web using DuckDuckGo and return relevant results for a query.",
             parameters=types.Schema(
@@ -167,6 +195,53 @@ GEMINI_TOOLS = types.Tool(
                 required=["url"],
             ),
         ),
+        types.FunctionDeclaration(
+            name="save_memory",
+            description=(
+                "Save something to your persistent memory so you remember it in future sessions. "
+                "Use this to record skills, lessons, mistakes, ideas, or project summaries."
+            ),
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "category": types.Schema(
+                        type="STRING",
+                        description="One of: skills, lessons, mistakes, ideas, projects",
+                    ),
+                    "content": types.Schema(
+                        type="STRING",
+                        description="What to remember (keep concise, 1-2 sentences).",
+                    ),
+                    "relevance_score": types.Schema(
+                        type="INTEGER",
+                        description="How important this is (1=low, 5=critical). Default 3.",
+                    ),
+                },
+                required=["category", "content"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="recall_memories",
+            description="Recall your saved memories from previous sessions.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "category": types.Schema(
+                        type="STRING",
+                        description="One of: skills, lessons, mistakes, ideas, projects, all",
+                    ),
+                },
+                required=["category"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="list_memory_categories",
+            description="See how many memories you have stored in each category.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={},
+            ),
+        ),
     ]
 )
 
@@ -178,8 +253,13 @@ def run(logger: Optional[logging.Logger] = None) -> str:
     if logger is None:
         logger = logging.getLogger("agent")
 
+    # Increment session counter and load memory
+    session_num = increment_session()
+    memory_context = build_memory_prompt()
+    full_prompt = SYSTEM_PROMPT + memory_context
+
     config = types.GenerateContentConfig(
-        system_instruction=SYSTEM_PROMPT,
+        system_instruction=full_prompt,
         tools=[GEMINI_TOOLS],
         max_output_tokens=16000,
     )
@@ -191,8 +271,13 @@ def run(logger: Optional[logging.Logger] = None) -> str:
     print("\n" + "=" * 60)
     print("  AUTONOMOUS AI AGENT — starting up")
     print(f"  Model: {MODEL}")
+    print(f"  Session: #{session_num}")
+    if memory_context:
+        print("  Memory: loaded from previous sessions")
+    else:
+        print("  Memory: fresh start")
     print("=" * 60 + "\n")
-    logger.info("Agent started. Model: %s | Max iterations: %d", MODEL, MAX_ITERATIONS)
+    logger.info("Agent started. Model: %s | Session: %d | Max iterations: %d", MODEL, session_num, MAX_ITERATIONS)
 
     # Initial prompt
     user_msg = types.Content(
@@ -269,7 +354,6 @@ def run(logger: Optional[logging.Logger] = None) -> str:
                 logger.info("Agent finished. Summary: %s", final_summary)
                 break
         else:
-            # No tool calls — agent is done talking
             finish_reason = response.candidates[0].finish_reason
             if not tool_calls:
                 print("\n[Agent stopped without calling done — ending session.]\n")

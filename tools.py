@@ -2,15 +2,20 @@ import os
 import subprocess
 import json
 import re
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 
 import httpx
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
+MEMORY_FILE = os.path.join(os.path.dirname(__file__), "memory.json")
+MEMORY_CATEGORIES = ("skills", "lessons", "mistakes", "ideas", "projects")
+MAX_PER_CATEGORY = 20
 
+
+# ── File tools ──────────────────────────────────────────────
 
 def _safe_path(filename: str) -> str:
-    """Resolve path inside output/ and reject any traversal attempts."""
     resolved = os.path.realpath(os.path.join(OUTPUT_DIR, filename))
     if not resolved.startswith(os.path.realpath(OUTPUT_DIR)):
         raise ValueError(f"Path traversal not allowed: {filename}")
@@ -84,11 +89,195 @@ def open_html(filename: str) -> str:
 
 
 def done(summary: str) -> str:
+    # Auto-save to project memory
+    save_memory("projects", summary, 4)
     return f"DONE: {summary}"
 
 
+# ── HTML validator ──────────────────────────────────────────
+
+_SELF_CLOSING = {"br", "hr", "img", "input", "meta", "link", "area", "base", "col", "embed", "source", "track", "wbr"}
+
+
+class _HTMLValidator(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.issues = []
+        self._stack = []
+        self._ids = set()
+        self._has_doctype = False
+
+    def handle_decl(self, decl):
+        if decl.lower().startswith("doctype"):
+            self._has_doctype = True
+
+    def handle_starttag(self, tag, attrs):
+        attr_dict = dict(attrs)
+        if tag not in _SELF_CLOSING:
+            self._stack.append((tag, self.getpos()[0]))
+        if tag == "img" and "alt" not in attr_dict:
+            self.issues.append(f"Line {self.getpos()[0]}: <img> missing 'alt' attribute")
+        if "id" in attr_dict:
+            id_val = attr_dict["id"]
+            if id_val in self._ids:
+                self.issues.append(f"Line {self.getpos()[0]}: Duplicate id='{id_val}'")
+            self._ids.add(id_val)
+
+    def handle_endtag(self, tag):
+        if tag in _SELF_CLOSING:
+            return
+        if not self._stack:
+            self.issues.append(f"Line {self.getpos()[0]}: Unexpected closing </{tag}> with no matching open tag")
+            return
+        open_tag, open_line = self._stack[-1]
+        if open_tag == tag:
+            self._stack.pop()
+        else:
+            self.issues.append(f"Line {self.getpos()[0]}: </{tag}> but expected </{open_tag}> (opened at line {open_line})")
+
+    def finish(self):
+        if not self._has_doctype:
+            self.issues.insert(0, "Missing <!DOCTYPE html> declaration")
+        for tag, line in self._stack:
+            self.issues.append(f"Unclosed <{tag}> (opened at line {line})")
+
+
+def validate_html(filename: str) -> str:
+    path = _safe_path(filename)
+    if not os.path.exists(path):
+        return f"File not found: output/{filename}"
+    with open(path, "r", encoding="utf-8") as f:
+        html = f.read()
+    validator = _HTMLValidator()
+    try:
+        validator.feed(html)
+        validator.finish()
+    except Exception as e:
+        return f"Error parsing HTML: {e}"
+    if not validator.issues:
+        return f"HTML validation for output/{filename}: No issues found."
+    lines = [f"HTML validation for output/{filename}:"]
+    for i, issue in enumerate(validator.issues, 1):
+        lines.append(f"  {i}. {issue}")
+    lines.append(f"Found {len(validator.issues)} issue(s).")
+    return "\n".join(lines)
+
+
+# ── Memory system ───────────────────────────────────────────
+
+def _load_memory() -> dict:
+    if os.path.exists(MEMORY_FILE):
+        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {
+        "meta": {"created": _now(), "last_updated": _now(), "session_count": 0, "version": 1},
+        "memories": {cat: [] for cat in MEMORY_CATEGORIES},
+    }
+
+
+def _save_memory_file(data: dict) -> None:
+    data["meta"]["last_updated"] = _now()
+    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def increment_session() -> int:
+    data = _load_memory()
+    data["meta"]["session_count"] = data["meta"].get("session_count", 0) + 1
+    _save_memory_file(data)
+    return data["meta"]["session_count"]
+
+
+def save_memory(category: str, content: str, relevance_score: int = 3) -> str:
+    if category not in MEMORY_CATEGORIES:
+        return f"Invalid category '{category}'. Use one of: {', '.join(MEMORY_CATEGORIES)}"
+    relevance_score = max(1, min(5, int(relevance_score)))
+    content = content[:300]
+    data = _load_memory()
+    entries = data["memories"].setdefault(category, [])
+    entry_id = f"{category[:2]}_{len(entries)+1:03d}"
+    entries.append({
+        "id": entry_id,
+        "content": content,
+        "created": _now(),
+        "session": data["meta"].get("session_count", 1),
+        "relevance_score": relevance_score,
+    })
+    # Prune if over cap
+    if len(entries) > MAX_PER_CATEGORY:
+        entries.sort(key=lambda e: (e["relevance_score"], e["created"]))
+        entries.pop(0)
+    data["memories"][category] = entries
+    _save_memory_file(data)
+    return f"Saved to {category} (relevance {relevance_score}): {content[:80]}..."
+
+
+def recall_memories(category: str) -> str:
+    data = _load_memory()
+    if category == "all":
+        lines = []
+        for cat in MEMORY_CATEGORIES:
+            entries = data["memories"].get(cat, [])
+            if entries:
+                lines.append(f"\n[{cat.upper()}]")
+                for e in sorted(entries, key=lambda x: -x["relevance_score"]):
+                    lines.append(f"  [{e['relevance_score']}] {e['content']}")
+        return "\n".join(lines) if lines else "No memories yet."
+    if category not in MEMORY_CATEGORIES:
+        return f"Invalid category. Use one of: {', '.join(MEMORY_CATEGORIES)}, all"
+    entries = data["memories"].get(category, [])
+    if not entries:
+        return f"No memories in {category}."
+    lines = [f"[{category.upper()}]"]
+    for e in sorted(entries, key=lambda x: -x["relevance_score"]):
+        lines.append(f"  [{e['relevance_score']}] {e['content']}")
+    return "\n".join(lines)
+
+
+def list_memory_categories() -> str:
+    data = _load_memory()
+    lines = []
+    for cat in MEMORY_CATEGORIES:
+        count = len(data["memories"].get(cat, []))
+        lines.append(f"{cat}: {count} entries")
+    total = sum(len(data["memories"].get(c, [])) for c in MEMORY_CATEGORIES)
+    lines.append(f"\nTotal: {total} memories across {data['meta'].get('session_count', 0)} sessions")
+    return "\n".join(lines)
+
+
+def build_memory_prompt() -> str:
+    data = _load_memory()
+    session_count = data["meta"].get("session_count", 0)
+    if session_count <= 1:
+        return ""
+    sections = []
+    labels = {
+        "skills": "SKILLS YOU HAVE LEARNED",
+        "lessons": "LESSONS FROM PAST SESSIONS",
+        "mistakes": "MISTAKES TO AVOID",
+        "ideas": "IDEAS FOR FUTURE PROJECTS",
+        "projects": "PROJECTS YOU HAVE BUILT",
+    }
+    for cat in MEMORY_CATEGORIES:
+        entries = data["memories"].get(cat, [])
+        if not entries:
+            continue
+        top = sorted(entries, key=lambda x: -x["relevance_score"])[:10]
+        lines = [f"- {e['content']}" for e in top]
+        sections.append(f"{labels[cat]}:\n" + "\n".join(lines))
+    if not sections:
+        return ""
+    header = f"\n\n== YOUR MEMORY ({session_count - 1} previous sessions) ==\n"
+    return header + "\n\n".join(sections) + "\n"
+
+
+# ── Web tools ───────────────────────────────────────────────
+
 class _TextExtractor(HTMLParser):
-    """Strip HTML tags and return plain text."""
     def __init__(self):
         super().__init__()
         self._parts = []
@@ -110,7 +299,6 @@ class _TextExtractor(HTMLParser):
 
     def get_text(self):
         text = "".join(self._parts)
-        # Collapse excessive whitespace
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
 
@@ -124,7 +312,6 @@ def fetch_url(url: str) -> str:
             parser = _TextExtractor()
             parser.feed(resp.text)
             text = parser.get_text()
-            # Truncate to keep response manageable
             if len(text) > 8000:
                 text = text[:8000] + "\n\n[... truncated ...]"
             return text
@@ -149,21 +336,16 @@ def search_web(query: str) -> str:
         )
         data = resp.json()
         results = []
-
-        # Abstract (best direct answer)
         if data.get("AbstractText"):
             results.append(f"Summary: {data['AbstractText']}")
             if data.get("AbstractURL"):
                 results.append(f"Source: {data['AbstractURL']}")
             results.append("")
-
-        # Related topics
         for topic in data.get("RelatedTopics", [])[:8]:
             if isinstance(topic, dict) and topic.get("Text"):
                 results.append(f"- {topic['Text']}")
                 if topic.get("FirstURL"):
                     results.append(f"  URL: {topic['FirstURL']}")
-
         if not results:
             return f"No results found for: {query}"
         return "\n".join(results)
@@ -171,232 +353,7 @@ def search_web(query: str) -> str:
         return f"Error searching web: {e}"
 
 
-# Tool definitions for the Anthropic API
-TOOL_DEFINITIONS = [
-    {
-        "name": "write_file",
-        "description": (
-            "Write content to a file inside the output/ directory. "
-            "Use this to create programs, scripts, data files, stories, or anything else you want to build."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "filename": {
-                    "type": "string",
-                    "description": "Filename (optionally with subdirectory, e.g. 'game.py' or 'data/config.json'). Stays inside output/.",
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Full text content to write to the file.",
-                },
-            },
-            "required": ["filename", "content"],
-        },
-    },
-    {
-        "name": "read_file",
-        "description": "Read the contents of a file you have previously written inside output/.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "filename": {
-                    "type": "string",
-                    "description": "Filename relative to output/.",
-                }
-            },
-            "required": ["filename"],
-        },
-    },
-    {
-        "name": "list_files",
-        "description": "List all files you have created in the output/ directory.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-        },
-    },
-    {
-        "name": "run_python",
-        "description": (
-            "Execute a Python script you have written inside output/ and see its output. "
-            "Use this to test your code, run simulations, generate data, etc."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "filename": {
-                    "type": "string",
-                    "description": "Python filename relative to output/ (e.g. 'simulation.py').",
-                }
-            },
-            "required": ["filename"],
-        },
-    },
-    {
-        "name": "done",
-        "description": (
-            "Call this when you are completely finished with your creative work. "
-            "Provide a summary of everything you created."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "summary": {
-                    "type": "string",
-                    "description": "A description of everything you built and why you chose to create it.",
-                }
-            },
-            "required": ["summary"],
-        },
-    },
-    {
-        "name": "open_html",
-        "description": (
-            "Open an HTML file you created in the user's default web browser. "
-            "Use this after writing an HTML game or webpage to let the user see and interact with it. "
-            "The file must be inside output/."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "filename": {
-                    "type": "string",
-                    "description": "HTML filename relative to output/ (e.g. 'game.html').",
-                }
-            },
-            "required": ["filename"],
-        },
-    },
-    {
-        "name": "search_web",
-        "description": "Search the web using DuckDuckGo and return relevant results for a query.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query.",
-                }
-            },
-            "required": ["query"],
-        },
-    },
-    {
-        "name": "fetch_url",
-        "description": "Fetch the text content of any web page by URL.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "The full URL to fetch (e.g. 'https://example.com/article').",
-                }
-            },
-            "required": ["url"],
-        },
-    },
-]
-
-
-# OpenAI-compatible tool definitions (for AgentRouter / OpenAI SDK)
-OPENAI_TOOL_DEFINITIONS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": (
-                "Write content to a file inside the output/ directory. "
-                "Use this to create programs, scripts, data files, stories, or anything else you want to build."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "filename": {
-                        "type": "string",
-                        "description": "Filename (optionally with subdirectory, e.g. 'game.py' or 'data/config.json'). Stays inside output/.",
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "Full text content to write to the file.",
-                    },
-                },
-                "required": ["filename", "content"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_file",
-            "description": "Read the contents of a file you have previously written inside output/.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "filename": {
-                        "type": "string",
-                        "description": "Filename relative to output/.",
-                    }
-                },
-                "required": ["filename"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_files",
-            "description": "List all files you have created in the output/ directory.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "run_python",
-            "description": (
-                "Execute a Python script you have written inside output/ and see its output. "
-                "Use this to test your code, run simulations, generate data, etc."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "filename": {
-                        "type": "string",
-                        "description": "Python filename relative to output/ (e.g. 'simulation.py').",
-                    }
-                },
-                "required": ["filename"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "done",
-            "description": (
-                "Call this when you are completely finished with your creative work. "
-                "Provide a summary of everything you created."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "summary": {
-                        "type": "string",
-                        "description": "A description of everything you built and why you chose to create it.",
-                    }
-                },
-                "required": ["summary"],
-            },
-        },
-    },
-]
-
+# ── Dispatch ────────────────────────────────────────────────
 
 def dispatch(tool_name: str, tool_input: dict) -> str:
     if tool_name == "write_file":
@@ -415,5 +372,13 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return search_web(tool_input["query"])
     elif tool_name == "fetch_url":
         return fetch_url(tool_input["url"])
+    elif tool_name == "validate_html":
+        return validate_html(tool_input["filename"])
+    elif tool_name == "save_memory":
+        return save_memory(tool_input["category"], tool_input["content"], tool_input.get("relevance_score", 3))
+    elif tool_name == "recall_memories":
+        return recall_memories(tool_input["category"])
+    elif tool_name == "list_memory_categories":
+        return list_memory_categories()
     else:
         return f"Unknown tool: {tool_name}"
