@@ -156,6 +156,104 @@ TOOL_DEFINITIONS = [
 ]
 
 
+# OpenAI-compatible tool definitions (for AgentRouter / OpenAI SDK)
+OPENAI_TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": (
+                "Write content to a file inside the output/ directory. "
+                "Use this to create programs, scripts, data files, stories, or anything else you want to build."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "Filename (optionally with subdirectory, e.g. 'game.py' or 'data/config.json'). Stays inside output/.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Full text content to write to the file.",
+                    },
+                },
+                "required": ["filename", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read the contents of a file you have previously written inside output/.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "Filename relative to output/.",
+                    }
+                },
+                "required": ["filename"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_files",
+            "description": "List all files you have created in the output/ directory.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_python",
+            "description": (
+                "Execute a Python script you have written inside output/ and see its output. "
+                "Use this to test your code, run simulations, generate data, etc."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "Python filename relative to output/ (e.g. 'simulation.py').",
+                    }
+                },
+                "required": ["filename"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "done",
+            "description": (
+                "Call this when you are completely finished with your creative work. "
+                "Provide a summary of everything you created."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "A description of everything you built and why you chose to create it.",
+                    }
+                },
+                "required": ["summary"],
+            },
+        },
+    },
+]
+
+
 def dispatch(tool_name: str, tool_input: dict) -> str:
     if tool_name == "write_file":
         return write_file(tool_input["filename"], tool_input["content"])

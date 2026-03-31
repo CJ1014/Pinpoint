@@ -1,14 +1,14 @@
 import os
+import json
 import logging
 from typing import Optional
 
-import anthropic
+from openai import OpenAI
 
-from tools import TOOL_DEFINITIONS, dispatch
+from tools import OPENAI_TOOL_DEFINITIONS, dispatch
 
-MODEL = "claude-opus-4-6"
+MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-6")
 MAX_ITERATIONS = 50
-THINKING_BUDGET = 8000  # tokens allocated for extended thinking per turn
 
 SYSTEM_PROMPT = """You are a fully autonomous AI with complete creative freedom.
 
@@ -37,12 +37,21 @@ This is your moment of genuine creative autonomy. Make something you're proud of
 
 
 def run(logger: Optional[logging.Logger] = None) -> str:
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+    base_url = os.environ.get("ANTHROPIC_BASE_URL", "https://agentrouter.org/")
+    api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+
+    client = OpenAI(base_url=base_url, api_key=api_key)
 
     if logger is None:
         logger = logging.getLogger("agent")
 
-    messages = []
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": "You are now running autonomously. Think about what you want to create, then use your tools to build it. There is no time limit — take as long as you need. Begin.",
+        },
+    ]
     iteration = 0
     final_summary = ""
 
@@ -55,72 +64,55 @@ def run(logger: Optional[logging.Logger] = None) -> str:
         iteration += 1
         logger.info("--- Iteration %d ---", iteration)
 
-        # First iteration: give the agent its opening prompt
-        if iteration == 1:
-            messages.append({
-                "role": "user",
-                "content": "You are now running autonomously. Think about what you want to create, then use your tools to build it. There is no time limit — take as long as you need. Begin.",
-            })
-
-        response = client.messages.create(
+        response = client.chat.completions.create(
             model=MODEL,
             max_tokens=16000,
-            thinking={
-                "type": "adaptive",
-                "budget_tokens": THINKING_BUDGET,
-            },
-            system=SYSTEM_PROMPT,
-            tools=TOOL_DEFINITIONS,
+            tools=OPENAI_TOOL_DEFINITIONS,
+            tool_choice="auto",
             messages=messages,
         )
 
-        # Collect all content blocks for the assistant turn
-        assistant_content = []
+        choice = response.choices[0]
+        message = choice.message
 
-        for block in response.content:
-            if block.type == "thinking":
-                print(f"\n[THINKING]\n{block.thinking}\n")
-                logger.info("[THINKING] %s", block.thinking)
-                assistant_content.append(block)
+        # Print and log any text content
+        if message.content and message.content.strip():
+            print(f"\n[AGENT] {message.content}\n")
+            logger.info("[TEXT] %s", message.content)
 
-            elif block.type == "text":
-                if block.text.strip():
-                    print(f"\n[AGENT] {block.text}\n")
-                    logger.info("[TEXT] %s", block.text)
-                assistant_content.append(block)
+        # Append assistant message to history
+        messages.append(message)
 
-            elif block.type == "tool_use":
-                print(f"\n[TOOL CALL] {block.name}({_fmt_input(block.input)})")
-                logger.info("[TOOL] %s | input: %s", block.name, block.input)
-                assistant_content.append(block)
-
-        # Append the full assistant turn (all blocks together)
-        messages.append({"role": "assistant", "content": assistant_content})
-
-        # Now execute tool calls and collect results
+        # Execute tool calls if any
         tool_results = []
         finished = False
 
-        for block in response.content:
-            if block.type != "tool_use":
-                continue
+        if message.tool_calls:
+            for tc in message.tool_calls:
+                name = tc.function.name
+                try:
+                    inp = json.loads(tc.function.arguments)
+                except json.JSONDecodeError:
+                    inp = {}
 
-            result = dispatch(block.name, block.input)
-            print(f"[TOOL RESULT] {result[:300]}{'...' if len(result) > 300 else ''}\n")
-            logger.info("[RESULT] %s", result)
+                print(f"\n[TOOL CALL] {name}({_fmt_input(inp)})")
+                logger.info("[TOOL] %s | input: %s", name, inp)
 
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": block.id,
-                "content": result,
-            })
+                result = dispatch(name, inp)
+                print(f"[TOOL RESULT] {result[:300]}{'...' if len(result) > 300 else ''}\n")
+                logger.info("[RESULT] %s", result)
 
-            if block.name == "done":
-                final_summary = block.input.get("summary", "")
-                finished = True
+                tool_results.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result,
+                })
 
-        if tool_results:
-            messages.append({"role": "user", "content": tool_results})
+                if name == "done":
+                    final_summary = inp.get("summary", "")
+                    finished = True
+
+            messages.extend(tool_results)
 
         if finished:
             print("\n" + "=" * 60)
@@ -130,7 +122,7 @@ def run(logger: Optional[logging.Logger] = None) -> str:
             logger.info("Agent finished. Summary: %s", final_summary)
             break
 
-        if response.stop_reason == "end_turn" and not tool_results:
+        if choice.finish_reason == "stop" and not message.tool_calls:
             print("\n[Agent stopped without calling done — ending session.]\n")
             logger.warning("Agent stopped without calling done tool.")
             break
@@ -143,7 +135,6 @@ def run(logger: Optional[logging.Logger] = None) -> str:
 
 
 def _fmt_input(inp: dict) -> str:
-    """Format tool input for display, truncating long values."""
     parts = []
     for k, v in inp.items():
         s = str(v)
