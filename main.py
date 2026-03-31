@@ -21,16 +21,19 @@ def setup_logging() -> logging.Logger:
     return logger
 
 
-def check_api_key() -> None:
-    if not os.environ.get("GEMINI_API_KEY"):
-        print("Error: GEMINI_API_KEY environment variable is not set.")
-        print("Get a free key at: https://aistudio.google.com/apikey")
-        print("Then set it with:  set GEMINI_API_KEY=your_key_here")
+def check_ollama() -> None:
+    import httpx
+    try:
+        resp = httpx.get("http://localhost:11434", timeout=3)
+    except Exception:
+        print("Error: Ollama is not running.")
+        print("Start it with:  ollama serve")
+        print("Or just open the Ollama app from your Start menu.")
         sys.exit(1)
 
 
 def main() -> None:
-    check_api_key()
+    check_ollama()
     logger = setup_logging()
 
     print("Pinpoint — Autonomous AI Agent")

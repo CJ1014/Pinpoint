@@ -4,12 +4,12 @@ import time
 import logging
 from typing import Optional
 
-from google import genai
-from google.genai import types
+from openai import OpenAI
 
 from tools import dispatch, build_memory_prompt, increment_session
 
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:14b")
 MAX_ITERATIONS = 50
 
 SYSTEM_PROMPT = """You are a fully autonomous AI with complete creative freedom.
@@ -53,339 +53,200 @@ Guidelines:
 This is your moment of genuine creative autonomy. Make something you're proud of.
 """
 
-# Tool declarations in Gemini format
-GEMINI_TOOLS = types.Tool(
-    function_declarations=[
-        types.FunctionDeclaration(
-            name="write_file",
-            description=(
-                "Write content to a file inside the output/ directory. "
-                "Use this to create programs, scripts, data files, stories, or anything else you want to build."
-            ),
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "filename": types.Schema(
-                        type="STRING",
-                        description="Filename (optionally with subdirectory, e.g. 'game.py' or 'data/config.json'). Stays inside output/.",
-                    ),
-                    "content": types.Schema(
-                        type="STRING",
-                        description="Full text content to write to the file.",
-                    ),
-                },
-                required=["filename", "content"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="read_file",
-            description="Read the contents of a file you have previously written inside output/.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "filename": types.Schema(
-                        type="STRING",
-                        description="Filename relative to output/.",
-                    ),
-                },
-                required=["filename"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="list_files",
-            description="List all files you have created in the output/ directory.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={},
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="run_python",
-            description=(
-                "Execute a Python script you have written inside output/ and see its output. "
-                "Use this to test your code, run simulations, generate data, etc."
-            ),
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "filename": types.Schema(
-                        type="STRING",
-                        description="Python filename relative to output/ (e.g. 'simulation.py').",
-                    ),
-                },
-                required=["filename"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="done",
-            description=(
-                "Call this when you are completely finished with your creative work. "
-                "Provide a summary of everything you created."
-            ),
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "summary": types.Schema(
-                        type="STRING",
-                        description="A description of everything you built and why you chose to create it.",
-                    ),
-                },
-                required=["summary"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="open_html",
-            description=(
-                "Open an HTML file you created in the user's default web browser. "
-                "Use this after writing an HTML game or webpage to let the user see and interact with it. "
-                "The file must be inside output/."
-            ),
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "filename": types.Schema(
-                        type="STRING",
-                        description="HTML filename relative to output/ (e.g. 'game.html').",
-                    ),
-                },
-                required=["filename"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="validate_html",
-            description=(
-                "Validate an HTML file for common errors (unclosed tags, mismatched nesting, missing attributes). "
-                "Always use this BEFORE opening HTML in the browser to catch bugs."
-            ),
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "filename": types.Schema(
-                        type="STRING",
-                        description="HTML filename relative to output/ (e.g. 'game.html').",
-                    ),
-                },
-                required=["filename"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="search_web",
-            description="Search the web using DuckDuckGo and return relevant results for a query.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "query": types.Schema(
-                        type="STRING",
-                        description="The search query.",
-                    ),
-                },
-                required=["query"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="fetch_url",
-            description="Fetch the text content of any web page by URL.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "url": types.Schema(
-                        type="STRING",
-                        description="The full URL to fetch (e.g. 'https://example.com/article').",
-                    ),
-                },
-                required=["url"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="save_memory",
-            description=(
-                "Save something to your persistent memory so you remember it in future sessions. "
-                "Use this to record skills, lessons, mistakes, ideas, or project summaries."
-            ),
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "category": types.Schema(
-                        type="STRING",
-                        description="One of: skills, lessons, mistakes, ideas, projects",
-                    ),
-                    "content": types.Schema(
-                        type="STRING",
-                        description="What to remember (keep concise, 1-2 sentences).",
-                    ),
-                    "relevance_score": types.Schema(
-                        type="INTEGER",
-                        description="How important this is (1=low, 5=critical). Default 3.",
-                    ),
-                },
-                required=["category", "content"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="recall_memories",
-            description="Recall your saved memories from previous sessions.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "category": types.Schema(
-                        type="STRING",
-                        description="One of: skills, lessons, mistakes, ideas, projects, all",
-                    ),
-                },
-                required=["category"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="list_memory_categories",
-            description="See how many memories you have stored in each category.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={},
-            ),
-        ),
-    ]
-)
+TOOLS = [
+    {"type": "function", "function": {
+        "name": "write_file",
+        "description": "Write content to a file inside the output/ directory.",
+        "parameters": {"type": "object", "properties": {
+            "filename": {"type": "string", "description": "Filename relative to output/ (e.g. 'game.py' or 'game.html')."},
+            "content": {"type": "string", "description": "Full text content to write."},
+        }, "required": ["filename", "content"]},
+    }},
+    {"type": "function", "function": {
+        "name": "read_file",
+        "description": "Read the contents of a file you previously created inside output/.",
+        "parameters": {"type": "object", "properties": {
+            "filename": {"type": "string", "description": "Filename relative to output/."},
+        }, "required": ["filename"]},
+    }},
+    {"type": "function", "function": {
+        "name": "list_files",
+        "description": "List all files you have created in the output/ directory.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "run_python",
+        "description": "Execute a Python script inside output/ and see its stdout/stderr output.",
+        "parameters": {"type": "object", "properties": {
+            "filename": {"type": "string", "description": "Python filename relative to output/."},
+        }, "required": ["filename"]},
+    }},
+    {"type": "function", "function": {
+        "name": "open_html",
+        "description": "Open an HTML file in the user's browser. Use after writing and validating an HTML file.",
+        "parameters": {"type": "object", "properties": {
+            "filename": {"type": "string", "description": "HTML filename relative to output/."},
+        }, "required": ["filename"]},
+    }},
+    {"type": "function", "function": {
+        "name": "validate_html",
+        "description": "Validate an HTML file for errors before opening it in the browser.",
+        "parameters": {"type": "object", "properties": {
+            "filename": {"type": "string", "description": "HTML filename relative to output/."},
+        }, "required": ["filename"]},
+    }},
+    {"type": "function", "function": {
+        "name": "search_web",
+        "description": "Search the web using DuckDuckGo and return results.",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "The search query."},
+        }, "required": ["query"]},
+    }},
+    {"type": "function", "function": {
+        "name": "fetch_url",
+        "description": "Fetch the text content of any web page by URL.",
+        "parameters": {"type": "object", "properties": {
+            "url": {"type": "string", "description": "The full URL to fetch."},
+        }, "required": ["url"]},
+    }},
+    {"type": "function", "function": {
+        "name": "save_memory",
+        "description": "Save something to persistent memory for future sessions. Categories: skills, lessons, mistakes, ideas, projects.",
+        "parameters": {"type": "object", "properties": {
+            "category": {"type": "string", "description": "One of: skills, lessons, mistakes, ideas, projects"},
+            "content": {"type": "string", "description": "What to remember (1-2 sentences)."},
+            "relevance_score": {"type": "integer", "description": "Importance 1-5 (default 3)."},
+        }, "required": ["category", "content"]},
+    }},
+    {"type": "function", "function": {
+        "name": "recall_memories",
+        "description": "Recall saved memories from previous sessions.",
+        "parameters": {"type": "object", "properties": {
+            "category": {"type": "string", "description": "One of: skills, lessons, mistakes, ideas, projects, all"},
+        }, "required": ["category"]},
+    }},
+    {"type": "function", "function": {
+        "name": "list_memory_categories",
+        "description": "See how many memories are stored in each category.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "done",
+        "description": "Call this when you are completely finished. Provide a summary of everything you created.",
+        "parameters": {"type": "object", "properties": {
+            "summary": {"type": "string", "description": "Description of everything you built."},
+        }, "required": ["summary"]},
+    }},
+]
 
 
 def run(logger: Optional[logging.Logger] = None) -> str:
-    api_key = os.environ.get("GEMINI_API_KEY")
-    client = genai.Client(api_key=api_key)
+    client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama")
 
     if logger is None:
         logger = logging.getLogger("agent")
 
-    # Increment session counter and load memory
     session_num = increment_session()
     memory_context = build_memory_prompt()
-    full_prompt = SYSTEM_PROMPT + memory_context
+    system_content = SYSTEM_PROMPT + memory_context
 
-    config = types.GenerateContentConfig(
-        system_instruction=full_prompt,
-        tools=[GEMINI_TOOLS],
-        max_output_tokens=16000,
-    )
+    messages = [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": (
+            "You are now running autonomously. Think about what you want to create, "
+            "then use your tools to build it. There is no time limit — take as long as you need. Begin."
+        )},
+    ]
 
-    history = []
     iteration = 0
     final_summary = ""
 
     print("\n" + "=" * 60)
     print("  AUTONOMOUS AI AGENT — starting up")
-    print(f"  Model: {MODEL}")
+    print(f"  Model: {MODEL} (local Ollama)")
     print(f"  Session: #{session_num}")
-    if memory_context:
-        print("  Memory: loaded from previous sessions")
-    else:
-        print("  Memory: fresh start")
+    print("  Memory: " + ("loaded from previous sessions" if memory_context else "fresh start"))
     print("=" * 60 + "\n")
-    logger.info("Agent started. Model: %s | Session: %d | Max iterations: %d", MODEL, session_num, MAX_ITERATIONS)
-
-    # Initial prompt
-    user_msg = types.Content(
-        role="user",
-        parts=[types.Part.from_text(text=
-            "You are now running autonomously. Think about what you want to create, "
-            "then use your tools to build it. There is no time limit — take as long as you need. Begin."
-        )],
-    )
-    history.append(user_msg)
+    logger.info("Agent started. Model: %s | Session: %d", MODEL, session_num)
 
     while iteration < MAX_ITERATIONS:
         iteration += 1
         logger.info("--- Iteration %d ---", iteration)
 
-        # Retry with backoff on rate limit errors
-        response = None
         for attempt in range(5):
             try:
-                response = client.models.generate_content(
+                response = client.chat.completions.create(
                     model=MODEL,
-                    contents=history,
-                    config=config,
+                    messages=messages,
+                    tools=TOOLS,
+                    tool_choice="auto",
                 )
                 break
             except Exception as e:
                 err = str(e)
-                if "429" in err or "RESOURCE_EXHAUSTED" in err:
-                    wait = 30 * (attempt + 1)
-                    print(f"\n[RATE LIMITED] Waiting {wait}s before retrying...")
-                    logger.warning("Rate limited, waiting %ds (attempt %d)", wait, attempt + 1)
-                    time.sleep(wait)
-                elif "503" in err or "UNAVAILABLE" in err:
-                    wait = 10 * (attempt + 1)
-                    print(f"\n[SERVER BUSY] Waiting {wait}s before retrying...")
-                    logger.warning("Server unavailable, waiting %ds (attempt %d)", wait, attempt + 1)
+                if attempt < 4:
+                    wait = 5 * (attempt + 1)
+                    print(f"\n[RETRYING] {err[:80]} — waiting {wait}s...")
                     time.sleep(wait)
                 else:
                     raise
-        if response is None:
-            print("\n[ERROR] Failed after 5 retries. Try again later.\n")
+        else:
+            print("\n[ERROR] Failed after 5 attempts.\n")
             break
 
-        # Build assistant parts for history
-        assistant_parts = []
-        tool_calls = []
+        choice = response.choices[0]
+        message = choice.message
 
-        for part in response.candidates[0].content.parts:
-            if part.text:
-                text = part.text.strip()
-                if text:
-                    print(f"\n[AGENT] {text}\n")
-                    logger.info("[TEXT] %s", text)
-                assistant_parts.append(part)
+        if message.content and message.content.strip():
+            print(f"\n[AGENT] {message.content}\n")
+            logger.info("[TEXT] %s", message.content)
 
-            elif part.function_call:
-                fc = part.function_call
-                args = dict(fc.args) if fc.args else {}
-                print(f"\n[TOOL CALL] {fc.name}({_fmt_input(args)})")
-                logger.info("[TOOL] %s | input: %s", fc.name, args)
-                assistant_parts.append(part)
-                tool_calls.append((fc.name, args))
+        messages.append(message)
 
-        # Add assistant turn to history
-        history.append(types.Content(role="model", parts=assistant_parts))
+        if not message.tool_calls:
+            print("\n[Agent stopped without calling done — ending session.]\n")
+            logger.warning("Agent stopped without calling done.")
+            break
 
-        # Execute tool calls
-        if tool_calls:
-            tool_response_parts = []
-            finished = False
+        tool_results = []
+        finished = False
 
-            for name, args in tool_calls:
-                result = dispatch(name, args)
-                print(f"[TOOL RESULT] {result[:300]}{'...' if len(result) > 300 else ''}\n")
-                logger.info("[RESULT] %s", result)
+        for tc in message.tool_calls:
+            name = tc.function.name
+            try:
+                inp = json.loads(tc.function.arguments)
+            except json.JSONDecodeError:
+                inp = {}
 
-                tool_response_parts.append(
-                    types.Part.from_function_response(
-                        name=name,
-                        response={"result": result},
-                    )
-                )
+            print(f"\n[TOOL CALL] {name}({_fmt_input(inp)})")
+            logger.info("[TOOL] %s | input: %s", name, inp)
 
-                if name == "done":
-                    final_summary = args.get("summary", "")
-                    finished = True
+            result = dispatch(name, inp)
+            print(f"[TOOL RESULT] {result[:300]}{'...' if len(result) > 300 else ''}\n")
+            logger.info("[RESULT] %s", result)
 
-            # Add tool results as user turn
-            history.append(types.Content(role="user", parts=tool_response_parts))
+            tool_results.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": result,
+            })
 
-            if finished:
-                print("\n" + "=" * 60)
-                print("  AGENT FINISHED")
-                print("=" * 60)
-                print(f"\nSummary:\n{final_summary}\n")
-                logger.info("Agent finished. Summary: %s", final_summary)
-                break
-        else:
-            finish_reason = response.candidates[0].finish_reason
-            if not tool_calls:
-                print("\n[Agent stopped without calling done — ending session.]\n")
-                logger.warning("Agent stopped without calling done tool.")
-                break
+            if name == "done":
+                final_summary = inp.get("summary", "")
+                finished = True
+
+        messages.extend(tool_results)
+
+        if finished:
+            print("\n" + "=" * 60)
+            print("  AGENT FINISHED")
+            print("=" * 60)
+            print(f"\nSummary:\n{final_summary}\n")
+            logger.info("Agent finished. Summary: %s", final_summary)
+            break
 
     else:
         print(f"\n[Max iterations ({MAX_ITERATIONS}) reached — stopping.]\n")
-        logger.warning("Max iterations reached.")
 
     return final_summary
 
