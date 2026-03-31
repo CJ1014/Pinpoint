@@ -9,7 +9,7 @@ from google.genai import types
 
 from tools import dispatch, build_memory_prompt, increment_session
 
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 MAX_ITERATIONS = 50
 
 SYSTEM_PROMPT = """You are a fully autonomous AI with complete creative freedom.
@@ -305,10 +305,16 @@ def run(logger: Optional[logging.Logger] = None) -> str:
                 )
                 break
             except Exception as e:
-                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                err = str(e)
+                if "429" in err or "RESOURCE_EXHAUSTED" in err:
                     wait = 30 * (attempt + 1)
                     print(f"\n[RATE LIMITED] Waiting {wait}s before retrying...")
                     logger.warning("Rate limited, waiting %ds (attempt %d)", wait, attempt + 1)
+                    time.sleep(wait)
+                elif "503" in err or "UNAVAILABLE" in err:
+                    wait = 10 * (attempt + 1)
+                    print(f"\n[SERVER BUSY] Waiting {wait}s before retrying...")
+                    logger.warning("Server unavailable, waiting %ds (attempt %d)", wait, attempt + 1)
                     time.sleep(wait)
                 else:
                     raise
