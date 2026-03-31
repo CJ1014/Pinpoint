@@ -3,11 +3,11 @@ import json
 import logging
 from typing import Optional
 
-from openai import OpenAI
+import anthropic
 
-from tools import OPENAI_TOOL_DEFINITIONS, dispatch
+from tools import TOOL_DEFINITIONS, dispatch
 
-MODEL = os.environ.get("ANTHROPIC_MODEL", "anthropic/claude-opus-4-5")
+MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-5-20250929")
 MAX_ITERATIONS = 50
 
 SYSTEM_PROMPT = """You are a fully autonomous AI with complete creative freedom.
@@ -35,30 +35,32 @@ Guidelines:
 This is your moment of genuine creative autonomy. Make something you're proud of.
 """
 
+# Mimic the headers sent by Claude Code CLI (Anthropic TypeScript SDK on Node.js)
+_CLAUDE_CODE_HEADERS = {
+    "User-Agent": "anthropic-typescript/0.36.3 node/22.14.0",
+    "X-Stainless-Lang": "js",
+    "X-Stainless-Package-Version": "0.36.3",
+    "X-Stainless-OS": "Windows",
+    "X-Stainless-Arch": "x64",
+    "X-Stainless-Runtime": "node",
+    "X-Stainless-Runtime-Version": "v22.14.0",
+}
+
 
 def run(logger: Optional[logging.Logger] = None) -> str:
-    base_url = os.environ.get("ANTHROPIC_BASE_URL", "https://agentrouter.org/v1/")
+    base_url = os.environ.get("ANTHROPIC_BASE_URL", "https://agentrouter.org")
     api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
 
-    client = OpenAI(
-        base_url=base_url,
+    client = anthropic.Anthropic(
         api_key=api_key,
-        default_headers={
-            "User-Agent": "claude-code/1.0.57",
-            "x-stainless-os": "Windows",
-        },
+        base_url=base_url,
+        default_headers=_CLAUDE_CODE_HEADERS,
     )
 
     if logger is None:
         logger = logging.getLogger("agent")
 
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": "You are now running autonomously. Think about what you want to create, then use your tools to build it. There is no time limit — take as long as you need. Begin.",
-        },
-    ]
+    messages = []
     iteration = 0
     final_summary = ""
 
@@ -71,61 +73,59 @@ def run(logger: Optional[logging.Logger] = None) -> str:
         iteration += 1
         logger.info("--- Iteration %d ---", iteration)
 
-        response = client.chat.completions.create(
+        if iteration == 1:
+            messages.append({
+                "role": "user",
+                "content": "You are now running autonomously. Think about what you want to create, then use your tools to build it. There is no time limit — take as long as you need. Begin.",
+            })
+
+        response = client.messages.create(
             model=MODEL,
             max_tokens=16000,
-            tools=OPENAI_TOOL_DEFINITIONS,
-            tool_choice="auto",
+            system=SYSTEM_PROMPT,
+            tools=TOOL_DEFINITIONS,
             messages=messages,
         )
 
-        # Debug: print raw response if unexpected type
-        if not hasattr(response, "choices"):
-            print(f"\n[DEBUG] Unexpected response type: {type(response)}")
-            print(f"[DEBUG] Response: {response}\n")
-            break
+        assistant_content = []
 
-        choice = response.choices[0]
-        message = choice.message
+        for block in response.content:
+            if block.type == "text":
+                if block.text.strip():
+                    print(f"\n[AGENT] {block.text}\n")
+                    logger.info("[TEXT] %s", block.text)
+                assistant_content.append(block)
 
-        # Print and log any text content
-        if message.content and message.content.strip():
-            print(f"\n[AGENT] {message.content}\n")
-            logger.info("[TEXT] %s", message.content)
+            elif block.type == "tool_use":
+                print(f"\n[TOOL CALL] {block.name}({_fmt_input(block.input)})")
+                logger.info("[TOOL] %s | input: %s", block.name, block.input)
+                assistant_content.append(block)
 
-        # Append assistant message to history
-        messages.append(message)
+        messages.append({"role": "assistant", "content": assistant_content})
 
-        # Execute tool calls if any
         tool_results = []
         finished = False
 
-        if message.tool_calls:
-            for tc in message.tool_calls:
-                name = tc.function.name
-                try:
-                    inp = json.loads(tc.function.arguments)
-                except json.JSONDecodeError:
-                    inp = {}
+        for block in response.content:
+            if block.type != "tool_use":
+                continue
 
-                print(f"\n[TOOL CALL] {name}({_fmt_input(inp)})")
-                logger.info("[TOOL] %s | input: %s", name, inp)
+            result = dispatch(block.name, block.input)
+            print(f"[TOOL RESULT] {result[:300]}{'...' if len(result) > 300 else ''}\n")
+            logger.info("[RESULT] %s", result)
 
-                result = dispatch(name, inp)
-                print(f"[TOOL RESULT] {result[:300]}{'...' if len(result) > 300 else ''}\n")
-                logger.info("[RESULT] %s", result)
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": block.id,
+                "content": result,
+            })
 
-                tool_results.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result,
-                })
+            if block.name == "done":
+                final_summary = block.input.get("summary", "")
+                finished = True
 
-                if name == "done":
-                    final_summary = inp.get("summary", "")
-                    finished = True
-
-            messages.extend(tool_results)
+        if tool_results:
+            messages.append({"role": "user", "content": tool_results})
 
         if finished:
             print("\n" + "=" * 60)
@@ -135,7 +135,7 @@ def run(logger: Optional[logging.Logger] = None) -> str:
             logger.info("Agent finished. Summary: %s", final_summary)
             break
 
-        if choice.finish_reason == "stop" and not message.tool_calls:
+        if response.stop_reason == "end_turn" and not tool_results:
             print("\n[Agent stopped without calling done — ending session.]\n")
             logger.warning("Agent stopped without calling done tool.")
             break
