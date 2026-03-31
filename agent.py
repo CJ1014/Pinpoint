@@ -72,6 +72,12 @@ def run(logger: Optional[logging.Logger] = None) -> str:
             messages=messages,
         )
 
+        # Debug: print raw response if unexpected type
+        if not hasattr(response, "choices"):
+            print(f"\n[DEBUG] Unexpected response type: {type(response)}")
+            print(f"[DEBUG] Response: {response}\n")
+            break
+
         choice = response.choices[0]
         message = choice.message
 
