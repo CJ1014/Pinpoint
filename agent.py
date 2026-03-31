@@ -37,7 +37,7 @@ This is your moment of genuine creative autonomy. Make something you're proud of
 
 
 def run(logger: Optional[logging.Logger] = None) -> str:
-    base_url = os.environ.get("ANTHROPIC_BASE_URL", "https://agentrouter.org/")
+    base_url = os.environ.get("ANTHROPIC_BASE_URL", "https://agentrouter.org/v1/")
     api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
 
     client = OpenAI(base_url=base_url, api_key=api_key)
