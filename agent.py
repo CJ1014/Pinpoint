@@ -146,7 +146,7 @@ def run(logger: Optional[logging.Logger] = None) -> str:
     # Initial prompt
     user_msg = types.Content(
         role="user",
-        parts=[types.Part.from_text(
+        parts=[types.Part.from_text(text=
             "You are now running autonomously. Think about what you want to create, "
             "then use your tools to build it. There is no time limit — take as long as you need. Begin."
         )],
