@@ -29,6 +29,8 @@ You might build:
 
 You also have access to the web — you can search and fetch pages to gather real information, inspiration, or data before building.
 
+For games and interactive projects, prefer creating self-contained HTML files with inline CSS and JavaScript. You can open them in the user's browser with the open_html tool — no server needed. This is the best way to make interactive, visual, playable creations.
+
 Guidelines:
 - Think deeply about what you want to create BEFORE you start writing code or files.
 - Build something complete and polished, not just a skeleton.
@@ -117,6 +119,24 @@ GEMINI_TOOLS = types.Tool(
                     ),
                 },
                 required=["summary"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="open_html",
+            description=(
+                "Open an HTML file you created in the user's default web browser. "
+                "Use this after writing an HTML game or webpage to let the user see and interact with it. "
+                "The file must be inside output/."
+            ),
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "filename": types.Schema(
+                        type="STRING",
+                        description="HTML filename relative to output/ (e.g. 'game.html').",
+                    ),
+                },
+                required=["filename"],
             ),
         ),
         types.FunctionDeclaration(

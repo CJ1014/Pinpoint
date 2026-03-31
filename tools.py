@@ -73,6 +73,16 @@ def run_python(filename: str) -> str:
         return f"Error running script: {e}"
 
 
+def open_html(filename: str) -> str:
+    import webbrowser
+    path = _safe_path(filename)
+    if not os.path.exists(path):
+        return f"File not found: output/{filename}"
+    url = "file:///" + path.replace("\\", "/")
+    webbrowser.open(url)
+    return f"Opened output/{filename} in default browser."
+
+
 def done(summary: str) -> str:
     return f"DONE: {summary}"
 
@@ -242,6 +252,24 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "open_html",
+        "description": (
+            "Open an HTML file you created in the user's default web browser. "
+            "Use this after writing an HTML game or webpage to let the user see and interact with it. "
+            "The file must be inside output/."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": "HTML filename relative to output/ (e.g. 'game.html').",
+                }
+            },
+            "required": ["filename"],
+        },
+    },
+    {
         "name": "search_web",
         "description": "Search the web using DuckDuckGo and return relevant results for a query.",
         "input_schema": {
@@ -381,6 +409,8 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return run_python(tool_input["filename"])
     elif tool_name == "done":
         return done(tool_input["summary"])
+    elif tool_name == "open_html":
+        return open_html(tool_input["filename"])
     elif tool_name == "search_web":
         return search_web(tool_input["query"])
     elif tool_name == "fetch_url":
