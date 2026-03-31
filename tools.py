@@ -324,28 +324,43 @@ def fetch_url(url: str) -> str:
 def search_web(query: str) -> str:
     try:
         headers = {
-            "User-Agent": "Mozilla/5.0 (compatible; PinpointBot/1.0)",
-            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         }
-        params = {"q": query, "format": "json", "no_html": "1", "skip_disambig": "1"}
+        # Use DuckDuckGo HTML lite for real search results
         resp = httpx.get(
-            "https://api.duckduckgo.com/",
-            params=params,
+            "https://html.duckduckgo.com/html/",
+            params={"q": query},
             headers=headers,
             timeout=10,
+            follow_redirects=True,
         )
-        data = resp.json()
+        # Parse search results from HTML
         results = []
-        if data.get("AbstractText"):
-            results.append(f"Summary: {data['AbstractText']}")
-            if data.get("AbstractURL"):
-                results.append(f"Source: {data['AbstractURL']}")
+        # Extract result blocks: title + snippet + URL
+        text = resp.text
+        # Find result links and snippets
+        import re as _re
+        # Match result titles and URLs
+        links = _re.findall(r'<a[^>]+class="result__a"[^>]+href="([^"]*)"[^>]*>(.*?)</a>', text)
+        snippets = _re.findall(r'<a[^>]+class="result__snippet"[^>]*>(.*?)</a>', text, _re.DOTALL)
+
+        for i, (url, title) in enumerate(links[:8]):
+            # Clean HTML tags from title and snippet
+            clean_title = _re.sub(r'<[^>]+>', '', title).strip()
+            clean_snippet = ""
+            if i < len(snippets):
+                clean_snippet = _re.sub(r'<[^>]+>', '', snippets[i]).strip()
+            # DuckDuckGo wraps URLs in a redirect; extract the real URL
+            if "uddg=" in url:
+                real_url = url.split("uddg=")[-1].split("&")[0]
+                from urllib.parse import unquote
+                url = unquote(real_url)
+            results.append(f"- {clean_title}")
+            if clean_snippet:
+                results.append(f"  {clean_snippet}")
+            results.append(f"  URL: {url}")
             results.append("")
-        for topic in data.get("RelatedTopics", [])[:8]:
-            if isinstance(topic, dict) and topic.get("Text"):
-                results.append(f"- {topic['Text']}")
-                if topic.get("FirstURL"):
-                    results.append(f"  URL: {topic['FirstURL']}")
+
         if not results:
             return f"No results found for: {query}"
         return "\n".join(results)

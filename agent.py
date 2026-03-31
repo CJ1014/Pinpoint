@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import logging
 from typing import Optional
 
@@ -293,11 +294,27 @@ def run(logger: Optional[logging.Logger] = None) -> str:
         iteration += 1
         logger.info("--- Iteration %d ---", iteration)
 
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=history,
-            config=config,
-        )
+        # Retry with backoff on rate limit errors
+        response = None
+        for attempt in range(5):
+            try:
+                response = client.models.generate_content(
+                    model=MODEL,
+                    contents=history,
+                    config=config,
+                )
+                break
+            except Exception as e:
+                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                    wait = 30 * (attempt + 1)
+                    print(f"\n[RATE LIMITED] Waiting {wait}s before retrying...")
+                    logger.warning("Rate limited, waiting %ds (attempt %d)", wait, attempt + 1)
+                    time.sleep(wait)
+                else:
+                    raise
+        if response is None:
+            print("\n[ERROR] Failed after 5 retries. Try again later.\n")
+            break
 
         # Build assistant parts for history
         assistant_parts = []
