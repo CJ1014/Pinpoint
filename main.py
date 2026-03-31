@@ -22,9 +22,10 @@ def setup_logging() -> logging.Logger:
 
 
 def check_api_key() -> None:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("Error: ANTHROPIC_API_KEY environment variable is not set.")
-        print("Set it with:  export ANTHROPIC_API_KEY=your_key_here")
+    if not os.environ.get("GEMINI_API_KEY"):
+        print("Error: GEMINI_API_KEY environment variable is not set.")
+        print("Get a free key at: https://aistudio.google.com/apikey")
+        print("Then set it with:  set GEMINI_API_KEY=your_key_here")
         sys.exit(1)
 
 
