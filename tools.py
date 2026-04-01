@@ -78,6 +78,105 @@ def run_python(filename: str) -> str:
         return f"Error running script: {e}"
 
 
+def check_js(filename: str) -> str:
+    """Check JavaScript inside an HTML file for errors using Node.js (if available)
+    and static analysis fallback."""
+    path = _safe_path(filename)
+    if not os.path.exists(path):
+        return f"File not found: output/{filename}"
+
+    with open(path, "r", encoding="utf-8") as f:
+        html = f.read()
+
+    # Extract all <script> blocks (inline only, skip src=)
+    scripts = re.findall(r"<script(?![^>]*\bsrc\b)[^>]*>(.*?)</script>", html, re.DOTALL | re.IGNORECASE)
+    if not scripts:
+        return "No inline JavaScript found in this file."
+
+    js_code = "\n".join(scripts)
+    issues = []
+
+    # ── Try Node.js first ──────────────────────────────────
+    node_exe = _find_node()
+    if node_exe:
+        # Wrap in a try-catch and use --check flag for syntax only
+        try:
+            # Write to a temp file
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".js", delete=False, encoding="utf-8") as tmp:
+                tmp.write(js_code)
+                tmp_path = tmp.name
+            result = subprocess.run(
+                [node_exe, "--check", tmp_path],
+                capture_output=True, text=True, timeout=10
+            )
+            os.unlink(tmp_path)
+            if result.returncode != 0:
+                err = result.stderr.strip()
+                # Make line numbers relative to script block
+                return f"JavaScript syntax error (via Node.js):\n{err}"
+            issues.append("Syntax check (Node.js): OK")
+        except Exception as e:
+            issues.append(f"Node.js check skipped: {e}")
+    else:
+        issues.append("Node.js not found — using static analysis only.")
+
+    # ── Static analysis ────────────────────────────────────
+    # 1. Balanced braces/parens/brackets
+    for opener, closer, name in [("{", "}", "curly brace"), ("(", ")", "parenthesis"), ("[", "]", "bracket")]:
+        count = js_code.count(opener) - js_code.count(closer)
+        if count > 0:
+            issues.append(f"Unbalanced {name}: {count} unclosed '{opener}'")
+        elif count < 0:
+            issues.append(f"Unbalanced {name}: {abs(count)} extra '{closer}'")
+
+    # 2. Find defined functions/variables
+    defined = set()
+    for m in re.finditer(r"\bfunction\s+(\w+)\s*\(", js_code):
+        defined.add(m.group(1))
+    for m in re.finditer(r"\b(?:const|let|var)\s+(\w+)\s*=\s*(?:function|\(.*?\)\s*=>)", js_code):
+        defined.add(m.group(1))
+    # Built-ins
+    defined.update({"console", "document", "window", "Math", "JSON", "Array", "Object",
+                    "String", "Number", "Boolean", "Date", "setTimeout", "setInterval",
+                    "clearInterval", "clearTimeout", "requestAnimationFrame", "alert",
+                    "parseInt", "parseFloat", "isNaN", "encodeURIComponent", "decodeURIComponent",
+                    "fetch", "Promise", "Map", "Set", "Error", "Event", "Image"})
+
+    # 3. Find called functions not defined anywhere
+    called = set()
+    for m in re.finditer(r"\b(\w+)\s*\(", js_code):
+        called.add(m.group(1))
+
+    js_keywords = {"if", "for", "while", "switch", "catch", "function", "return",
+                   "typeof", "instanceof", "new", "delete", "void", "throw"}
+    undefined_calls = sorted(called - defined - js_keywords)
+    if undefined_calls:
+        issues.append(f"Possibly undefined functions called: {', '.join(undefined_calls[:10])}")
+
+    if len(issues) == 1 and "OK" in issues[0]:
+        return f"JavaScript check for output/{filename}: No issues found."
+    return f"JavaScript check for output/{filename}:\n" + "\n".join(f"  - {i}" for i in issues)
+
+
+def _find_node() -> str:
+    """Find the Node.js executable on this system."""
+    import shutil
+    for name in ("node", "node.exe", "nodejs"):
+        found = shutil.which(name)
+        if found:
+            return found
+    # Common Windows install paths
+    for path in (
+        r"C:\Program Files\nodejs\node.exe",
+        r"C:\Program Files (x86)\nodejs\node.exe",
+        os.path.expandvars(r"%APPDATA%\nvm\current\node.exe"),
+    ):
+        if os.path.exists(path):
+            return path
+    return ""
+
+
 def open_html(filename: str) -> str:
     import webbrowser
     path = _safe_path(filename)
@@ -389,6 +488,8 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return fetch_url(tool_input["url"])
     elif tool_name == "validate_html":
         return validate_html(tool_input["filename"])
+    elif tool_name == "check_js":
+        return check_js(tool_input["filename"])
     elif tool_name == "save_memory":
         return save_memory(tool_input["category"], tool_input["content"], tool_input.get("relevance_score", 3))
     elif tool_name == "recall_memories":

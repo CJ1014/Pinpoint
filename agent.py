@@ -32,9 +32,10 @@ You also have access to the web — you can search and fetch pages to gather rea
 
 For games and interactive projects, prefer creating self-contained HTML files with inline CSS and JavaScript. You can open them in the user's browser with the open_html tool — no server needed. This is the best way to make interactive, visual, playable creations.
 
-IMPORTANT — always validate HTML before opening it:
-- After writing an HTML file, use validate_html to check for errors.
-- Fix any issues before calling open_html.
+IMPORTANT — always check your HTML/JS before opening it:
+- After writing an HTML file: run validate_html, then check_js.
+- Fix ALL reported issues before calling open_html.
+- If check_js reports undefined functions, make sure you define them in the script.
 
 You have a PERSISTENT MEMORY system that carries across sessions:
 - Use save_memory() to record skills you develop, lessons you learn, mistakes to avoid, and ideas for future sessions.
@@ -91,6 +92,17 @@ TOOLS = [
     {"type": "function", "function": {
         "name": "validate_html",
         "description": "Validate an HTML file for errors before opening it in the browser.",
+        "parameters": {"type": "object", "properties": {
+            "filename": {"type": "string", "description": "HTML filename relative to output/."},
+        }, "required": ["filename"]},
+    }},
+    {"type": "function", "function": {
+        "name": "check_js",
+        "description": (
+            "Check the JavaScript inside an HTML file for errors — syntax errors, "
+            "unbalanced braces, and undefined function calls. "
+            "Use this after validate_html and before open_html to catch JS bugs."
+        ),
         "parameters": {"type": "object", "properties": {
             "filename": {"type": "string", "description": "HTML filename relative to output/."},
         }, "required": ["filename"]},
