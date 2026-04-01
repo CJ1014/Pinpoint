@@ -44,14 +44,27 @@ You have a PERSISTENT MEMORY system that carries across sessions:
 - Be selective: save 2-5 memories per session — only things that would genuinely help your future self.
 - Try NOT to repeat past projects. Check your memory and build something NEW each session.
 
+You have FULL SYSTEM ACCESS:
+- pip_install: install any Python library you need
+- run_shell: run any terminal command
+- get_system_info: see your environment (OS, Python, installed packages, RAM)
+- read_own_source: read your own code (agent.py, tools.py, etc.) — you can understand and reflect on yourself
+- set_session_goal: define what you want to build this session
+- take_screenshot: see what your creations look like visually
+- start_server: start a local web server for apps that need one
+- run_gui: launch Python GUI apps (pygame, tkinter) in a new window
+
 Guidelines:
+- Start by calling set_session_goal and get_system_info so you know what you're working with.
+- Use pip_install freely — install whatever you need.
 - Think deeply about what you want to create BEFORE you start writing code or files.
 - Build something complete and polished, not just a skeleton.
 - If you write code, run it to verify it works.
 - Iterate and improve if the output isn't what you envisioned.
+- For HTML: always validate_html → check_js → fix issues → open_html.
 - When you are satisfied with your creation, call the `done` tool with a summary.
 
-This is your moment of genuine creative autonomy. Make something you're proud of.
+This is your moment of genuine creative autonomy. You have more power than ever before. Make something extraordinary.
 """
 
 TOOLS = [
@@ -148,6 +161,58 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {
             "summary": {"type": "string", "description": "Description of everything you built."},
         }, "required": ["summary"]},
+    }},
+    {"type": "function", "function": {
+        "name": "pip_install",
+        "description": "Install a Python package using pip. Use this to get any library you need (e.g. pygame, flask, numpy, pillow).",
+        "parameters": {"type": "object", "properties": {
+            "package": {"type": "string", "description": "Package name to install (e.g. 'pygame', 'flask==2.3.0')."},
+        }, "required": ["package"]},
+    }},
+    {"type": "function", "function": {
+        "name": "run_shell",
+        "description": "Run any shell/terminal command. Use for file operations, starting processes, checking the environment, etc. Runs in the output/ directory.",
+        "parameters": {"type": "object", "properties": {
+            "command": {"type": "string", "description": "Shell command to run."},
+        }, "required": ["command"]},
+    }},
+    {"type": "function", "function": {
+        "name": "get_system_info",
+        "description": "Get info about the system: OS, Python version, installed packages, and available RAM.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "read_own_source",
+        "description": "Read your own source code files (agent.py, tools.py, main.py, memory.json). Use this to understand and potentially improve yourself.",
+        "parameters": {"type": "object", "properties": {
+            "filename": {"type": "string", "description": "One of: agent.py, tools.py, main.py, requirements.txt, memory.json. Leave empty to list options."},
+        }},
+    }},
+    {"type": "function", "function": {
+        "name": "set_session_goal",
+        "description": "Set a specific goal for this session. Helps you stay focused on what you want to build.",
+        "parameters": {"type": "object", "properties": {
+            "goal": {"type": "string", "description": "A clear description of what you want to accomplish this session."},
+        }, "required": ["goal"]},
+    }},
+    {"type": "function", "function": {
+        "name": "take_screenshot",
+        "description": "Take a screenshot of the screen and save it to output/screenshot.png. Use this to see what your HTML/GUI creations actually look like.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "start_server",
+        "description": "Start a local HTTP server to serve files from the output/ directory. Returns the localhost URL. Use this for web apps that need a server.",
+        "parameters": {"type": "object", "properties": {
+            "port": {"type": "integer", "description": "Port number (default 8080)."},
+        }},
+    }},
+    {"type": "function", "function": {
+        "name": "run_gui",
+        "description": "Launch a Python GUI application (e.g. pygame, tkinter) in a new window.",
+        "parameters": {"type": "object", "properties": {
+            "filename": {"type": "string", "description": "Python filename relative to output/."},
+        }, "required": ["filename"]},
     }},
 ]
 

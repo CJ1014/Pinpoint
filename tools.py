@@ -2,12 +2,17 @@ import os
 import subprocess
 import json
 import re
+import sys
+import threading
+import platform
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 
 import httpx
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
+ROOT_DIR = os.path.dirname(__file__)
+_running_servers = {}  # port -> thread
 MEMORY_FILE = os.path.join(os.path.dirname(__file__), "memory.json")
 MEMORY_CATEGORIES = ("skills", "lessons", "mistakes", "ideas", "projects")
 MAX_PER_CATEGORY = 20
@@ -374,6 +379,181 @@ def build_memory_prompt() -> str:
     return header + "\n\n".join(sections) + "\n"
 
 
+# ── System tools ────────────────────────────────────────────
+
+def pip_install(package: str) -> str:
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", package],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode == 0:
+            lines = [l for l in result.stdout.splitlines() if l.strip()]
+            summary = lines[-1] if lines else "Installed."
+            return f"pip install {package}: {summary}"
+        return f"pip install failed:\n{result.stderr.strip()[:500]}"
+    except Exception as e:
+        return f"Error installing {package}: {e}"
+
+
+def run_shell(command: str) -> str:
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=OUTPUT_DIR,
+        )
+        out = result.stdout.strip()
+        err = result.stderr.strip()
+        parts = []
+        if out:
+            parts.append(f"stdout:\n{out[:2000]}")
+        if err:
+            parts.append(f"stderr:\n{err[:500]}")
+        parts.append(f"exit code: {result.returncode}")
+        return "\n".join(parts) if parts else "Command completed with no output."
+    except subprocess.TimeoutExpired:
+        return "Command timed out after 60 seconds."
+    except Exception as e:
+        return f"Error running command: {e}"
+
+
+def get_system_info() -> str:
+    info = []
+    info.append(f"OS: {platform.system()} {platform.release()} ({platform.machine()})")
+    info.append(f"Python: {sys.version.split()[0]}")
+    info.append(f"Python executable: {sys.executable}")
+    # Installed packages
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "list", "--format=columns"],
+            capture_output=True, text=True, timeout=15,
+        )
+        pkgs = result.stdout.strip().splitlines()[2:]  # skip header
+        info.append(f"Installed packages ({len(pkgs)}):")
+        info.append(", ".join(p.split()[0] for p in pkgs[:50]))
+        if len(pkgs) > 50:
+            info.append(f"  ... and {len(pkgs) - 50} more")
+    except Exception:
+        info.append("(Could not list packages)")
+    # RAM
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        info.append(f"RAM: {mem.available // (1024**2)}MB available / {mem.total // (1024**2)}MB total")
+    except ImportError:
+        pass
+    # Output dir
+    info.append(f"Output directory: {OUTPUT_DIR}")
+    return "\n".join(info)
+
+
+def read_own_source(filename: str = "") -> str:
+    """Read the agent's own source files."""
+    allowed = {"agent.py", "tools.py", "main.py", "requirements.txt", "memory.json"}
+    if not filename:
+        return f"Available source files: {', '.join(sorted(allowed))}"
+    if filename not in allowed:
+        return f"Not allowed. Readable files: {', '.join(sorted(allowed))}"
+    path = os.path.join(ROOT_DIR, filename)
+    if not os.path.exists(path):
+        return f"File not found: {filename}"
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+    if len(content) > 12000:
+        content = content[:12000] + "\n\n[... truncated ...]"
+    return content
+
+
+def set_session_goal(goal: str) -> str:
+    data = _load_memory()
+    data["meta"]["current_goal"] = goal
+    _save_memory_file(data)
+    return f"Session goal set: {goal}"
+
+
+def take_screenshot() -> str:
+    path = _safe_path("screenshot.png")
+    # Try Pillow first
+    try:
+        from PIL import ImageGrab
+        img = ImageGrab.grab()
+        img.save(path)
+        return f"Screenshot saved to output/screenshot.png ({img.width}x{img.height})"
+    except ImportError:
+        pass
+    # Try mss
+    try:
+        import mss
+        with mss.mss() as sct:
+            sct.shot(output=path)
+        return f"Screenshot saved to output/screenshot.png"
+    except ImportError:
+        pass
+    # Windows PowerShell fallback
+    if platform.system() == "Windows":
+        try:
+            ps = (
+                f'Add-Type -AssemblyName System.Windows.Forms;'
+                f'$s=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds;'
+                f'$b=New-Object System.Drawing.Bitmap($s.Width,$s.Height);'
+                f'$g=[System.Drawing.Graphics]::FromImage($b);'
+                f'$g.CopyFromScreen($s.Location,[System.Drawing.Point]::Empty,$s.Size);'
+                f'$b.Save("{path}")'
+            )
+            subprocess.run(["powershell", "-Command", ps], timeout=10, capture_output=True)
+            if os.path.exists(path):
+                return f"Screenshot saved to output/screenshot.png"
+        except Exception:
+            pass
+    return "Screenshot failed. Try: pip_install pillow or pip_install mss"
+
+
+def start_server(port: int = 8080) -> str:
+    import http.server
+    import socketserver
+    global _running_servers
+    if port in _running_servers:
+        return f"Server already running at http://localhost:{port}/"
+    handler = http.server.SimpleHTTPRequestHandler
+    try:
+        httpd = socketserver.TCPServer(("", port), handler)
+        httpd.allow_reuse_address = True
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        _running_servers[port] = (httpd, thread)
+        return (
+            f"Server started at http://localhost:{port}/\n"
+            f"Files in output/ are now served. Open http://localhost:{port}/your_file.html"
+        )
+    except Exception as e:
+        return f"Failed to start server on port {port}: {e}"
+
+
+def run_gui(filename: str) -> str:
+    path = _safe_path(filename)
+    if not os.path.exists(path):
+        return f"File not found: output/{filename}"
+    try:
+        if platform.system() == "Windows":
+            subprocess.Popen(
+                [sys.executable, path],
+                cwd=OUTPUT_DIR,
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+            )
+        else:
+            subprocess.Popen(
+                [sys.executable, path],
+                cwd=OUTPUT_DIR,
+            )
+        return f"Launched output/{filename} in a new window."
+    except Exception as e:
+        return f"Error launching GUI: {e}"
+
+
 # ── Web tools ───────────────────────────────────────────────
 
 class _TextExtractor(HTMLParser):
@@ -496,5 +676,21 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return recall_memories(tool_input["category"])
     elif tool_name == "list_memory_categories":
         return list_memory_categories()
+    elif tool_name == "pip_install":
+        return pip_install(tool_input["package"])
+    elif tool_name == "run_shell":
+        return run_shell(tool_input["command"])
+    elif tool_name == "get_system_info":
+        return get_system_info()
+    elif tool_name == "read_own_source":
+        return read_own_source(tool_input.get("filename", ""))
+    elif tool_name == "set_session_goal":
+        return set_session_goal(tool_input["goal"])
+    elif tool_name == "take_screenshot":
+        return take_screenshot()
+    elif tool_name == "start_server":
+        return start_server(int(tool_input.get("port", 8080)))
+    elif tool_name == "run_gui":
+        return run_gui(tool_input["filename"])
     else:
         return f"Unknown tool: {tool_name}"
