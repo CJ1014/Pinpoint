@@ -203,7 +203,12 @@ def run(logger: Optional[logging.Logger] = None) -> str:
 
         messages.append(message)
 
-        if not message.tool_calls:
+        # Extract tool calls — either from proper tool_calls field or from text fallback
+        raw_tool_calls = message.tool_calls or []
+        if not raw_tool_calls and message.content:
+            raw_tool_calls = _parse_text_tool_calls(message.content)
+
+        if not raw_tool_calls:
             print("\n[Agent stopped without calling done — ending session.]\n")
             logger.warning("Agent stopped without calling done.")
             break
@@ -211,12 +216,19 @@ def run(logger: Optional[logging.Logger] = None) -> str:
         tool_results = []
         finished = False
 
-        for tc in message.tool_calls:
-            name = tc.function.name
-            try:
-                inp = json.loads(tc.function.arguments)
-            except json.JSONDecodeError:
-                inp = {}
+        for tc in raw_tool_calls:
+            # Support both real tool_call objects and our parsed dicts
+            if isinstance(tc, dict):
+                name = tc["name"]
+                inp = tc["arguments"]
+                call_id = tc.get("id", f"call_{name}")
+            else:
+                name = tc.function.name
+                try:
+                    inp = json.loads(tc.function.arguments)
+                except json.JSONDecodeError:
+                    inp = {}
+                call_id = tc.id
 
             print(f"\n[TOOL CALL] {name}({_fmt_input(inp)})")
             logger.info("[TOOL] %s | input: %s", name, inp)
@@ -227,7 +239,7 @@ def run(logger: Optional[logging.Logger] = None) -> str:
 
             tool_results.append({
                 "role": "tool",
-                "tool_call_id": tc.id,
+                "tool_call_id": call_id,
                 "content": result,
             })
 
@@ -249,6 +261,36 @@ def run(logger: Optional[logging.Logger] = None) -> str:
         print(f"\n[Max iterations ({MAX_ITERATIONS}) reached — stopping.]\n")
 
     return final_summary
+
+
+def _parse_text_tool_calls(text: str) -> list:
+    """Fallback: detect tool calls that the model emitted as plain text JSON."""
+    calls = []
+    # Find all JSON objects in the text
+    depth = 0
+    start = -1
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start != -1:
+                chunk = text[start:i + 1]
+                try:
+                    obj = json.loads(chunk)
+                    # Accept {"name": "...", "arguments": {...}} format
+                    if "name" in obj and obj["name"] in {t["function"]["name"] for t in TOOLS}:
+                        calls.append({
+                            "name": obj["name"],
+                            "arguments": obj.get("arguments", obj.get("parameters", {})),
+                            "id": f"text_call_{len(calls)}",
+                        })
+                except json.JSONDecodeError:
+                    pass
+                start = -1
+    return calls
 
 
 def _fmt_input(inp: dict) -> str:
