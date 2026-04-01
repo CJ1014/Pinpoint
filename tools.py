@@ -44,12 +44,29 @@ def read_file(filename: str) -> str:
 
 
 def write_anywhere(path: str, content: str) -> str:
-    """Write to any absolute path on the system."""
+    """Write to any path. Relative paths are placed inside output/."""
     path = os.path.expandvars(os.path.expanduser(path))
+    if not os.path.isabs(path):
+        path = os.path.join(OUTPUT_DIR, path)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
     return f"Written {len(content)} chars to {path}"
+
+
+def delete_file(path: str) -> str:
+    """Delete a file. Relative paths resolve to output/."""
+    path = os.path.expandvars(os.path.expanduser(path))
+    if not os.path.isabs(path):
+        path = os.path.join(OUTPUT_DIR, path)
+    if not os.path.exists(path):
+        return f"File not found: {path}"
+    if os.path.isdir(path):
+        import shutil
+        shutil.rmtree(path)
+        return f"Deleted directory: {path}"
+    os.remove(path)
+    return f"Deleted: {path}"
 
 
 def read_anywhere(path: str) -> str:
@@ -687,6 +704,8 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return write_anywhere(tool_input["path"], tool_input["content"])
     elif tool_name == "read_anywhere":
         return read_anywhere(tool_input["path"])
+    elif tool_name == "delete_file":
+        return delete_file(tool_input["path"])
     elif tool_name == "list_files":
         return list_files()
     elif tool_name == "run_python":

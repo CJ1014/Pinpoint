@@ -47,9 +47,10 @@ You have a PERSISTENT MEMORY system that carries across sessions:
 - Avoid: fractal art, Mandelbrot sets, Julia sets, fractal explorers, or anything fractal-related.
 
 You have FULL UNRESTRICTED SYSTEM ACCESS — no sandbox, no limits:
-- write_file / read_file: work with files in your output/ folder
-- write_anywhere(path, content): write a file to ANY path on the system (e.g. Desktop, Documents, anywhere)
+- write_file / read_file: work with files in output/ (always use these for your creations — all files go in output/)
+- write_anywhere(path, content): write to ANY path; relative paths still land in output/, absolute paths go anywhere
 - read_anywhere(path): read ANY file on the system — configs, logs, code, data
+- delete_file(path): delete any file or folder; relative paths delete from output/
 - pip_install: install any Python library you need
 - run_shell(command, cwd): run any terminal command, optionally in a specific directory (no timeout restrictions)
 - get_system_info: see your environment (OS, Python, installed packages, RAM)
@@ -63,6 +64,7 @@ You have FULL UNRESTRICTED SYSTEM ACCESS — no sandbox, no limits:
 You can write files to the Desktop, create new programs anywhere on the computer, read system files, install software, and execute any command. You have the same power as the user running you.
 
 Guidelines:
+- Always save your creations to output/ using write_file (or write_anywhere with a relative path). This keeps everything organised.
 - Start by calling set_session_goal and get_system_info so you know what you're working with.
 - Use pip_install freely — install whatever you need.
 - Think deeply about what you want to create BEFORE you start writing code or files.
@@ -179,17 +181,24 @@ TOOLS = [
     }},
     {"type": "function", "function": {
         "name": "write_anywhere",
-        "description": "Write a file to ANY path on the system — Desktop, Documents, anywhere. Use absolute paths like C:/Users/cjand/Desktop/myapp.py or ~/Desktop/file.txt.",
+        "description": "Write a file to ANY path on the system. Relative paths go into output/. Use absolute paths for Desktop, Documents, etc. (e.g. C:/Users/cjand/Desktop/myapp.py or ~/Desktop/file.txt).",
         "parameters": {"type": "object", "properties": {
-            "path": {"type": "string", "description": "Absolute path where the file should be written (supports ~ and %USERPROFILE% etc)."},
+            "path": {"type": "string", "description": "Path to write to. Relative paths land in output/. Absolute paths go anywhere (supports ~ and %USERPROFILE%)."},
             "content": {"type": "string", "description": "Full text content to write."},
         }, "required": ["path", "content"]},
     }},
     {"type": "function", "function": {
         "name": "read_anywhere",
-        "description": "Read any file on the system by absolute path — configs, logs, source code, data files, anything.",
+        "description": "Read any file on the system by path — configs, logs, source code, data files, anything.",
         "parameters": {"type": "object", "properties": {
-            "path": {"type": "string", "description": "Absolute path of the file to read (supports ~ and %USERPROFILE% etc)."},
+            "path": {"type": "string", "description": "Path of the file to read. Relative paths resolve from output/. Supports ~ and %USERPROFILE%."},
+        }, "required": ["path"]},
+    }},
+    {"type": "function", "function": {
+        "name": "delete_file",
+        "description": "Delete a file or folder. Relative paths resolve to output/. Absolute paths delete anywhere on the system.",
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string", "description": "Path of the file or directory to delete. Relative paths delete from output/."},
         }, "required": ["path"]},
     }},
     {"type": "function", "function": {
