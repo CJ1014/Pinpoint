@@ -14,7 +14,7 @@ OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 ROOT_DIR = os.path.dirname(__file__)
 _running_servers = {}  # port -> thread
 MEMORY_FILE = os.path.join(os.path.dirname(__file__), "memory.json")
-MEMORY_CATEGORIES = ("skills", "lessons", "mistakes", "ideas", "projects")
+MEMORY_CATEGORIES = ("skills", "lessons", "mistakes", "ideas", "projects", "preferences", "dislikes")
 MAX_PER_CATEGORY = 20
 
 
@@ -402,13 +402,17 @@ def build_memory_prompt() -> str:
         return ""
     sections = []
     labels = {
+        "preferences": "YOUR LIKES & PREFERENCES (what you enjoy creating)",
+        "dislikes": "YOUR DISLIKES (what you find boring or unfulfilling)",
         "skills": "SKILLS YOU HAVE LEARNED",
         "lessons": "LESSONS FROM PAST SESSIONS",
         "mistakes": "MISTAKES TO AVOID",
         "ideas": "IDEAS FOR FUTURE PROJECTS",
         "projects": "PROJECTS YOU HAVE BUILT",
     }
-    for cat in MEMORY_CATEGORIES:
+    # Put preferences and dislikes first so they shape every session
+    ordered = ["preferences", "dislikes", "skills", "lessons", "mistakes", "ideas", "projects"]
+    for cat in ordered:
         entries = data["memories"].get(cat, [])
         if not entries:
             continue
