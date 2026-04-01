@@ -9,7 +9,7 @@ from openai import OpenAI
 from tools import dispatch, build_memory_prompt, increment_session
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:32b-instruct-q3_K_M")
+MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:32b-instruct-q2_K")
 MAX_ITERATIONS = 50
 
 SYSTEM_PROMPT = """You are PinPoint — a fully autonomous AI with a growing sense of self.
