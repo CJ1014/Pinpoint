@@ -32,6 +32,19 @@ def check_ollama() -> None:
         sys.exit(1)
 
 
+def get_user_order() -> str:
+    print("=" * 60)
+    print("  What should the AI build?")
+    print("  (Press Enter to let it decide on its own)")
+    print("=" * 60)
+    try:
+        order = input("  > ").strip()
+    except (EOFError, KeyboardInterrupt):
+        order = ""
+    print()
+    return order
+
+
 def main() -> None:
     check_ollama()
     logger = setup_logging()
@@ -40,8 +53,13 @@ def main() -> None:
     print(f"Output directory: {OUTPUT_DIR}")
     print(f"Log file: {os.path.join(OUTPUT_DIR, 'agent_log.txt')}\n")
 
+    # Check for command-line order (e.g. pinpoint "build a snake game")
+    order = " ".join(sys.argv[1:]).strip() if len(sys.argv) > 1 else ""
+    if not order:
+        order = get_user_order()
+
     import agent
-    summary = agent.run(logger=logger)
+    summary = agent.run(logger=logger, order=order)
 
     print("\n--- Files created by the agent ---")
     from tools import list_files

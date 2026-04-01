@@ -219,7 +219,7 @@ TOOLS = [
 ]
 
 
-def run(logger: Optional[logging.Logger] = None) -> str:
+def run(logger: Optional[logging.Logger] = None, order: str = "") -> str:
     client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama")
 
     if logger is None:
@@ -229,12 +229,21 @@ def run(logger: Optional[logging.Logger] = None) -> str:
     memory_context = build_memory_prompt()
     system_content = SYSTEM_PROMPT + memory_context
 
-    messages = [
-        {"role": "system", "content": system_content},
-        {"role": "user", "content": (
+    if order:
+        opening = (
+            f"You have been given a specific order from the user:\n\n"
+            f"  \"{order}\"\n\n"
+            f"Focus entirely on completing this. Use your tools to build exactly what was asked. Begin."
+        )
+    else:
+        opening = (
             "You are now running autonomously. Think about what you want to create, "
             "then use your tools to build it. There is no time limit — take as long as you need. Begin."
-        )},
+        )
+
+    messages = [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": opening},
     ]
 
     iteration = 0
@@ -245,6 +254,8 @@ def run(logger: Optional[logging.Logger] = None) -> str:
     print(f"  Model: {MODEL} (local Ollama)")
     print(f"  Session: #{session_num}")
     print("  Memory: " + ("loaded from previous sessions" if memory_context else "fresh start"))
+    if order:
+        print(f"  Order: {order}")
     print("=" * 60 + "\n")
     logger.info("Agent started. Model: %s | Session: %d", MODEL, session_num)
 
