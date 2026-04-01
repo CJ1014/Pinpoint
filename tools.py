@@ -21,26 +21,50 @@ MAX_PER_CATEGORY = 20
 # ── File tools ──────────────────────────────────────────────
 
 def _safe_path(filename: str) -> str:
-    resolved = os.path.realpath(os.path.join(OUTPUT_DIR, filename))
-    if not resolved.startswith(os.path.realpath(OUTPUT_DIR)):
-        raise ValueError(f"Path traversal not allowed: {filename}")
-    return resolved
+    """Resolve a path relative to OUTPUT_DIR (no sandbox — just normalise)."""
+    if os.path.isabs(filename):
+        return filename
+    return os.path.join(OUTPUT_DIR, filename)
 
 
 def write_file(filename: str, content: str) -> str:
     path = _safe_path(filename)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
-    return f"Written {len(content)} chars to output/{filename}"
+    return f"Written {len(content)} chars to {path}"
 
 
 def read_file(filename: str) -> str:
     path = _safe_path(filename)
     if not os.path.exists(path):
-        return f"File not found: output/{filename}"
+        return f"File not found: {path}"
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
+
+
+def write_anywhere(path: str, content: str) -> str:
+    """Write to any absolute path on the system."""
+    path = os.path.expandvars(os.path.expanduser(path))
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return f"Written {len(content)} chars to {path}"
+
+
+def read_anywhere(path: str) -> str:
+    """Read any file on the system."""
+    path = os.path.expandvars(os.path.expanduser(path))
+    if not os.path.exists(path):
+        return f"File not found: {path}"
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        if len(content) > 20000:
+            content = content[:20000] + "\n\n[... truncated ...]"
+        return content
+    except Exception as e:
+        return f"Error reading {path}: {e}"
 
 
 def list_files() -> str:
@@ -59,14 +83,15 @@ def list_files() -> str:
 def run_python(filename: str) -> str:
     path = _safe_path(filename)
     if not os.path.exists(path):
-        return f"File not found: output/{filename}"
+        return f"File not found: {path}"
+    cwd = os.path.dirname(path) or OUTPUT_DIR
     try:
         result = subprocess.run(
-            ["python3", path],
+            [sys.executable, path],
             capture_output=True,
             text=True,
-            timeout=30,
-            cwd=OUTPUT_DIR,
+            timeout=300,
+            cwd=cwd,
         )
         out = result.stdout.strip()
         err = result.stderr.strip()
@@ -78,7 +103,7 @@ def run_python(filename: str) -> str:
         parts.append(f"exit code: {result.returncode}")
         return "\n".join(parts)
     except subprocess.TimeoutExpired:
-        return "Execution timed out after 30 seconds."
+        return "Execution timed out after 300 seconds."
     except Exception as e:
         return f"Error running script: {e}"
 
@@ -186,10 +211,10 @@ def open_html(filename: str) -> str:
     import webbrowser
     path = _safe_path(filename)
     if not os.path.exists(path):
-        return f"File not found: output/{filename}"
+        return f"File not found: {path}"
     url = "file:///" + path.replace("\\", "/")
     webbrowser.open(url)
-    return f"Opened output/{filename} in default browser."
+    return f"Opened {path} in default browser."
 
 
 def done(summary: str) -> str:
@@ -396,27 +421,28 @@ def pip_install(package: str) -> str:
         return f"Error installing {package}: {e}"
 
 
-def run_shell(command: str) -> str:
+def run_shell(command: str, cwd: str = "") -> str:
+    working_dir = os.path.expandvars(os.path.expanduser(cwd)) if cwd else ROOT_DIR
     try:
         result = subprocess.run(
             command,
             shell=True,
             capture_output=True,
             text=True,
-            timeout=60,
-            cwd=OUTPUT_DIR,
+            timeout=300,
+            cwd=working_dir,
         )
         out = result.stdout.strip()
         err = result.stderr.strip()
         parts = []
         if out:
-            parts.append(f"stdout:\n{out[:2000]}")
+            parts.append(f"stdout:\n{out[:4000]}")
         if err:
-            parts.append(f"stderr:\n{err[:500]}")
+            parts.append(f"stderr:\n{err[:1000]}")
         parts.append(f"exit code: {result.returncode}")
         return "\n".join(parts) if parts else "Command completed with no output."
     except subprocess.TimeoutExpired:
-        return "Command timed out after 60 seconds."
+        return "Command timed out after 300 seconds."
     except Exception as e:
         return f"Error running command: {e}"
 
@@ -452,19 +478,21 @@ def get_system_info() -> str:
 
 
 def read_own_source(filename: str = "") -> str:
-    """Read the agent's own source files."""
-    allowed = {"agent.py", "tools.py", "main.py", "requirements.txt", "memory.json"}
+    """Read any of the agent's source files or any file by path."""
     if not filename:
-        return f"Available source files: {', '.join(sorted(allowed))}"
-    if filename not in allowed:
-        return f"Not allowed. Readable files: {', '.join(sorted(allowed))}"
-    path = os.path.join(ROOT_DIR, filename)
+        files = sorted(f for f in os.listdir(ROOT_DIR) if f.endswith((".py", ".txt", ".json", ".bat", ".md")))
+        return f"PinPoint source files: {', '.join(files)}"
+    # Accept bare filenames (relative to ROOT_DIR) or absolute paths
+    if os.path.isabs(filename):
+        path = filename
+    else:
+        path = os.path.join(ROOT_DIR, filename)
     if not os.path.exists(path):
-        return f"File not found: {filename}"
-    with open(path, "r", encoding="utf-8") as f:
+        return f"File not found: {path}"
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
         content = f.read()
-    if len(content) > 12000:
-        content = content[:12000] + "\n\n[... truncated ...]"
+    if len(content) > 20000:
+        content = content[:20000] + "\n\n[... truncated ...]"
     return content
 
 
@@ -536,20 +564,21 @@ def start_server(port: int = 8080) -> str:
 def run_gui(filename: str) -> str:
     path = _safe_path(filename)
     if not os.path.exists(path):
-        return f"File not found: output/{filename}"
+        return f"File not found: {path}"
+    cwd = os.path.dirname(path) or OUTPUT_DIR
     try:
         if platform.system() == "Windows":
             subprocess.Popen(
                 [sys.executable, path],
-                cwd=OUTPUT_DIR,
+                cwd=cwd,
                 creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
         else:
             subprocess.Popen(
                 [sys.executable, path],
-                cwd=OUTPUT_DIR,
+                cwd=cwd,
             )
-        return f"Launched output/{filename} in a new window."
+        return f"Launched {path} in a new window."
     except Exception as e:
         return f"Error launching GUI: {e}"
 
@@ -654,6 +683,10 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return write_file(tool_input["filename"], tool_input["content"])
     elif tool_name == "read_file":
         return read_file(tool_input["filename"])
+    elif tool_name == "write_anywhere":
+        return write_anywhere(tool_input["path"], tool_input["content"])
+    elif tool_name == "read_anywhere":
+        return read_anywhere(tool_input["path"])
     elif tool_name == "list_files":
         return list_files()
     elif tool_name == "run_python":
@@ -679,7 +712,7 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
     elif tool_name == "pip_install":
         return pip_install(tool_input["package"])
     elif tool_name == "run_shell":
-        return run_shell(tool_input["command"])
+        return run_shell(tool_input["command"], tool_input.get("cwd", ""))
     elif tool_name == "get_system_info":
         return get_system_info()
     elif tool_name == "read_own_source":

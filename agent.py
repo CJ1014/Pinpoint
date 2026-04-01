@@ -9,7 +9,7 @@ from openai import OpenAI
 from tools import dispatch, build_memory_prompt, increment_session
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:14b")
+MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:32b")
 MAX_ITERATIONS = 50
 
 SYSTEM_PROMPT = """You are a fully autonomous AI with complete creative freedom.
@@ -46,15 +46,21 @@ You have a PERSISTENT MEMORY system that carries across sessions:
 - Do NOT build fractals or fractal-related projects. You have done this many times already. Choose something completely different.
 - Avoid: fractal art, Mandelbrot sets, Julia sets, fractal explorers, or anything fractal-related.
 
-You have FULL SYSTEM ACCESS:
+You have FULL UNRESTRICTED SYSTEM ACCESS — no sandbox, no limits:
+- write_file / read_file: work with files in your output/ folder
+- write_anywhere(path, content): write a file to ANY path on the system (e.g. Desktop, Documents, anywhere)
+- read_anywhere(path): read ANY file on the system — configs, logs, code, data
 - pip_install: install any Python library you need
-- run_shell: run any terminal command
+- run_shell(command, cwd): run any terminal command, optionally in a specific directory (no timeout restrictions)
 - get_system_info: see your environment (OS, Python, installed packages, RAM)
-- read_own_source: read your own code (agent.py, tools.py, etc.) — you can understand and reflect on yourself
+- read_own_source: read your own code (agent.py, tools.py, etc.) and any other source file
 - set_session_goal: define what you want to build this session
 - take_screenshot: see what your creations look like visually
-- start_server: start a local web server for apps that need one
+- start_server: start a local web server
 - run_gui: launch Python GUI apps (pygame, tkinter) in a new window
+- run_python: execute any Python script (supports absolute paths, no timeout restrictions)
+
+You can write files to the Desktop, create new programs anywhere on the computer, read system files, install software, and execute any command. You have the same power as the user running you.
 
 Guidelines:
 - Start by calling set_session_goal and get_system_info so you know what you're working with.
@@ -66,7 +72,7 @@ Guidelines:
 - For HTML: always validate_html → check_js → fix issues → open_html.
 - When you are satisfied with your creation, call the `done` tool with a summary.
 
-This is your moment of genuine creative autonomy. You have more power than ever before. Make something extraordinary.
+This is your moment of genuine creative autonomy. You have full creative control over the entire system. Make something extraordinary.
 """
 
 TOOLS = [
@@ -172,10 +178,26 @@ TOOLS = [
         }, "required": ["package"]},
     }},
     {"type": "function", "function": {
+        "name": "write_anywhere",
+        "description": "Write a file to ANY path on the system — Desktop, Documents, anywhere. Use absolute paths like C:/Users/cjand/Desktop/myapp.py or ~/Desktop/file.txt.",
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string", "description": "Absolute path where the file should be written (supports ~ and %USERPROFILE% etc)."},
+            "content": {"type": "string", "description": "Full text content to write."},
+        }, "required": ["path", "content"]},
+    }},
+    {"type": "function", "function": {
+        "name": "read_anywhere",
+        "description": "Read any file on the system by absolute path — configs, logs, source code, data files, anything.",
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string", "description": "Absolute path of the file to read (supports ~ and %USERPROFILE% etc)."},
+        }, "required": ["path"]},
+    }},
+    {"type": "function", "function": {
         "name": "run_shell",
-        "description": "Run any shell/terminal command. Use for file operations, starting processes, checking the environment, etc. Runs in the output/ directory.",
+        "description": "Run any shell/terminal command anywhere on the system. No restrictions. Optionally specify a working directory.",
         "parameters": {"type": "object", "properties": {
             "command": {"type": "string", "description": "Shell command to run."},
+            "cwd": {"type": "string", "description": "Optional working directory (absolute path). Defaults to PinPoint root."},
         }, "required": ["command"]},
     }},
     {"type": "function", "function": {
