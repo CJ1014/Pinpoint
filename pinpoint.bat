@@ -1,7 +1,7 @@
 @echo off
 cd /d "C:\Users\cjand\OneDrive\Desktop\pinpoint"
 
-set OLLAMA_MODEL=qwen2.5-coder:14b
+set OLLAMA_MODEL=qwen2.5-coder:32b-instruct-q3_K_M
 set PYTHON=python
 if exist "C:\Users\cjand\AppData\Local\Programs\Python\Python314\python.exe" (
     set PYTHON=C:\Users\cjand\AppData\Local\Programs\Python\Python314\python.exe
