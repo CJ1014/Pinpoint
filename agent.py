@@ -265,31 +265,31 @@ def run(logger: Optional[logging.Logger] = None) -> str:
 
 def _parse_text_tool_calls(text: str) -> list:
     """Fallback: detect tool calls that the model emitted as plain text JSON."""
+    import re
     calls = []
-    # Find all JSON objects in the text
-    depth = 0
-    start = -1
-    for i, ch in enumerate(text):
-        if ch == "{":
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0 and start != -1:
-                chunk = text[start:i + 1]
-                try:
-                    obj = json.loads(chunk)
-                    # Accept {"name": "...", "arguments": {...}} format
-                    if "name" in obj and obj["name"] in {t["function"]["name"] for t in TOOLS}:
-                        calls.append({
-                            "name": obj["name"],
-                            "arguments": obj.get("arguments", obj.get("parameters", {})),
-                            "id": f"text_call_{len(calls)}",
-                        })
-                except json.JSONDecodeError:
-                    pass
-                start = -1
+    known_tools = {t["function"]["name"] for t in TOOLS}
+    decoder = json.JSONDecoder()
+
+    # Strip markdown code fences so the JSON parser sees clean input
+    text = re.sub(r"```(?:json)?\s*", "", text).replace("```", "")
+
+    # Use Python's proper JSON parser — handles strings with {} correctly
+    i = 0
+    while i < len(text):
+        if text[i] == "{":
+            try:
+                obj, end = decoder.raw_decode(text, i)
+                if isinstance(obj, dict) and obj.get("name") in known_tools:
+                    calls.append({
+                        "name": obj["name"],
+                        "arguments": obj.get("arguments", obj.get("parameters", {})),
+                        "id": f"text_call_{len(calls)}",
+                    })
+                i = end
+            except json.JSONDecodeError:
+                i += 1
+        else:
+            i += 1
     return calls
 
 
