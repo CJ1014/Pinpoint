@@ -295,14 +295,59 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         iteration += 1
         logger.info("--- Iteration %d ---", iteration)
 
+        # ── Stream the response so we can check interrupts between tokens ──
+        full_content = ""
+        tool_calls_acc = {}  # index -> {id, name, arguments}
+        interrupted = False
+        interrupt_msg = None
+
         for attempt in range(5):
             try:
-                response = client.chat.completions.create(
+                stream = client.chat.completions.create(
                     model=MODEL,
                     messages=messages,
                     tools=TOOLS,
                     tool_choice="auto",
+                    stream=True,
                 )
+                print("\n[AGENT] ", end="", flush=True)
+                for chunk in stream:
+                    # Check for interrupts between every token
+                    if interrupt_queue is not None and not interrupt_queue.empty():
+                        try:
+                            user_input = interrupt_queue.get_nowait()
+                            if user_input:
+                                interrupted = True
+                                interrupt_msg = user_input
+                                try:
+                                    stream.close()
+                                except Exception:
+                                    pass
+                                break
+                        except queue.Empty:
+                            pass
+
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+
+                    if delta.content:
+                        print(delta.content, end="", flush=True)
+                        full_content += delta.content
+
+                    if delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in tool_calls_acc:
+                                tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                            if tc.id:
+                                tool_calls_acc[idx]["id"] += tc.id
+                            if tc.function:
+                                if tc.function.name:
+                                    tool_calls_acc[idx]["name"] += tc.function.name
+                                if tc.function.arguments:
+                                    tool_calls_acc[idx]["arguments"] += tc.function.arguments
+                print()  # newline after streamed content
                 break
             except Exception as e:
                 err = str(e)
@@ -316,12 +361,51 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             print("\n[ERROR] Failed after 5 attempts.\n")
             break
 
-        choice = response.choices[0]
-        message = choice.message
+        # Handle interrupt — inject the message and re-prompt immediately
+        if interrupted:
+            if interrupt_msg.lower() == "/bug":
+                from main import inject_bug
+                bug_result = inject_bug()
+                inject_text = (
+                    f"[USER INTERRUPT — BUG INJECTED] {bug_result}. "
+                    f"Stop what you were doing. Find this bug and fix it."
+                )
+            else:
+                inject_text = f"[USER INTERRUPT] The user says: \"{interrupt_msg}\". Handle this now."
+            print(f"\n[INTERRUPT] {interrupt_msg}\n")
+            logger.info("[INTERRUPT] %s", interrupt_msg)
+            messages.append({"role": "user", "content": inject_text})
+            continue  # Skip tool processing, go straight to next iteration
 
-        if message.content and message.content.strip():
-            print(f"\n[AGENT] {message.content}\n")
-            logger.info("[TEXT] %s", message.content)
+        # Build a message object from streamed parts
+        streamed_tool_calls = []
+        for idx in sorted(tool_calls_acc.keys()):
+            acc = tool_calls_acc[idx]
+            if acc["name"]:
+                streamed_tool_calls.append({
+                    "id": acc["id"] or f"call_{idx}",
+                    "type": "function",
+                    "function": {"name": acc["name"], "arguments": acc["arguments"]},
+                })
+
+        if full_content.strip():
+            logger.info("[TEXT] %s", full_content)
+
+        # Reconstruct a compatible message for history
+        from openai.types.chat import ChatCompletionMessage
+        if streamed_tool_calls:
+            import openai.types.chat.chat_completion_message_tool_call as _tc_mod
+            tc_objects = [
+                _tc_mod.ChatCompletionMessageToolCall(
+                    id=t["id"],
+                    type="function",
+                    function=_tc_mod.Function(name=t["function"]["name"], arguments=t["function"]["arguments"]),
+                )
+                for t in streamed_tool_calls
+            ]
+            message = ChatCompletionMessage(role="assistant", content=full_content or None, tool_calls=tc_objects)
+        else:
+            message = ChatCompletionMessage(role="assistant", content=full_content or None, tool_calls=None)
 
         messages.append(message)
 
@@ -386,28 +470,6 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 finished = True
 
         messages.extend(tool_results)
-
-        # Check for user interrupts (messages or /bug command)
-        if interrupt_queue is not None:
-            while not interrupt_queue.empty():
-                try:
-                    user_input = interrupt_queue.get_nowait()
-                    if not user_input:
-                        continue
-                    if user_input.lower() == "/bug":
-                        from main import inject_bug
-                        bug_msg = inject_bug()
-                        interrupt_msg = (
-                            f"[SYSTEM INTERRUPT] A bug has been injected into one of your files: {bug_msg}. "
-                            f"Find it, understand what's broken, and fix it."
-                        )
-                    else:
-                        interrupt_msg = f"[USER INTERRUPT] The user says: \"{user_input}\". Respond to this immediately."
-                    print(f"\n[INTERRUPT RECEIVED] {user_input}\n")
-                    logger.info("[INTERRUPT] %s", user_input)
-                    messages.append({"role": "user", "content": interrupt_msg})
-                except queue.Empty:
-                    break
 
         if finished:
             print("\n" + "=" * 60)
