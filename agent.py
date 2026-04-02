@@ -252,6 +252,18 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
     last = mem_data.get("meta", {}).get("last_project", {})
     ongoing = last.get("satisfaction", 0) >= 4
 
+    # Build a dynamic "already built" ban list from project memories
+    past_projects = mem_data.get("memories", {}).get("projects", [])
+    if past_projects:
+        past_list = "\n".join(f"  - {e['content'][:120]}" for e in past_projects[-20:])
+        already_built_block = (
+            f"YOU HAVE ALREADY BUILT THESE — DO NOT REPEAT THEM:\n{past_list}\n\n"
+            f"Your new project MUST be completely different in concept, genre, AND mechanic. "
+            f"If it sounds even slightly similar to anything above, pick something else.\n\n"
+        )
+    else:
+        already_built_block = ""
+
     if order:
         opening = (
             f"Order from user: \"{order}\"\n\n"
@@ -276,12 +288,13 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         )
     else:
         opening = (
-            "Pick a new idea and build it.\n\n"
-            "Step 1: set_session_goal with your idea.\n"
-            "Step 2: write_file('plan.txt', ...) — plan your implementation in detail.\n"
-            "Step 3: execute the plan — write your code files.\n"
-            "Step 4: test everything, fix errors (search_web if stuck).\n"
-            "Step 5: call done. Go."
+            f"{already_built_block}"
+            f"Pick a brand new idea — something you have NEVER built before — and build it.\n\n"
+            f"Step 1: set_session_goal with your idea (make sure it's not on the list above).\n"
+            f"Step 2: write_file('plan.txt', ...) — plan your implementation in detail.\n"
+            f"Step 3: execute the plan — write your code files.\n"
+            f"Step 4: test everything, fix errors (search_web if stuck).\n"
+            f"Step 5: call done. Go."
         )
 
     messages = [
