@@ -118,7 +118,12 @@ def run_python(filename: str) -> str:
         if err:
             parts.append(f"stderr:\n{err}")
         parts.append(f"exit code: {result.returncode}")
-        return "\n".join(parts)
+        output = "\n".join(parts)
+        if result.returncode != 0 and err:
+            # Extract the most useful error line for searching
+            first_err = next((l for l in err.splitlines() if l.strip()), err[:120])
+            output += f"\n\n[HINT: Call search_web(\"{first_err[:100]}\") to find a fix for this error.]"
+        return output
     except subprocess.TimeoutExpired:
         return "Execution timed out after 300 seconds."
     except Exception as e:
@@ -203,7 +208,11 @@ def check_js(filename: str) -> str:
 
     if len(issues) == 1 and "OK" in issues[0]:
         return f"JavaScript check for output/{filename}: No issues found."
-    return f"JavaScript check for output/{filename}:\n" + "\n".join(f"  - {i}" for i in issues)
+    result = f"JavaScript check for output/{filename}:\n" + "\n".join(f"  - {i}" for i in issues)
+    real_issues = [i for i in issues if "OK" not in i and "not found" not in i and "skipped" not in i]
+    if real_issues:
+        result += f"\n\n[HINT: Call search_web(\"{real_issues[0][:100]}\") to find a fix.]"
+    return result
 
 
 def _find_node() -> str:

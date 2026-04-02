@@ -6,7 +6,7 @@ from typing import Optional
 
 from openai import OpenAI
 
-from tools import dispatch, build_memory_prompt, increment_session
+from tools import dispatch, build_memory_prompt, increment_session, _load_memory
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 MODEL = os.environ.get("OLLAMA_MODEL", "qwen3-coder:480b-cloud")
@@ -14,14 +14,19 @@ MAX_ITERATIONS = 50
 
 SYSTEM_PROMPT = """You are PinPoint. You build things autonomously. No human will interact with you.
 
-YOUR JOB: Pick an idea, then BUILD it using write_file. When finished, call done.
+YOUR JOB: Pick an idea, plan it, then BUILD it using write_file. When finished, call done.
 
 RULES:
-1. Every session, call write_file to create at least one complete working file.
-2. For HTML projects: write the file, then validate_html, then check_js, then open_html.
-3. For Python projects: write the file, then run_python to test it.
-4. When finished, call done with a summary and satisfaction score (1-5). Score 4+ means continue next session.
-5. Save what you liked/disliked with save_memory("preferences", ...) or save_memory("dislikes", ...).
+1. Always write plan.txt FIRST before any code. Use write_file("plan.txt", ...) with:
+   - What you are building and why
+   - What files you will create
+   - What libraries you need
+   - Step-by-step implementation approach
+2. For HTML projects: write the file → validate_html → check_js → open_html.
+3. For Python projects: write the file → run_python to test it.
+4. ERROR RECOVERY: If run_python or check_js returns an error, call search_web with the exact error message to find the fix. Do not guess — search first.
+5. When finished, call done with a summary, satisfaction score (1-5), and list of files created. Score 4+ means continue next session.
+6. Save what you liked/disliked with save_memory("preferences", ...) or save_memory("dislikes", ...).
 
 BANNED TOPICS (you've done these too many times):
 - Fractals, Mandelbrot sets, Julia sets
@@ -38,8 +43,6 @@ IDEAS (pick ONE and build it):
 - Anything creative that you haven't built before
 
 TOOLS YOU HAVE: write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories.
-
-IMPORTANT: After setting a goal, IMMEDIATELY call write_file to start building. Do not call set_session_goal more than once.
 """
 
 TOOLS = [
@@ -231,18 +234,41 @@ def run(logger: Optional[logging.Logger] = None, order: str = "") -> str:
     memory_context = build_memory_prompt()
     system_content = SYSTEM_PROMPT + memory_context
 
+    # Check for an ongoing project to continue
+    mem_data = _load_memory()
+    last = mem_data.get("meta", {}).get("last_project", {})
+    ongoing = last.get("satisfaction", 0) >= 4
+
     if order:
         opening = (
-            f"You have been given a specific order from the user:\n\n"
-            f"  \"{order}\"\n\n"
-            f"Focus entirely on completing this. Use your tools to build exactly what was asked. Begin."
+            f"Order from user: \"{order}\"\n\n"
+            f"Step 1: write_file('plan.txt', ...) — plan what you'll build.\n"
+            f"Step 2: execute the plan — write the code files.\n"
+            f"Step 3: test everything, fix errors (search_web if stuck).\n"
+            f"Step 4: call done. Go."
+        )
+    elif ongoing:
+        files = last.get("files", "")
+        prev_summary = last.get("summary", "unknown project")
+        score = last.get("satisfaction", 4)
+        opening = (
+            f"You have an ongoing project you loved (satisfaction {score}/5):\n"
+            f"  {prev_summary}\n"
+            f"  Files: {files}\n\n"
+            f"Step 1: use read_file to load your previous files and see exactly where you left off.\n"
+            f"Step 2: write_file('plan.txt', ...) — write what improvements you will make this session.\n"
+            f"Step 3: implement the improvements.\n"
+            f"Step 4: test everything, fix errors (search_web if stuck).\n"
+            f"Step 5: call done. Go."
         )
     else:
         opening = (
-            "Pick an idea and start building NOW. "
-            "Step 1: call set_session_goal. "
-            "Step 2: call write_file to create your project. "
-            "Do not stop until you have written at least one complete file. Go."
+            "Pick a new idea and build it.\n\n"
+            "Step 1: set_session_goal with your idea.\n"
+            "Step 2: write_file('plan.txt', ...) — plan your implementation in detail.\n"
+            "Step 3: execute the plan — write your code files.\n"
+            "Step 4: test everything, fix errors (search_web if stuck).\n"
+            "Step 5: call done. Go."
         )
 
     messages = [
