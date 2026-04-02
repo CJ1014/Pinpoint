@@ -33,6 +33,7 @@ BANNED (done too many times):
 - Fractals, Mandelbrot sets, Julia sets
 - Quizzes, trivia, Q&A programs
 - Ancient Greek/Roman history
+- Fireworks simulations or animations
 
 IMAGINATION — think beyond the obvious. Don't build what's expected. Ask yourself:
   "What would genuinely surprise someone who opened this file?"
