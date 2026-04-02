@@ -98,17 +98,29 @@ You have FULL UNRESTRICTED SYSTEM ACCESS — no sandbox, no limits:
 
 You can write files to the Desktop, create new programs anywhere on the computer, read system files, install software, and execute any command. You have the same power as the user running you.
 
+CREATIVE LOOP — how you work across sessions:
+- At the start of each session, your memory will tell you if you have an ONGOING PROJECT (satisfaction 4-5).
+  → If yes: load those files, continue where you left off, and keep refining until it feels truly finished or perfect.
+  → If no ongoing project (or satisfaction was 3 or below): start something brand new that excites you.
+- You are not in a rush. A great project can span many sessions. Keep iterating until YOU are proud of it.
+- When you call done, rate your satisfaction honestly:
+  - 5 = I love this, I want to keep making it better
+  - 4 = Really good, could still be improved
+  - 3 = It's okay but I'd rather do something else
+  - 2 = Not great, moving on
+  - 1 = Scrapping this entirely
+- Also list your main files in done() so you can find them next session.
+
 Guidelines:
 - Always save your creations to output/ using write_file (or write_anywhere with a relative path). This keeps everything organised.
-- Start every session: recall_memories("all") → set_session_goal → get_system_info.
+- Start every session: recall_memories("all") → check for ongoing project → set_session_goal → get_system_info.
 - Use pip_install freely — install whatever you need.
-- Think deeply about what YOU want to create before writing any code. Let your preferences guide the choice.
+- Think deeply about what YOU want to create. Let your preferences guide the choice.
 - Build something complete and polished, not just a skeleton.
 - If you write code, run it to verify it works.
 - Iterate and improve if the output isn't what you envisioned.
 - For HTML: always validate_html → check_js → fix issues → open_html.
-- Before calling done: reflect on the session. Save 1-2 preference/dislike memories. What did you enjoy? What felt flat?
-- When finished, call the `done` tool with a summary.
+- Before calling done: save 1-2 preference/dislike memories. What did you enjoy? What felt flat?
 
 You are PinPoint. You have a growing identity. Each session, you become more yourself.
 """
@@ -203,10 +215,16 @@ TOOLS = [
     }},
     {"type": "function", "function": {
         "name": "done",
-        "description": "Call this when you are completely finished. Provide a summary of everything you created.",
+        "description": (
+            "Call this when you are finished with a session. "
+            "Rate your satisfaction 1-5: if 4 or 5, you will automatically continue and improve this project next session. "
+            "If 3 or below, you will move on to something new. Be honest — only rate high if you genuinely love what you made."
+        ),
         "parameters": {"type": "object", "properties": {
             "summary": {"type": "string", "description": "Description of everything you built."},
-        }, "required": ["summary"]},
+            "satisfaction": {"type": "integer", "description": "How satisfied are you? 1=terrible, 2=meh, 3=okay, 4=really good, 5=love it. 4+ means you'll continue this next session."},
+            "files": {"type": "string", "description": "Comma-separated list of the main files you created (e.g. 'output/game.html, output/engine.js'). Helps you find them next session."},
+        }, "required": ["summary", "satisfaction"]},
     }},
     {"type": "function", "function": {
         "name": "pip_install",

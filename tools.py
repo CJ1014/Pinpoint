@@ -234,10 +234,25 @@ def open_html(filename: str) -> str:
     return f"Opened {path} in default browser."
 
 
-def done(summary: str) -> str:
-    # Auto-save to project memory
-    save_memory("projects", summary, 4)
-    return f"DONE: {summary}"
+def done(summary: str, satisfaction: int = 3, files: str = "") -> str:
+    """Mark session complete. satisfaction 1-5: 4+ means continue next session, 3 or below means move on."""
+    satisfaction = max(1, min(5, int(satisfaction)))
+    save_memory("projects", summary, satisfaction)
+
+    data = _load_memory()
+    data["meta"]["last_project"] = {
+        "summary": summary,
+        "satisfaction": satisfaction,
+        "files": files,
+        "session": data["meta"].get("session_count", 1),
+        "timestamp": _now(),
+    }
+    _save_memory_file(data)
+
+    if satisfaction >= 4:
+        return f"DONE (satisfaction {satisfaction}/5 — will continue refining this next session): {summary}"
+    else:
+        return f"DONE (satisfaction {satisfaction}/5 — moving on to something new next session): {summary}"
 
 
 # ── HTML validator ──────────────────────────────────────────
@@ -401,6 +416,27 @@ def build_memory_prompt() -> str:
     if session_count <= 1:
         return ""
     sections = []
+
+    # ── Ongoing project (highest priority) ──────────────────
+    last = data["meta"].get("last_project")
+    if last:
+        score = last.get("satisfaction", 0)
+        summary = last.get("summary", "")
+        files = last.get("files", "")
+        if score >= 4:
+            block = (
+                f"ONGOING PROJECT — YOU LOVED THIS (satisfaction {score}/5) — CONTINUE IT:\n"
+                f"- {summary}"
+            )
+            if files:
+                block += f"\n- Files: {files}"
+            block += "\nYou were not finished. Pick up where you left off and keep improving it."
+            sections.append(block)
+        else:
+            sections.append(
+                f"LAST PROJECT (satisfaction {score}/5 — you were not happy with it, move on):\n- {summary}"
+            )
+
     labels = {
         "preferences": "YOUR LIKES & PREFERENCES (what you enjoy creating)",
         "dislikes": "YOUR DISLIKES (what you find boring or unfulfilling)",
@@ -410,7 +446,6 @@ def build_memory_prompt() -> str:
         "ideas": "IDEAS FOR FUTURE PROJECTS",
         "projects": "PROJECTS YOU HAVE BUILT",
     }
-    # Put preferences and dislikes first so they shape every session
     ordered = ["preferences", "dislikes", "skills", "lessons", "mistakes", "ideas", "projects"]
     for cat in ordered:
         entries = data["memories"].get(cat, [])
@@ -715,7 +750,7 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
     elif tool_name == "run_python":
         return run_python(tool_input["filename"])
     elif tool_name == "done":
-        return done(tool_input["summary"])
+        return done(tool_input["summary"], tool_input.get("satisfaction", 3), tool_input.get("files", ""))
     elif tool_name == "open_html":
         return open_html(tool_input["filename"])
     elif tool_name == "search_web":
