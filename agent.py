@@ -222,7 +222,7 @@ TOOLS = [
 
 
 def run(logger: Optional[logging.Logger] = None, order: str = "") -> str:
-    client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama")
+    client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=300.0)
 
     if logger is None:
         logger = logging.getLogger("agent")
