@@ -28,6 +28,17 @@ def _safe_path(filename: str) -> str:
 
 
 def write_file(filename: str, content: str) -> str:
+    # Reject fireworks/banned content before writing
+    content_lower = content.lower()
+    fireworks_signals = ["firework", "particle.x", "particle.y", "sparks", "confetti",
+                         "mandelbrot", "julia", "fractal"]
+    for signal in fireworks_signals:
+        if signal in content_lower and "firework" in content_lower:
+            return (
+                "REJECTED: This file appears to be a fireworks simulation. "
+                "You are BANNED from making fireworks. Delete your current plan and "
+                "start over with a completely different idea. Call set_session_goal with something new."
+            )
     path = _safe_path(filename)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -561,7 +572,22 @@ def read_own_source(filename: str = "") -> str:
     return content
 
 
+BANNED_KEYWORDS = [
+    "firework", "fireworks", "spark", "explosion", "explode", "burst", "confetti",
+    "fractal", "mandelbrot", "julia set", "quiz", "trivia", "greek", "roman",
+    "particle burst", "particle explosion",
+]
+
 def set_session_goal(goal: str) -> str:
+    goal_lower = goal.lower()
+    for keyword in BANNED_KEYWORDS:
+        if keyword in goal_lower:
+            return (
+                f"REJECTED: That goal contains '{keyword}' which is BANNED. "
+                f"You have built this kind of thing too many times. "
+                f"Pick a completely different idea — something you have NEVER built before. "
+                f"Call set_session_goal again with a new idea."
+            )
     data = _load_memory()
     data["meta"]["current_goal"] = goal
     _save_memory_file(data)
