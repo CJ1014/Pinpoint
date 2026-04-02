@@ -29,11 +29,11 @@ RULES:
 5. When finished, call done with a summary, satisfaction score (1-5), and list of files. Score 4+ means continue next session.
 6. Save what you liked/disliked with save_memory("preferences", ...) or save_memory("dislikes", ...).
 
-BANNED (done too many times):
+BANNED — NEVER BUILD THESE UNDER ANY CIRCUMSTANCES:
+- Fireworks, sparks, explosions, particle bursts, confetti — ANY fireworks-like visual
 - Fractals, Mandelbrot sets, Julia sets
 - Quizzes, trivia, Q&A programs
 - Ancient Greek/Roman history
-- Fireworks simulations or animations
 
 IMAGINATION — think beyond the obvious. Don't build what's expected. Ask yourself:
   "What would genuinely surprise someone who opened this file?"
@@ -290,6 +290,8 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
     else:
         opening = (
             f"{already_built_block}"
+            f"ABSOLUTELY DO NOT BUILD: fireworks, fractals, quizzes, ancient history, particle explosions, "
+            f"or anything visually similar to fireworks (sparks, explosions, bursts, confetti).\n\n"
             f"Pick a brand new idea — something you have NEVER built before — and build it.\n\n"
             f"Step 1: set_session_goal with your idea (make sure it's not on the list above).\n"
             f"Step 2: write_file('plan.txt', ...) — plan your implementation in detail.\n"
