@@ -7,7 +7,7 @@ from typing import Optional
 
 from openai import OpenAI
 
-from tools import dispatch, build_memory_prompt, increment_session, _load_memory
+from tools import dispatch, build_memory_prompt, increment_session, _load_memory, _save_memory_file
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 MODEL = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b-cloud")
@@ -451,7 +451,6 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 print(f"\n[SKIP] Forcing move to new project.\n")
                 logger.info("[INTERRUPT] /next — forcing new project")
                 # Clear the ongoing project so next session starts fresh
-                from tools import _load_memory, _save_memory_file
                 mem = _load_memory()
                 mem.get("meta", {}).pop("last_project", None)
                 _save_memory_file(mem)
