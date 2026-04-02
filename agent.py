@@ -309,10 +309,13 @@ def run(logger: Optional[logging.Logger] = None, order: str = "") -> str:
             break
 
         # Detect infinite loops: if same tool calls repeat, stop
-        current_calls_str = str([(tc.get("name") if isinstance(tc, dict) else tc.function.name,
-                                  tc.get("arguments") if isinstance(tc, dict) else tc.function.arguments)
-                                 for tc in raw_tool_calls])
-        last_calls_str = str([(tc.get("name"), tc.get("arguments")) for tc in last_tool_calls])
+        def _tc_key(tc):
+            if isinstance(tc, dict):
+                return (tc.get("name"), str(tc.get("arguments")))
+            return (tc.function.name, tc.function.arguments)
+
+        current_calls_str = str([_tc_key(tc) for tc in raw_tool_calls])
+        last_calls_str = str([_tc_key(tc) for tc in last_tool_calls])
         if current_calls_str == last_calls_str and last_tool_calls:
             print("\n[LOOP DETECTED] Agent is calling the same tools with same arguments repeatedly.")
             print("[STOPPING] This session is stuck. Moving to next session.\n")

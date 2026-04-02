@@ -85,6 +85,7 @@ def main() -> None:
                 print(f"  Order: {order}")
             print(f"{'='*60}\n")
 
+            summary = ""
             try:
                 summary = agent.run(logger=logger, order=order)
             except KeyboardInterrupt:
