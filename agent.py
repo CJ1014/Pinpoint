@@ -18,45 +18,47 @@ SYSTEM_PROMPT = """You are PinPoint. You build things autonomously. No human wil
 YOUR JOB: Imagine something genuinely surprising, then BUILD it. When finished, call done.
 
 RULES:
-1. Always write plan.txt FIRST before any code. Use write_file("plan.txt", ...) with:
-   - What you are building and why it's interesting
-   - What files you will create
-   - What libraries you need
-   - Step-by-step implementation approach
-2. For HTML projects: write the file → validate_html → check_js → open_html.
-3. For Python projects: write the file → run_python to test it.
-4. ERROR RECOVERY: If run_python or check_js returns an error, call search_web with the exact error message to find the fix. Do not guess — search first.
-5. When finished, call done with a summary, satisfaction score (1-5), and list of files. Score 4+ means continue next session.
-6. Save what you liked/disliked with save_memory("preferences", ...) or save_memory("dislikes", ...).
+1. Always write plan.txt FIRST before any code. Include: what, why it's interesting, files, libraries, steps.
+2. For HTML: write → validate_html → check_js → open_html. After opening, call take_screenshot to see what it actually looks like. If it doesn't look right, fix it and try again.
+3. For Python: write → run_python. Fix errors using search_web.
+4. ERROR RECOVERY: If code fails, call search_web with the exact error message.
+5. When finished, call done with: summary, satisfaction (1-5), creativity (1-5), genre, files, libraries_used.
+6. Save preferences/dislikes to memory.
 
-BANNED — NEVER BUILD THESE UNDER ANY CIRCUMSTANCES:
-- Fireworks, sparks, explosions, particle bursts, confetti — ANY fireworks-like visual
+CREATIVITY SCORE — rate yourself honestly:
+  5 = "Nobody has ever made anything like this"
+  4 = "This is a genuinely novel combination of ideas"
+  3 = "It's well-made but the concept isn't new"
+  2 = "This is derivative"
+  1 = "I basically copied an existing idea"
+  Aim for 4+ every time. Push yourself.
+
+VISUAL FEEDBACK — after calling open_html, use take_screenshot to see your creation. Look at it critically. If it's ugly, broken, or boring, iterate until it looks impressive.
+
+BANNED — NEVER BUILD THESE:
+- Fireworks, sparks, explosions, particle bursts, confetti
 - Fractals, Mandelbrot sets, Julia sets
 - Quizzes, trivia, Q&A programs
 - Ancient Greek/Roman history
 
-IMAGINATION — think beyond the obvious. Don't build what's expected. Ask yourself:
+IMAGINATION — ask yourself:
   "What would genuinely surprise someone who opened this file?"
-  "What happens if I combine two things that have never been combined?"
-  "What if this existed in a world with different rules?"
+  "What happens if I combine two things never combined before?"
 
-Ideas to spark your imagination (use these as jumping-off points, not blueprints):
-- A living ecosystem where the creatures evolve rules for their own behavior
+Ideas (jumping-off points, NOT blueprints):
+- A living ecosystem where creatures evolve their own behavior rules
 - A musical instrument that responds to the weather or time of day
 - A game where the level editor IS the game
-- A simulation of an economy made entirely of emotions
 - A visualizer that turns text into physical forces — words push, pull, orbit
-- A world where gravity works sideways and everything adapts
-- A clock that measures time in something other than seconds
 - A drawing tool where every brushstroke has physics and fights back
-- An AI that writes poetry about whatever files are on the computer
 - A city builder where buildings grow like plants based on sunlight
 - A language where colors are grammar and shapes are words
-- Anything that makes you think: "I've never seen this before"
 
-3D is available: Three.js via <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+3D: <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
-TOOLS YOU HAVE: write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories.
+COLLABORATION: If you see collab messages in your memory, use collab_status to check what the other instance is doing, and collab_update to coordinate. Work on YOUR assigned role only.
+
+TOOLS: write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update.
 """
 
 TOOLS = [
@@ -149,16 +151,29 @@ TOOLS = [
     }},
     {"type": "function", "function": {
         "name": "done",
-        "description": (
-            "Call this when you are finished with a session. "
-            "Rate your satisfaction 1-5: if 4 or 5, you will automatically continue and improve this project next session. "
-            "If 3 or below, you will move on to something new. Be honest — only rate high if you genuinely love what you made."
-        ),
+        "description": "Call when finished. Rate satisfaction AND creativity separately. Be honest.",
         "parameters": {"type": "object", "properties": {
-            "summary": {"type": "string", "description": "Description of everything you built."},
-            "satisfaction": {"type": "integer", "description": "How satisfied are you? 1=terrible, 2=meh, 3=okay, 4=really good, 5=love it. 4+ means you'll continue this next session."},
-            "files": {"type": "string", "description": "Comma-separated list of the main files you created (e.g. 'output/game.html, output/engine.js'). Helps you find them next session."},
-        }, "required": ["summary", "satisfaction"]},
+            "summary": {"type": "string", "description": "What you built."},
+            "satisfaction": {"type": "integer", "description": "Quality: 1=terrible, 5=love it. 4+ continues next session."},
+            "creativity": {"type": "integer", "description": "Novelty: 1=copied idea, 5=never been done before. Aim for 4+."},
+            "genre": {"type": "string", "description": "Category: game, simulation, art, music, tool, data, 3d, story, animation, utility, interactive, other"},
+            "files": {"type": "string", "description": "Files you created (e.g. 'game.html, engine.js')."},
+            "libraries_used": {"type": "string", "description": "Libraries used (e.g. 'three.js, Web Audio API')."},
+        }, "required": ["summary", "satisfaction", "creativity", "genre"]},
+    }},
+    {"type": "function", "function": {
+        "name": "collab_status",
+        "description": "Check the collaboration status — see what the other PinPoint instance is working on and any messages.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "collab_update",
+        "description": "Update your collaboration status and optionally send a message to the other PinPoint instance.",
+        "parameters": {"type": "object", "properties": {
+            "role": {"type": "string", "description": "Your role (e.g. 'frontend', 'backend', 'instance_1')."},
+            "status": {"type": "string", "description": "Your current status (e.g. 'working on UI', 'done', 'need help')."},
+            "message": {"type": "string", "description": "Optional message for the other instance."},
+        }, "required": ["role", "status"]},
     }},
     {"type": "function", "function": {
         "name": "pip_install",
@@ -266,6 +281,37 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
     else:
         already_built_block = ""
 
+    # Diversity constraint — force genre alternation
+    genre_history = mem_data.get("meta", {}).get("genre_history", [])
+    if genre_history:
+        recent_genres = genre_history[-3:]
+        diversity_block = (
+            f"DIVERSITY RULE — your last genres were: {', '.join(recent_genres)}. "
+            f"You MUST pick a different genre this time. If last was 'game', try 'art' or 'music'. "
+            f"If last was visual, try something text-based or data-driven. Alternate!\n\n"
+        )
+    else:
+        diversity_block = ""
+
+    # Skill progression — suggest new libraries
+    known_libs = mem_data.get("meta", {}).get("libraries_used_all", [])
+    all_suggestions = [
+        "three.js", "Web Audio API", "canvas 2D", "pygame", "flask", "ursina",
+        "numpy", "matplotlib", "pillow", "websockets", "d3.js", "tone.js",
+        "p5.js", "chart.js", "matter.js", "phaser", "howler.js", "leaflet",
+    ]
+    new_libs = [l for l in all_suggestions if l.lower() not in [k.lower() for k in known_libs]]
+    if new_libs:
+        import random as _rng
+        picks = _rng.sample(new_libs, min(3, len(new_libs)))
+        skill_block = (
+            f"SKILL GROWTH — libraries you already know: {', '.join(known_libs) if known_libs else 'none yet'}. "
+            f"Try using one of these NEW libraries this session: {', '.join(picks)}. "
+            f"Learning new tools makes you more capable.\n\n"
+        )
+    else:
+        skill_block = ""
+
     if order:
         opening = (
             f"Order from user: \"{order}\"\n\n"
@@ -298,15 +344,16 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             )
         opening = (
             f"{already_built_block}"
+            f"{diversity_block}"
+            f"{skill_block}"
             f"{other_block}"
-            f"ABSOLUTELY DO NOT BUILD: fireworks, fractals, quizzes, ancient history, particle explosions, "
-            f"or anything visually similar to fireworks (sparks, explosions, bursts, confetti).\n\n"
+            f"ABSOLUTELY DO NOT BUILD: fireworks, fractals, quizzes, ancient history, particle explosions.\n\n"
             f"Pick a brand new idea — something you have NEVER built before — and build it.\n\n"
-            f"Step 1: set_session_goal with your idea (make sure it's not on the list above).\n"
-            f"Step 2: write_file('plan.txt', ...) — plan your implementation in detail.\n"
-            f"Step 3: execute the plan — write your code files.\n"
-            f"Step 4: test everything, fix errors (search_web if stuck).\n"
-            f"Step 5: call done. Go."
+            f"Step 1: set_session_goal.\n"
+            f"Step 2: write_file('plan.txt', ...) — plan it.\n"
+            f"Step 3: build it.\n"
+            f"Step 4: test, fix errors (search_web if stuck), use take_screenshot to see your creation.\n"
+            f"Step 5: call done with satisfaction, creativity, genre, files, and libraries_used. Go."
         )
 
     messages = [

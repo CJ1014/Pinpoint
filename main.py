@@ -154,16 +154,66 @@ def inject_bug() -> str:
         return f"Bug injection failed: {e}"
 
 
+def start_web_server(port: int = 8888) -> None:
+    """Auto-start a web server to browse PinPoint's creations."""
+    import http.server, socketserver
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    handler = http.server.SimpleHTTPRequestHandler
+    try:
+        httpd = socketserver.TCPServer(("", port), handler)
+        httpd.allow_reuse_address = True
+        t = threading.Thread(target=httpd.serve_forever, daemon=True)
+        t.start()
+        print(f"  Web gallery     : http://localhost:{port}/")
+    except Exception:
+        print(f"  Web gallery     : (port {port} busy, skipped)")
+
+
+def setup_collab(goal: str) -> None:
+    """Create a collab.json file for two instances to coordinate."""
+    collab_path = os.path.join(OUTPUT_DIR, "collab.json")
+    data = {
+        "goal": goal,
+        "roles": {
+            "instance_1": {"task": "Build the backend / core logic", "status": "waiting"},
+            "instance_2": {"task": "Build the frontend / UI", "status": "waiting"},
+        },
+        "messages": [
+            {"from": "system", "text": f"Collaboration started: {goal}", "time": "now"}
+        ],
+    }
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    with open(collab_path, "w") as f:
+        json.dump(data, f, indent=2)
+    print(f"\n  Collab file created: {collab_path}")
+    print(f"  Goal: {goal}")
+    print(f"  Run two instances of PinPoint — they will coordinate via collab.json\n")
+
+
 def main() -> None:
     check_ollama()
     logger = setup_logging()
 
     print(BANNER)
     print(f"  Output directory : {OUTPUT_DIR}")
-    print(f"  Log file         : {os.path.join(OUTPUT_DIR, 'agent_log.txt')}\n")
+    print(f"  Log file         : {os.path.join(OUTPUT_DIR, 'agent_log.txt')}")
+
+    # Auto-start web server to browse creations
+    start_web_server(8888)
+    print()
 
     # Command-line order overrides interactive prompt
     order = " ".join(sys.argv[1:]).strip() if len(sys.argv) > 1 else ""
+
+    # Handle /collab command
+    if order.startswith("/collab "):
+        collab_goal = order[len("/collab "):].strip()
+        setup_collab(collab_goal)
+        order = f"COLLABORATION MODE: Check collab_status for your assigned role. Build your part of: {collab_goal}"
+    elif order == "/collab":
+        print("Usage: pinpoint /collab \"build a multiplayer game\"")
+        return
+
     if not order:
         order = get_user_order()
 

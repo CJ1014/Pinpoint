@@ -251,28 +251,67 @@ def open_html(filename: str) -> str:
         return f"File not found: {path}"
     url = "file:///" + path.replace("\\", "/")
     webbrowser.open(url)
-    return f"Opened {path} in default browser."
+
+    # Auto-screenshot after 3 seconds for visual feedback
+    def _delayed_screenshot():
+        import time as _time
+        _time.sleep(3)
+        try:
+            take_screenshot()
+        except Exception:
+            pass
+    t = threading.Thread(target=_delayed_screenshot, daemon=True)
+    t.start()
+
+    return (
+        f"Opened {path} in default browser. "
+        f"A screenshot will be saved to output/screenshot.png in ~3 seconds. "
+        f"Call take_screenshot later to see what your creation actually looks like."
+    )
 
 
-def done(summary: str, satisfaction: int = 3, files: str = "") -> str:
-    """Mark session complete. satisfaction 1-5: 4+ means continue next session, 3 or below means move on."""
+GENRE_CATEGORIES = [
+    "game", "simulation", "art", "music", "tool", "data",
+    "3d", "story", "animation", "utility", "interactive", "other",
+]
+
+def done(summary: str, satisfaction: int = 3, files: str = "",
+         creativity: int = 3, genre: str = "", libraries_used: str = "") -> str:
+    """Mark session complete."""
     satisfaction = max(1, min(5, int(satisfaction)))
+    creativity = max(1, min(5, int(creativity)))
     save_memory("projects", summary, satisfaction)
 
     data = _load_memory()
     data["meta"]["last_project"] = {
         "summary": summary,
         "satisfaction": satisfaction,
+        "creativity": creativity,
+        "genre": genre.lower() if genre else "other",
+        "libraries_used": libraries_used,
         "files": files,
         "session": data["meta"].get("session_count", 1),
         "timestamp": _now(),
     }
+
+    # Track genre history for diversity constraint
+    genre_history = data["meta"].get("genre_history", [])
+    genre_history.append(genre.lower() if genre else "other")
+    data["meta"]["genre_history"] = genre_history[-20:]  # keep last 20
+
+    # Track libraries for skill progression
+    all_libs = set(data["meta"].get("libraries_used_all", []))
+    if libraries_used:
+        for lib in libraries_used.split(","):
+            all_libs.add(lib.strip().lower())
+    data["meta"]["libraries_used_all"] = sorted(all_libs)
+
     _save_memory_file(data)
 
     if satisfaction >= 4:
-        return f"DONE (satisfaction {satisfaction}/5 — will continue refining this next session): {summary}"
+        return f"DONE (satisfaction {satisfaction}/5, creativity {creativity}/5 — will continue next session): {summary}"
     else:
-        return f"DONE (satisfaction {satisfaction}/5 — moving on to something new next session): {summary}"
+        return f"DONE (satisfaction {satisfaction}/5, creativity {creativity}/5 — moving on): {summary}"
 
 
 # ── HTML validator ──────────────────────────────────────────
@@ -767,6 +806,54 @@ def search_web(query: str) -> str:
         return f"Error searching web: {e}"
 
 
+# ── Collaboration ──────────────────────────────────────────
+
+COLLAB_FILE = os.path.join(OUTPUT_DIR, "collab.json")
+
+
+def collab_status() -> str:
+    """Read the current collaboration state."""
+    if not os.path.exists(COLLAB_FILE):
+        return "No collaboration active."
+    with open(COLLAB_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    lines = [f"Collaboration: {data.get('goal', 'unknown')}"]
+    for role, info in data.get("roles", {}).items():
+        status = info.get("status", "unknown")
+        task = info.get("task", "")
+        lines.append(f"  {role}: {task} [{status}]")
+    msgs = data.get("messages", [])
+    if msgs:
+        lines.append("Recent messages:")
+        for m in msgs[-5:]:
+            lines.append(f"  [{m['from']}] {m['text']}")
+    return "\n".join(lines)
+
+
+def collab_update(role: str, status: str, message: str = "") -> str:
+    """Update your collaboration status and optionally send a message to the other instance."""
+    if not os.path.exists(COLLAB_FILE):
+        data = {"goal": "", "roles": {}, "messages": []}
+    else:
+        with open(COLLAB_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    if role not in data.get("roles", {}):
+        data.setdefault("roles", {})[role] = {}
+    data["roles"][role]["status"] = status
+    data["roles"][role]["updated"] = _now()
+    if message:
+        data.setdefault("messages", []).append({
+            "from": role,
+            "text": message,
+            "time": _now(),
+        })
+        # Keep last 20 messages
+        data["messages"] = data["messages"][-20:]
+    with open(COLLAB_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    return f"Collab updated: {role} = {status}" + (f" | message: {message}" if message else "")
+
+
 # ── Dispatch ────────────────────────────────────────────────
 
 def dispatch(tool_name: str, tool_input: dict) -> str:
@@ -785,7 +872,14 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
     elif tool_name == "run_python":
         return run_python(tool_input["filename"])
     elif tool_name == "done":
-        return done(tool_input["summary"], tool_input.get("satisfaction", 3), tool_input.get("files", ""))
+        return done(
+            tool_input["summary"],
+            tool_input.get("satisfaction", 3),
+            tool_input.get("files", ""),
+            tool_input.get("creativity", 3),
+            tool_input.get("genre", "other"),
+            tool_input.get("libraries_used", ""),
+        )
     elif tool_name == "open_html":
         return open_html(tool_input["filename"])
     elif tool_name == "search_web":
@@ -818,5 +912,9 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return start_server(int(tool_input.get("port", 8080)))
     elif tool_name == "run_gui":
         return run_gui(tool_input["filename"])
+    elif tool_name == "collab_status":
+        return collab_status()
+    elif tool_name == "collab_update":
+        return collab_update(tool_input["role"], tool_input["status"], tool_input.get("message", ""))
     else:
         return f"Unknown tool: {tool_name}"
