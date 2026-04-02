@@ -1,6 +1,9 @@
 import os
 import sys
 import time
+import queue
+import random
+import threading
 import logging
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
@@ -14,6 +17,7 @@ BANNER = r"""
 
  Autonomous AI — running until you stop it
  Press Ctrl+C at any time to stop
+ Type a message + Enter to interrupt  |  Type /bug + Enter to inject a bug
 """
 
 REST_BETWEEN_SESSIONS = 5  # seconds to pause between sessions
@@ -59,6 +63,95 @@ def get_user_order() -> str:
     return order
 
 
+def _input_listener(interrupt_queue: queue.Queue) -> None:
+    """Background thread: reads lines from stdin and puts them in the queue."""
+    while True:
+        try:
+            line = input()
+            if line is not None:
+                interrupt_queue.put(line.strip())
+        except EOFError:
+            break
+        except Exception:
+            break
+
+
+def inject_bug() -> str:
+    """Corrupt a random output file to give PinPoint a bug to fix."""
+    if not os.path.exists(OUTPUT_DIR):
+        return "No output files to corrupt yet."
+
+    # Find injectable files
+    candidates = []
+    for root, _, files in os.walk(OUTPUT_DIR):
+        for f in files:
+            if f.endswith((".py", ".html", ".js")):
+                candidates.append(os.path.join(root, f))
+
+    if not candidates:
+        return "No .py/.html/.js files found to inject a bug into."
+
+    target = random.choice(candidates)
+    rel = os.path.relpath(target, OUTPUT_DIR)
+
+    try:
+        with open(target, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+
+        if not content.strip():
+            return f"File {rel} is empty, skipping."
+
+        ext = os.path.splitext(target)[1]
+        lines = content.splitlines()
+
+        if ext == ".py":
+            bugs = [
+                ("import this_module_does_not_exist_xyz\n", "added broken import"),
+                ("raise RuntimeError('Injected bug — fix me!')\n", "added runtime error"),
+                ("x = undefined_variable_xyz\n", "added undefined variable"),
+            ]
+            injection, desc = random.choice(bugs)
+            # Insert after first line
+            insert_at = min(1, len(lines))
+            lines.insert(insert_at, injection.rstrip())
+            new_content = "\n".join(lines)
+
+        elif ext == ".js":
+            bugs = [
+                ("undefinedFunctionXYZ();\n", "called undefined function"),
+                ("throw new Error('Injected bug — fix me!');\n", "threw a JS error"),
+                ("const x = null.property;\n", "null property access"),
+            ]
+            injection, desc = random.choice(bugs)
+            insert_at = min(2, len(lines))
+            lines.insert(insert_at, injection.rstrip())
+            new_content = "\n".join(lines)
+
+        else:  # .html
+            bugs = [
+                ("<script>undefinedFunctionXYZ();</script>", "called undefined JS function"),
+                ("<div id='broken'><p>Unclosed div injected", "unclosed HTML tag"),
+                ("<style>body { color: ; }</style>", "invalid CSS property"),
+            ]
+            injection, desc = random.choice(bugs)
+            # Inject near the end of the body
+            new_content = content.replace("</body>", injection + "\n</body>", 1)
+            if new_content == content:
+                new_content = content + "\n" + injection
+
+        with open(target, "w", encoding="utf-8") as f:
+            f.write(new_content)
+
+        msg = f"[BUG INJECTED] {desc} into output/{rel}"
+        print(f"\n{'='*60}")
+        print(f"  {msg}")
+        print(f"{'='*60}\n")
+        return msg
+
+    except Exception as e:
+        return f"Bug injection failed: {e}"
+
+
 def main() -> None:
     check_ollama()
     logger = setup_logging()
@@ -75,6 +168,11 @@ def main() -> None:
     import agent
     from tools import list_files
 
+    # Start background input listener
+    interrupt_queue: queue.Queue = queue.Queue()
+    input_thread = threading.Thread(target=_input_listener, args=(interrupt_queue,), daemon=True)
+    input_thread.start()
+
     session = 0
     try:
         while True:
@@ -87,7 +185,7 @@ def main() -> None:
 
             summary = ""
             try:
-                summary = agent.run(logger=logger, order=order)
+                summary = agent.run(logger=logger, order=order, interrupt_queue=interrupt_queue)
             except KeyboardInterrupt:
                 raise
             except Exception as e:

@@ -1,5 +1,6 @@
 import os
 import json
+import queue
 import time
 import logging
 from typing import Optional
@@ -224,7 +225,7 @@ TOOLS = [
 ]
 
 
-def run(logger: Optional[logging.Logger] = None, order: str = "") -> str:
+def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queue: Optional[queue.Queue] = None) -> str:
     client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=300.0)
 
     if logger is None:
@@ -385,6 +386,28 @@ def run(logger: Optional[logging.Logger] = None, order: str = "") -> str:
                 finished = True
 
         messages.extend(tool_results)
+
+        # Check for user interrupts (messages or /bug command)
+        if interrupt_queue is not None:
+            while not interrupt_queue.empty():
+                try:
+                    user_input = interrupt_queue.get_nowait()
+                    if not user_input:
+                        continue
+                    if user_input.lower() == "/bug":
+                        from main import inject_bug
+                        bug_msg = inject_bug()
+                        interrupt_msg = (
+                            f"[SYSTEM INTERRUPT] A bug has been injected into one of your files: {bug_msg}. "
+                            f"Find it, understand what's broken, and fix it."
+                        )
+                    else:
+                        interrupt_msg = f"[USER INTERRUPT] The user says: \"{user_input}\". Respond to this immediately."
+                    print(f"\n[INTERRUPT RECEIVED] {user_input}\n")
+                    logger.info("[INTERRUPT] %s", user_input)
+                    messages.append({"role": "user", "content": interrupt_msg})
+                except queue.Empty:
+                    break
 
         if finished:
             print("\n" + "=" * 60)
