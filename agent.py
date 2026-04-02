@@ -238,7 +238,8 @@ TOOLS = [
 ]
 
 
-def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queue: Optional[queue.Queue] = None) -> str:
+def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queue: Optional[queue.Queue] = None,
+        other_goals: list = None, write_lock=None) -> str:
     client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=300.0)
 
     if logger is None:
@@ -288,8 +289,16 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             f"Step 5: call done. Go."
         )
     else:
+        other_block = ""
+        if other_goals:
+            other_block = (
+                f"OTHER PINPOINT INSTANCES ARE ALREADY WORKING ON:\n"
+                + "\n".join(f"  - {g}" for g in other_goals)
+                + "\nYou MUST pick something completely different from these too.\n\n"
+            )
         opening = (
             f"{already_built_block}"
+            f"{other_block}"
             f"ABSOLUTELY DO NOT BUILD: fireworks, fractals, quizzes, ancient history, particle explosions, "
             f"or anything visually similar to fireworks (sparks, explosions, bursts, confetti).\n\n"
             f"Pick a brand new idea — something you have NEVER built before — and build it.\n\n"
@@ -391,7 +400,16 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
 
         # Handle interrupt — inject the message and re-prompt immediately
         if interrupted:
-            if interrupt_msg.lower() == "/bug":
+            if interrupt_msg.lower() == "/next":
+                print(f"\n[SKIP] Forcing move to new project.\n")
+                logger.info("[INTERRUPT] /next — forcing new project")
+                # Clear the ongoing project so next session starts fresh
+                from tools import _load_memory, _save_memory_file
+                mem = _load_memory()
+                mem.get("meta", {}).pop("last_project", None)
+                _save_memory_file(mem)
+                break  # End this session immediately, loop will start a new one
+            elif interrupt_msg.lower() == "/bug":
                 from main import inject_bug
                 bug_result = inject_bug()
                 inject_text = (
@@ -486,6 +504,10 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             result = dispatch(name, inp)
             print(f"[TOOL RESULT] {result[:300]}{'...' if len(result) > 300 else ''}\n")
             logger.info("[RESULT] %s", result)
+
+            # Update lock file when goal is set so other instances can see it
+            if name == "set_session_goal" and write_lock and "REJECTED" not in result:
+                write_lock(inp.get("goal", ""))
 
             tool_results.append({
                 "role": "tool",

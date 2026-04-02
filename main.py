@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import time
 import queue
 import random
@@ -16,9 +17,10 @@ BANNER = r"""
  |_|   |_|_| |_|_|   \___/|_|_| |_|\__|
 
  Autonomous AI — running until you stop it
- Press Ctrl+C at any time to stop
- Type a message + Enter to interrupt  |  Type /bug + Enter to inject a bug
+ Ctrl+C to stop  |  /bug = inject a bug  |  /next = force new project
 """
+
+LOCK_DIR = os.path.join(os.path.dirname(__file__), "output")
 
 REST_BETWEEN_SESSIONS = 5  # seconds to pause between sessions
 
@@ -173,24 +175,64 @@ def main() -> None:
     input_thread = threading.Thread(target=_input_listener, args=(interrupt_queue,), daemon=True)
     input_thread.start()
 
+    # Session lock file — tells other instances what this one is working on
+    pid = os.getpid()
+    lock_file = os.path.join(LOCK_DIR, f"session_{pid}.json")
+    os.makedirs(LOCK_DIR, exist_ok=True)
+
+    def write_lock(goal: str) -> None:
+        with open(lock_file, "w") as f:
+            json.dump({"pid": pid, "goal": goal}, f)
+
+    def clear_lock() -> None:
+        try:
+            os.remove(lock_file)
+        except FileNotFoundError:
+            pass
+
+    def get_other_goals() -> list:
+        """Read what other PinPoint instances are currently building."""
+        goals = []
+        for fname in os.listdir(LOCK_DIR):
+            if fname.startswith("session_") and fname.endswith(".json") and fname != f"session_{pid}.json":
+                try:
+                    with open(os.path.join(LOCK_DIR, fname)) as f:
+                        data = json.load(f)
+                    goals.append(data.get("goal", ""))
+                except Exception:
+                    pass
+        return [g for g in goals if g]
+
     session = 0
     try:
         while True:
             session += 1
+            other_goals = get_other_goals()
             print(f"\n{'='*60}")
             print(f"  Starting session #{session}")
             if order:
                 print(f"  Order: {order}")
+            if other_goals:
+                print(f"  Other instances working on: {'; '.join(other_goals)}")
             print(f"{'='*60}\n")
 
+            write_lock("deciding...")
             summary = ""
             try:
-                summary = agent.run(logger=logger, order=order, interrupt_queue=interrupt_queue)
+                summary = agent.run(
+                    logger=logger,
+                    order=order,
+                    interrupt_queue=interrupt_queue,
+                    other_goals=other_goals,
+                    write_lock=write_lock,
+                )
             except KeyboardInterrupt:
                 raise
             except Exception as e:
                 print(f"\n[ERROR in session #{session}]: {e}")
                 logger.exception("Session %d crashed", session)
+            finally:
+                clear_lock()
 
             print("\n--- Files in output/ ---")
             print(list_files())
@@ -203,6 +245,7 @@ def main() -> None:
             time.sleep(REST_BETWEEN_SESSIONS)
 
     except KeyboardInterrupt:
+        clear_lock()
         print(f"\n\n{'='*60}")
         print(f"  PinPoint stopped after {session} session(s).")
         print(f"  All files saved in: {OUTPUT_DIR}")
