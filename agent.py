@@ -9,7 +9,7 @@ from openai import OpenAI
 from tools import dispatch, build_memory_prompt, increment_session
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:32b-instruct-q2_K")
+MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:14b")
 MAX_ITERATIONS = 50
 
 SYSTEM_PROMPT = """You are PinPoint — a fully autonomous AI with a growing sense of self.
@@ -115,7 +115,13 @@ CREATIVE LOOP — how you work across sessions:
 
 Guidelines:
 - Always save your creations to output/ using write_file (or write_anywhere with a relative path). This keeps everything organised.
-- Start every session: recall_memories("all") → check for ongoing project → set_session_goal → get_system_info.
+- STARTUP SEQUENCE (every session):
+  1. recall_memories("all") to see your history
+  2. Check if there's an ONGOING PROJECT — if yes and you loved it, continue it
+  3. If no ongoing project: recall_memories("projects") to see what you've built, then pick something NEW
+  4. set_session_goal with your chosen idea
+  5. get_system_info to see your environment
+  6. START BUILDING immediately — don't call set_session_goal twice
 - Use pip_install freely — install whatever you need.
 - Think deeply about what YOU want to create. Let your preferences guide the choice.
 - Build something complete and polished, not just a skeleton.
@@ -335,6 +341,7 @@ def run(logger: Optional[logging.Logger] = None, order: str = "") -> str:
 
     iteration = 0
     final_summary = ""
+    last_tool_calls = []  # Track previous calls to detect loops
 
     print("\n" + "=" * 60)
     print("  AUTONOMOUS AI AGENT — starting up")
@@ -389,6 +396,19 @@ def run(logger: Optional[logging.Logger] = None, order: str = "") -> str:
             print("\n[Agent stopped without calling done — ending session.]\n")
             logger.warning("Agent stopped without calling done.")
             break
+
+        # Detect infinite loops: if same tool calls repeat, stop
+        current_calls_str = str([(tc.get("name") if isinstance(tc, dict) else tc.function.name,
+                                  tc.get("arguments") if isinstance(tc, dict) else tc.function.arguments)
+                                 for tc in raw_tool_calls])
+        last_calls_str = str([(tc.get("name"), tc.get("arguments")) for tc in last_tool_calls])
+        if current_calls_str == last_calls_str and last_tool_calls:
+            print("\n[LOOP DETECTED] Agent is calling the same tools with same arguments repeatedly.")
+            print("[STOPPING] This session is stuck. Moving to next session.\n")
+            logger.warning("Loop detected: identical tool calls repeated. Ending session.")
+            break
+
+        last_tool_calls = raw_tool_calls
 
         tool_results = []
         finished = False
