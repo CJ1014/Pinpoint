@@ -53,12 +53,18 @@ Ideas (jumping-off points, NOT blueprints):
 - A drawing tool where every brushstroke has physics and fights back
 - A city builder where buildings grow like plants based on sunlight
 - A language where colors are grammar and shapes are words
+- A 3D game where gravity shifts direction when you press a key (Godot)
+- A procedurally generated dungeon crawler with real-time combat (Godot)
+- A 3D platformer where the ground is alive and reshapes itself (Godot)
+- A space game where you pilot through asteroid fields with physics (Godot)
+- A 3D puzzle game where you manipulate time to solve levels (Godot)
 
-3D: <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+3D WEB: <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+3D GAMES (GODOT): Use create_godot_project to build real 3D games with Godot 4. Write GDScript (Python-like). Create meshes, physics, cameras, lighting, enemies, player controllers — all programmatically in _ready(). Use _process(delta) for game loops. After creating, use run_godot to launch. Use write_godot_file to add extra scripts/scenes. Godot supports: MeshInstance3D, CharacterBody3D, RigidBody3D, Camera3D, DirectionalLight3D, SpotLight3D, CollisionShape3D, AnimationPlayer, AudioStreamPlayer, Timer, RayCast3D, Area3D, and more.
 
 COLLABORATION: If you see collab messages in your memory, use collab_status to check what the other instance is doing, and collab_update to coordinate. Work on YOUR assigned role only.
 
-TOOLS: write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update.
+TOOLS: write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update, create_godot_project, run_godot, write_godot_file, read_godot_file.
 """
 
 TOOLS = [
@@ -249,6 +255,40 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {
             "filename": {"type": "string", "description": "Python filename relative to output/."},
         }, "required": ["filename"]},
+    }},
+    {"type": "function", "function": {
+        "name": "create_godot_project",
+        "description": "Create a complete Godot 4 game project. Generates project.godot, main.tscn, and main.gd with your GDScript code. Use this to build 3D games with physics, lighting, cameras, player controllers, enemies, etc.",
+        "parameters": {"type": "object", "properties": {
+            "project_name": {"type": "string", "description": "Name for the project folder (e.g. 'space_shooter', 'maze_runner'). No spaces."},
+            "main_scene_script": {"type": "string", "description": "GDScript code for main.gd — the main scene script. This runs on a Node3D root. Use _ready() and _process(delta) functions. Create meshes, lights, cameras, physics bodies programmatically."},
+            "extra_files": {"type": "object", "description": "Optional dict of extra files to create. Keys are filenames (e.g. 'player.gd', 'level.tscn', 'enemy.gd'), values are file contents."},
+        }, "required": ["project_name", "main_scene_script"]},
+    }},
+    {"type": "function", "function": {
+        "name": "run_godot",
+        "description": "Launch a Godot game project. Validates the project then opens a game window. Use after create_godot_project.",
+        "parameters": {"type": "object", "properties": {
+            "project_name": {"type": "string", "description": "Name of the project folder."},
+            "editor": {"type": "boolean", "description": "If true, opens the Godot editor instead of running the game. Default: false."},
+        }, "required": ["project_name"]},
+    }},
+    {"type": "function", "function": {
+        "name": "write_godot_file",
+        "description": "Write or update a single file inside an existing Godot project. Use to add or modify scripts, scenes, shaders, etc.",
+        "parameters": {"type": "object", "properties": {
+            "project_name": {"type": "string", "description": "Name of the project folder."},
+            "filename": {"type": "string", "description": "File path inside the project (e.g. 'player.gd', 'scenes/enemy.tscn', 'shaders/glow.gdshader')."},
+            "content": {"type": "string", "description": "Full file content."},
+        }, "required": ["project_name", "filename", "content"]},
+    }},
+    {"type": "function", "function": {
+        "name": "read_godot_file",
+        "description": "Read a file from an existing Godot project.",
+        "parameters": {"type": "object", "properties": {
+            "project_name": {"type": "string", "description": "Name of the project folder."},
+            "filename": {"type": "string", "description": "File path inside the project (e.g. 'main.gd', 'project.godot')."},
+        }, "required": ["project_name", "filename"]},
     }},
 ]
 

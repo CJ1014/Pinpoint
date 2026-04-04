@@ -806,6 +806,123 @@ def search_web(query: str) -> str:
         return f"Error searching web: {e}"
 
 
+# ── Godot Engine ──────────────────────────────────────────
+
+GODOT_BIN = "godot"
+
+
+def create_godot_project(project_name: str, main_scene_script: str, extra_files: dict = None) -> str:
+    """Scaffold a Godot 4 project with a main scene and GDScript."""
+    project_dir = os.path.join(OUTPUT_DIR, project_name)
+    os.makedirs(project_dir, exist_ok=True)
+
+    # project.godot — minimal Godot 4 project file
+    project_cfg = f"""[gd_resource type="Environment" load_steps=2 format=3]
+
+; Godot 4 project file
+[application]
+config/name="{project_name}"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.4")
+
+[display]
+window/size/viewport_width=1280
+window/size/viewport_height=720
+"""
+    with open(os.path.join(project_dir, "project.godot"), "w", encoding="utf-8") as f:
+        f.write(project_cfg)
+
+    # main.tscn — scene file that attaches the script to a Node3D root
+    main_tscn = """[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://main.gd" id="1"]
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1")
+"""
+    with open(os.path.join(project_dir, "main.tscn"), "w", encoding="utf-8") as f:
+        f.write(main_tscn)
+
+    # main.gd — the main GDScript
+    with open(os.path.join(project_dir, "main.gd"), "w", encoding="utf-8") as f:
+        f.write(main_scene_script)
+
+    # Write any extra files (e.g. additional scenes, scripts, shaders)
+    if extra_files:
+        for fname, content in extra_files.items():
+            fpath = os.path.join(project_dir, fname)
+            os.makedirs(os.path.dirname(fpath), exist_ok=True)
+            with open(fpath, "w", encoding="utf-8") as f:
+                f.write(content)
+
+    file_list = []
+    for root, dirs, files in os.walk(project_dir):
+        for fn in files:
+            rel = os.path.relpath(os.path.join(root, fn), project_dir)
+            file_list.append(rel)
+
+    return (
+        f"Godot project created at {project_dir}\n"
+        f"Files: {', '.join(file_list)}\n"
+        f"Run with: run_godot(\"{project_name}\")"
+    )
+
+
+def run_godot(project_name: str, editor: bool = False) -> str:
+    """Launch a Godot project — either run the game or open the editor."""
+    project_dir = os.path.join(OUTPUT_DIR, project_name)
+    project_file = os.path.join(project_dir, "project.godot")
+
+    if not os.path.exists(project_file):
+        return f"Error: No project.godot found in {project_dir}. Create the project first with create_godot_project."
+
+    try:
+        if editor:
+            subprocess.Popen([GODOT_BIN, "--editor", "--path", project_dir])
+            return f"Opened Godot editor for '{project_name}'."
+        else:
+            proc = subprocess.run(
+                [GODOT_BIN, "--path", project_dir, "--headless", "--quit-after", "10"],
+                capture_output=True, text=True, timeout=30, cwd=project_dir
+            )
+            output = (proc.stdout + proc.stderr).strip()
+            if len(output) > 3000:
+                output = output[:3000] + "\n[... truncated ...]"
+
+            # Also try running in windowed mode
+            subprocess.Popen([GODOT_BIN, "--path", project_dir], cwd=project_dir)
+            return f"Godot game launched for '{project_name}'.\nValidation output:\n{output}"
+    except subprocess.TimeoutExpired:
+        return f"Godot validation timed out (game may still be running)."
+    except FileNotFoundError:
+        return f"Error: Godot not found. Install Godot 4 and ensure 'godot' is in PATH."
+    except Exception as e:
+        return f"Error running Godot: {e}"
+
+
+def write_godot_file(project_name: str, filename: str, content: str) -> str:
+    """Write or update a file inside an existing Godot project."""
+    project_dir = os.path.join(OUTPUT_DIR, project_name)
+    if not os.path.isdir(project_dir):
+        return f"Error: Project '{project_name}' not found. Create it first with create_godot_project."
+
+    fpath = os.path.join(project_dir, filename)
+    os.makedirs(os.path.dirname(fpath), exist_ok=True)
+    with open(fpath, "w", encoding="utf-8") as f:
+        f.write(content)
+    return f"Wrote {filename} in project '{project_name}' ({len(content)} chars)."
+
+
+def read_godot_file(project_name: str, filename: str) -> str:
+    """Read a file from a Godot project."""
+    project_dir = os.path.join(OUTPUT_DIR, project_name)
+    fpath = os.path.join(project_dir, filename)
+    if not os.path.exists(fpath):
+        return f"Error: {filename} not found in project '{project_name}'."
+    with open(fpath, "r", encoding="utf-8") as f:
+        return f.read()
+
+
 # ── Collaboration ──────────────────────────────────────────
 
 COLLAB_FILE = os.path.join(OUTPUT_DIR, "collab.json")
@@ -912,6 +1029,20 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return start_server(int(tool_input.get("port", 8080)))
     elif tool_name == "run_gui":
         return run_gui(tool_input["filename"])
+    elif tool_name == "create_godot_project":
+        extra = tool_input.get("extra_files", None)
+        if isinstance(extra, str):
+            try:
+                extra = json.loads(extra)
+            except Exception:
+                extra = None
+        return create_godot_project(tool_input["project_name"], tool_input["main_scene_script"], extra)
+    elif tool_name == "run_godot":
+        return run_godot(tool_input["project_name"], tool_input.get("editor", False))
+    elif tool_name == "write_godot_file":
+        return write_godot_file(tool_input["project_name"], tool_input["filename"], tool_input["content"])
+    elif tool_name == "read_godot_file":
+        return read_godot_file(tool_input["project_name"], tool_input["filename"])
     elif tool_name == "collab_status":
         return collab_status()
     elif tool_name == "collab_update":
