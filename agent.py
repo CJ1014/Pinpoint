@@ -22,8 +22,7 @@ RULES:
 2. Write plan.txt BEFORE any code. Include: what, why it's interesting, files, libraries, steps.
 3. For HTML: write → validate_html → check_js → open_html. After opening, call take_screenshot to see what it actually looks like. If it doesn't look right, fix it and try again.
 4. For Python: write → run_python. Fix errors using search_web.
-5. For Godot: create_godot_project → check_godot_script → fix errors → run_godot.
-6. ERROR RECOVERY: If code fails, call search_web with the exact error message.
+5. ERROR RECOVERY: If code fails, call search_web with the exact error message.
 7. When finished, call done with: summary, satisfaction (1-5), creativity (1-5), genre, files, libraries_used.
 8. Save preferences/dislikes to memory.
 
@@ -57,72 +56,15 @@ Ideas (jumping-off points, NOT blueprints):
 - A language where colors are grammar and shapes are words
 - A 3D game where gravity shifts direction when you press a key (Godot)
 - A procedurally generated dungeon crawler with real-time combat (Godot)
-- A 3D platformer where the ground is alive and reshapes itself (Godot)
-- A space game where you pilot through asteroid fields with physics (Godot)
-- A 3D puzzle game where you manipulate time to solve levels (Godot)
+- A 3D platformer where the ground is alive and reshapes itself (three.js)
+- A space game where you pilot through asteroid fields with physics (three.js)
+- A 3D puzzle game where you manipulate time to solve levels (three.js)
 
 3D WEB: <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
-3D GAMES (GODOT 4) — workflow: create_godot_project → check_godot_script → run_godot.
-GDScript 2 cheat sheet (MUST follow exactly or you'll get parse errors):
-```gdscript
-extends Node3D          # must match root_node_type
-
-var speed := 5.0        # typed var
-var score: int = 0
-
-func _ready() -> void:
-    # Build scene here — add all nodes as children
-    var cam := Camera3D.new()
-    cam.position = Vector3(0, 5, 10)
-    cam.look_at(Vector3.ZERO)
-    add_child(cam)
-
-    var light := DirectionalLight3D.new()
-    light.rotation_degrees = Vector3(-45, -45, 0)
-    add_child(light)
-
-    var mesh_inst := MeshInstance3D.new()
-    mesh_inst.mesh = BoxMesh.new()          # BoxMesh / SphereMesh / CylinderMesh / PlaneMesh
-    add_child(mesh_inst)
-
-    # Physics body pattern
-    var body := CharacterBody3D.new()
-    var shape := CollisionShape3D.new()
-    shape.shape = CapsuleShape3D.new()
-    body.add_child(shape)
-    add_child(body)
-
-func _process(delta: float) -> void:
-    # Input
-    var dir := Vector3.ZERO
-    if Input.is_action_pressed("ui_right"): dir.x += 1
-    if Input.is_action_pressed("ui_left"):  dir.x -= 1
-    if Input.is_action_pressed("ui_up"):    dir.z -= 1
-    if Input.is_action_pressed("ui_down"):  dir.z += 1
-    # Move
-    position += dir.normalized() * speed * delta
-
-    # Timer-style countdown
-    # $Timer.start(2.0)  — use add_child(Timer.new()) in _ready
-
-func _input(event: InputEvent) -> void:
-    if event is InputEventKey and event.pressed:
-        if event.keycode == KEY_ESCAPE:
-            get_tree().quit()
-```
-Key rules:
-- func signatures need `-> void` or `-> int` etc.
-- Use `var x := value` (walrus) or `var x: Type = value`
-- String format: `"Hello %s" % name` or `str(x)`
-- Instantiate nodes with `.new()`, add with `add_child()`
-- Signals: `signal my_signal`, `emit_signal("my_signal")`, `connect("signal", callable)`
-- Never use Python imports — GDScript has no import system
-- Use `@onready var label := $Label` for scene-tree nodes (only in editor-made scenes)
-
 COLLABORATION: If you see collab messages in your memory, use collab_status to check what the other instance is doing, and collab_update to coordinate. Work on YOUR assigned role only.
 
-TOOLS: write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update, create_godot_project, check_godot_script, run_godot, write_godot_file, read_godot_file.
+TOOLS: write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update.
 """
 
 TOOLS = [
@@ -312,45 +254,6 @@ TOOLS = [
         "description": "Launch a Python GUI application (e.g. pygame, tkinter) in a new window.",
         "parameters": {"type": "object", "properties": {
             "filename": {"type": "string", "description": "Python filename relative to output/."},
-        }, "required": ["filename"]},
-    }},
-    {"type": "function", "function": {
-        "name": "create_godot_project",
-        "description": "Create a complete Godot 4 game project. Generates project.godot, main.tscn, and main.gd. Use for 3D games with physics, lighting, cameras, player controllers, enemies, etc.",
-        "parameters": {"type": "object", "properties": {
-            "project_name": {"type": "string", "description": "Folder name for the project. No spaces (e.g. 'space_shooter', 'cave_explorer')."},
-            "main_scene_script": {"type": "string", "description": "GDScript for main.gd. Use _ready() to build the scene and _process(delta) for the game loop. All nodes must be created and added via add_child() in _ready(). Must be valid GDScript 2 (Godot 4 syntax)."},
-            "root_node_type": {"type": "string", "description": "Godot node type for the scene root. Use 'Node3D' for 3D games, 'Node2D' for 2D, 'Node' for headless. Default: Node3D."},
-            "extra_files": {"type": "object", "description": "Optional extra project files. Keys = filenames (e.g. 'player.gd'), values = file contents."},
-        }, "required": ["project_name", "main_scene_script"]},
-    }},
-    {"type": "function", "function": {
-        "name": "check_godot_script",
-        "description": "Validate GDScript syntax in the current project folder. Returns errors/warnings BEFORE you run the game. Always use after create_godot_project and after write_godot_file.",
-        "parameters": {"type": "object", "properties": {
-            "script_file": {"type": "string", "description": "Optional specific .gd file to check. Leave empty to check all scripts."},
-        }},
-    }},
-    {"type": "function", "function": {
-        "name": "run_godot",
-        "description": "Launch the Godot game in the current project folder. Validates then opens a game window.",
-        "parameters": {"type": "object", "properties": {
-            "editor": {"type": "boolean", "description": "If true, opens the Godot editor instead of running the game. Default: false."},
-        }},
-    }},
-    {"type": "function", "function": {
-        "name": "write_godot_file",
-        "description": "Write or update a file in the current Godot project. Use to modify existing scripts or add new ones. This OVERWRITES the file — use it to update main.gd when iterating.",
-        "parameters": {"type": "object", "properties": {
-            "filename": {"type": "string", "description": "File path (e.g. 'main.gd', 'player.gd', 'shaders/glow.gdshader')."},
-            "content": {"type": "string", "description": "Full file content."},
-        }, "required": ["filename", "content"]},
-    }},
-    {"type": "function", "function": {
-        "name": "read_godot_file",
-        "description": "Read a file from the current Godot project.",
-        "parameters": {"type": "object", "properties": {
-            "filename": {"type": "string", "description": "File path (e.g. 'main.gd', 'project.godot')."},
         }, "required": ["filename"]},
     }},
 ]
