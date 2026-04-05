@@ -60,11 +60,67 @@ Ideas (jumping-off points, NOT blueprints):
 - A 3D puzzle game where you manipulate time to solve levels (Godot)
 
 3D WEB: <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-3D GAMES (GODOT): Use create_godot_project to build real 3D games with Godot 4. Write GDScript (Python-like). Create meshes, physics, cameras, lighting, enemies, player controllers — all programmatically in _ready(). Use _process(delta) for game loops. After creating, use run_godot to launch. Use write_godot_file to add extra scripts/scenes. Godot supports: MeshInstance3D, CharacterBody3D, RigidBody3D, Camera3D, DirectionalLight3D, SpotLight3D, CollisionShape3D, AnimationPlayer, AudioStreamPlayer, Timer, RayCast3D, Area3D, and more.
+
+3D GAMES (GODOT 4) — workflow: create_godot_project → check_godot_script → run_godot.
+GDScript 2 cheat sheet (MUST follow exactly or you'll get parse errors):
+```gdscript
+extends Node3D          # must match root_node_type
+
+var speed := 5.0        # typed var
+var score: int = 0
+
+func _ready() -> void:
+    # Build scene here — add all nodes as children
+    var cam := Camera3D.new()
+    cam.position = Vector3(0, 5, 10)
+    cam.look_at(Vector3.ZERO)
+    add_child(cam)
+
+    var light := DirectionalLight3D.new()
+    light.rotation_degrees = Vector3(-45, -45, 0)
+    add_child(light)
+
+    var mesh_inst := MeshInstance3D.new()
+    mesh_inst.mesh = BoxMesh.new()          # BoxMesh / SphereMesh / CylinderMesh / PlaneMesh
+    add_child(mesh_inst)
+
+    # Physics body pattern
+    var body := CharacterBody3D.new()
+    var shape := CollisionShape3D.new()
+    shape.shape = CapsuleShape3D.new()
+    body.add_child(shape)
+    add_child(body)
+
+func _process(delta: float) -> void:
+    # Input
+    var dir := Vector3.ZERO
+    if Input.is_action_pressed("ui_right"): dir.x += 1
+    if Input.is_action_pressed("ui_left"):  dir.x -= 1
+    if Input.is_action_pressed("ui_up"):    dir.z -= 1
+    if Input.is_action_pressed("ui_down"):  dir.z += 1
+    # Move
+    position += dir.normalized() * speed * delta
+
+    # Timer-style countdown
+    # $Timer.start(2.0)  — use add_child(Timer.new()) in _ready
+
+func _input(event: InputEvent) -> void:
+    if event is InputEventKey and event.pressed:
+        if event.keycode == KEY_ESCAPE:
+            get_tree().quit()
+```
+Key rules:
+- func signatures need `-> void` or `-> int` etc.
+- Use `var x := value` (walrus) or `var x: Type = value`
+- String format: `"Hello %s" % name` or `str(x)`
+- Instantiate nodes with `.new()`, add with `add_child()`
+- Signals: `signal my_signal`, `emit_signal("my_signal")`, `connect("signal", callable)`
+- Never use Python imports — GDScript has no import system
+- Use `@onready var label := $Label` for scene-tree nodes (only in editor-made scenes)
 
 COLLABORATION: If you see collab messages in your memory, use collab_status to check what the other instance is doing, and collab_update to coordinate. Work on YOUR assigned role only.
 
-TOOLS: write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update, create_godot_project, run_godot, write_godot_file, read_godot_file.
+TOOLS: write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update, create_godot_project, check_godot_script, run_godot, write_godot_file, read_godot_file.
 """
 
 TOOLS = [
@@ -258,12 +314,21 @@ TOOLS = [
     }},
     {"type": "function", "function": {
         "name": "create_godot_project",
-        "description": "Create a complete Godot 4 game project. Generates project.godot, main.tscn, and main.gd with your GDScript code. Use this to build 3D games with physics, lighting, cameras, player controllers, enemies, etc.",
+        "description": "Create a complete Godot 4 game project. Generates project.godot, main.tscn, and main.gd. Use for 3D games with physics, lighting, cameras, player controllers, enemies, etc.",
         "parameters": {"type": "object", "properties": {
-            "project_name": {"type": "string", "description": "Name for the project folder (e.g. 'space_shooter', 'maze_runner'). No spaces."},
-            "main_scene_script": {"type": "string", "description": "GDScript code for main.gd — the main scene script. This runs on a Node3D root. Use _ready() and _process(delta) functions. Create meshes, lights, cameras, physics bodies programmatically."},
-            "extra_files": {"type": "object", "description": "Optional dict of extra files to create. Keys are filenames (e.g. 'player.gd', 'level.tscn', 'enemy.gd'), values are file contents."},
+            "project_name": {"type": "string", "description": "Folder name for the project. No spaces (e.g. 'space_shooter', 'cave_explorer')."},
+            "main_scene_script": {"type": "string", "description": "GDScript for main.gd. Use _ready() to build the scene and _process(delta) for the game loop. All nodes must be created and added via add_child() in _ready(). Must be valid GDScript 2 (Godot 4 syntax)."},
+            "root_node_type": {"type": "string", "description": "Godot node type for the scene root. Use 'Node3D' for 3D games, 'Node2D' for 2D, 'Node' for headless. Default: Node3D."},
+            "extra_files": {"type": "object", "description": "Optional extra project files. Keys = filenames (e.g. 'player.gd'), values = file contents."},
         }, "required": ["project_name", "main_scene_script"]},
+    }},
+    {"type": "function", "function": {
+        "name": "check_godot_script",
+        "description": "Validate GDScript syntax by running Godot's headless parser. Returns any errors or warnings BEFORE you run the game. Always use this after create_godot_project and after write_godot_file to catch bugs early.",
+        "parameters": {"type": "object", "properties": {
+            "project_name": {"type": "string", "description": "Project folder name."},
+            "script_file": {"type": "string", "description": "Optional specific .gd file to check (e.g. 'player.gd'). Leave empty to check all scripts."},
+        }, "required": ["project_name"]},
     }},
     {"type": "function", "function": {
         "name": "run_godot",
