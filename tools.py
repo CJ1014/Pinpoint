@@ -892,23 +892,28 @@ script = ExtResource("1_main")
 def create_godot_project(project_name: str, main_scene_script: str,
                          root_node_type: str = "Node3D",
                          extra_files: dict = None) -> str:
-    """Scaffold a Godot 4 project with a main scene and GDScript.
+    """Scaffold a Godot 4 project directly in the current project folder.
 
-    root_node_type: the Godot node type for the root of main.tscn.
-      Common choices: Node3D, Node2D, CharacterBody3D, RigidBody3D, Node.
+    All Godot files (project.godot, main.tscn, main.gd) live in the same
+    folder as plan.txt and any other project files — no extra nesting.
+    If a project already exists (project.godot present), only updates the
+    files that are provided (won't overwrite extra_files that aren't listed).
     """
-    project_dir = os.path.join(get_project_dir(), project_name)
+    project_dir = get_project_dir()
     os.makedirs(project_dir, exist_ok=True)
 
+    # Always write/update project.godot and main.tscn
     with open(os.path.join(project_dir, "project.godot"), "w", encoding="utf-8") as f:
         f.write(_godot_project_cfg(project_name))
 
     with open(os.path.join(project_dir, "main.tscn"), "w", encoding="utf-8") as f:
         f.write(_godot_scene(root_node_type, "main.gd"))
 
+    # Always write/update main.gd
     with open(os.path.join(project_dir, "main.gd"), "w", encoding="utf-8") as f:
         f.write(main_scene_script)
 
+    # Write extra files (new or update existing)
     if extra_files:
         for fname, content in extra_files.items():
             fpath = os.path.join(project_dir, fname)
@@ -925,25 +930,22 @@ def create_godot_project(project_name: str, main_scene_script: str,
             file_list.append(rel)
 
     return (
-        f"Godot project '{project_name}' created at {project_dir}\n"
+        f"Godot project '{project_name}' ready at {project_dir}\n"
         f"Root node: {root_node_type}\n"
         f"Files: {', '.join(sorted(file_list))}\n"
-        f"Next: check_godot_script(\"{project_name}\", \"main.gd\") then run_godot(\"{project_name}\")"
+        f"Next: check_godot_script() then run_godot()"
     )
 
 
-def check_godot_script(project_name: str, script_file: str = "") -> str:
-    """Validate GDScript syntax using Godot's headless check mode.
-    Returns any parse errors so they can be fixed before running.
-    """
-    project_dir = os.path.join(get_project_dir(), project_name)
+def check_godot_script(script_file: str = "") -> str:
+    """Validate GDScript syntax using Godot's headless check mode."""
+    project_dir = get_project_dir()
     project_file = os.path.join(project_dir, "project.godot")
 
     if not os.path.exists(project_file):
-        return f"Error: Project '{project_name}' not found."
+        return f"Error: No project.godot in {project_dir}. Call create_godot_project first."
 
     try:
-        # --check-only parses scripts and reports errors without running
         proc = subprocess.run(
             [GODOT_BIN, "--headless", "--check-only", "--path", project_dir],
             capture_output=True, text=True, timeout=30
@@ -954,7 +956,6 @@ def check_godot_script(project_name: str, script_file: str = "") -> str:
         if len(out) > 4000:
             out = out[:4000] + "\n[... truncated ...]"
 
-        # Look for error/warning lines
         lines = out.splitlines()
         errors = [l for l in lines if any(k in l.lower() for k in ("error", "parse", "failed", "invalid", "unexpected"))]
         warnings = [l for l in lines if "warning" in l.lower()]
@@ -976,20 +977,19 @@ def check_godot_script(project_name: str, script_file: str = "") -> str:
         return f"Error checking script: {e}"
 
 
-def run_godot(project_name: str, editor: bool = False) -> str:
-    """Launch a Godot project — either run the game or open the editor."""
-    project_dir = os.path.join(get_project_dir(), project_name)
+def run_godot(editor: bool = False) -> str:
+    """Launch the Godot project in the current project folder."""
+    project_dir = get_project_dir()
     project_file = os.path.join(project_dir, "project.godot")
 
     if not os.path.exists(project_file):
-        return f"Error: No project.godot found in {project_dir}. Create the project first with create_godot_project."
+        return f"Error: No project.godot in {project_dir}. Call create_godot_project first."
 
     try:
         if editor:
             subprocess.Popen([GODOT_BIN, "--editor", "--path", project_dir])
-            return f"Opened Godot editor for '{project_name}'."
+            return f"Opened Godot editor for {project_dir}."
         else:
-            # Run a quick headless boot to catch import errors (3s max)
             proc = subprocess.run(
                 [GODOT_BIN, "--headless", "--path", project_dir, "--quit-after", "3"],
                 capture_output=True, text=True, timeout=15
@@ -1001,47 +1001,47 @@ def run_godot(project_name: str, editor: bool = False) -> str:
             if errors:
                 err_str = "\n".join(errors[:20])
                 return (
-                    f"Godot boot errors detected for '{project_name}':\n{err_str}\n\n"
-                    f"Fix the errors then run again. Use check_godot_script to validate scripts.\n\n"
-                    f"Full boot output:\n{boot_output[:2000]}"
+                    f"Godot boot errors:\n{err_str}\n\n"
+                    f"Fix the errors then run again. Use check_godot_script to validate.\n\n"
+                    f"Full output:\n{boot_output[:2000]}"
                 )
 
-            # Launch game window
             subprocess.Popen([GODOT_BIN, "--path", project_dir])
             return (
-                f"Godot game '{project_name}' launched in a new window!\n"
-                f"Boot check passed (no errors).\n"
+                f"Godot game launched from {project_dir}!\n"
+                f"Boot check passed.\n"
                 + (f"Boot log:\n{boot_output[:1000]}" if boot_output else "")
             )
     except subprocess.TimeoutExpired:
-        # Timeout on headless check is OK — just launch windowed
         subprocess.Popen([GODOT_BIN, "--path", project_dir])
-        return f"Godot game '{project_name}' launched (boot check timed out — game may still work)."
+        return f"Godot game launched (boot check timed out — game may still work)."
     except FileNotFoundError:
         return "Error: Godot not found. Ensure 'godot' is installed and in PATH."
     except Exception as e:
         return f"Error running Godot: {e}"
 
 
-def write_godot_file(project_name: str, filename: str, content: str) -> str:
-    """Write or update a file inside an existing Godot project."""
-    project_dir = os.path.join(get_project_dir(), project_name)
-    if not os.path.isdir(project_dir):
-        return f"Error: Project '{project_name}' not found. Create it first with create_godot_project."
+def write_godot_file(filename: str, content: str) -> str:
+    """Write or update a file in the current Godot project folder."""
+    project_dir = get_project_dir()
+    if not os.path.exists(os.path.join(project_dir, "project.godot")):
+        return f"Error: No Godot project in {project_dir}. Call create_godot_project first."
 
     fpath = os.path.join(project_dir, filename)
-    os.makedirs(os.path.dirname(fpath), exist_ok=True)
+    parent = os.path.dirname(fpath)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     with open(fpath, "w", encoding="utf-8") as f:
         f.write(content)
-    return f"Wrote {filename} in project '{project_name}' ({len(content)} chars)."
+    return f"Updated {filename} ({len(content)} chars)."
 
 
-def read_godot_file(project_name: str, filename: str) -> str:
-    """Read a file from a Godot project."""
-    project_dir = os.path.join(get_project_dir(), project_name)
+def read_godot_file(filename: str) -> str:
+    """Read a file from the current Godot project folder."""
+    project_dir = get_project_dir()
     fpath = os.path.join(project_dir, filename)
     if not os.path.exists(fpath):
-        return f"Error: {filename} not found in project '{project_name}'."
+        return f"Error: {filename} not found in {project_dir}."
     with open(fpath, "r", encoding="utf-8") as f:
         return f.read()
 
@@ -1166,13 +1166,13 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
             extra,
         )
     elif tool_name == "check_godot_script":
-        return check_godot_script(tool_input["project_name"], tool_input.get("script_file", ""))
+        return check_godot_script(tool_input.get("script_file", ""))
     elif tool_name == "run_godot":
-        return run_godot(tool_input["project_name"], tool_input.get("editor", False))
+        return run_godot(tool_input.get("editor", False))
     elif tool_name == "write_godot_file":
-        return write_godot_file(tool_input["project_name"], tool_input["filename"], tool_input["content"])
+        return write_godot_file(tool_input["filename"], tool_input["content"])
     elif tool_name == "read_godot_file":
-        return read_godot_file(tool_input["project_name"], tool_input["filename"])
+        return read_godot_file(tool_input["filename"])
     elif tool_name == "collab_status":
         return collab_status()
     elif tool_name == "collab_update":

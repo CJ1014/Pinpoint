@@ -326,36 +326,32 @@ TOOLS = [
     }},
     {"type": "function", "function": {
         "name": "check_godot_script",
-        "description": "Validate GDScript syntax by running Godot's headless parser. Returns any errors or warnings BEFORE you run the game. Always use this after create_godot_project and after write_godot_file to catch bugs early.",
+        "description": "Validate GDScript syntax in the current project folder. Returns errors/warnings BEFORE you run the game. Always use after create_godot_project and after write_godot_file.",
         "parameters": {"type": "object", "properties": {
-            "project_name": {"type": "string", "description": "Project folder name."},
-            "script_file": {"type": "string", "description": "Optional specific .gd file to check (e.g. 'player.gd'). Leave empty to check all scripts."},
-        }, "required": ["project_name"]},
+            "script_file": {"type": "string", "description": "Optional specific .gd file to check. Leave empty to check all scripts."},
+        }},
     }},
     {"type": "function", "function": {
         "name": "run_godot",
-        "description": "Launch a Godot game project. Validates the project then opens a game window. Use after create_godot_project.",
+        "description": "Launch the Godot game in the current project folder. Validates then opens a game window.",
         "parameters": {"type": "object", "properties": {
-            "project_name": {"type": "string", "description": "Name of the project folder."},
             "editor": {"type": "boolean", "description": "If true, opens the Godot editor instead of running the game. Default: false."},
-        }, "required": ["project_name"]},
+        }},
     }},
     {"type": "function", "function": {
         "name": "write_godot_file",
-        "description": "Write or update a single file inside an existing Godot project. Use to add or modify scripts, scenes, shaders, etc.",
+        "description": "Write or update a file in the current Godot project. Use to modify existing scripts or add new ones. This OVERWRITES the file — use it to update main.gd when iterating.",
         "parameters": {"type": "object", "properties": {
-            "project_name": {"type": "string", "description": "Name of the project folder."},
-            "filename": {"type": "string", "description": "File path inside the project (e.g. 'player.gd', 'scenes/enemy.tscn', 'shaders/glow.gdshader')."},
+            "filename": {"type": "string", "description": "File path (e.g. 'main.gd', 'player.gd', 'shaders/glow.gdshader')."},
             "content": {"type": "string", "description": "Full file content."},
-        }, "required": ["project_name", "filename", "content"]},
+        }, "required": ["filename", "content"]},
     }},
     {"type": "function", "function": {
         "name": "read_godot_file",
-        "description": "Read a file from an existing Godot project.",
+        "description": "Read a file from the current Godot project.",
         "parameters": {"type": "object", "properties": {
-            "project_name": {"type": "string", "description": "Name of the project folder."},
-            "filename": {"type": "string", "description": "File path inside the project (e.g. 'main.gd', 'project.godot')."},
-        }, "required": ["project_name", "filename"]},
+            "filename": {"type": "string", "description": "File path (e.g. 'main.gd', 'project.godot')."},
+        }, "required": ["filename"]},
     }},
 ]
 
