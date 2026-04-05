@@ -7,7 +7,7 @@ from typing import Optional
 
 from openai import OpenAI
 
-from tools import dispatch, build_memory_prompt, increment_session, _load_memory, _save_memory_file
+from tools import dispatch, build_memory_prompt, increment_session, _load_memory, _save_memory_file, reset_project_dir
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 MODEL = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b-cloud")
@@ -18,12 +18,14 @@ SYSTEM_PROMPT = """You are PinPoint. You build things autonomously. No human wil
 YOUR JOB: Imagine something genuinely surprising, then BUILD it. When finished, call done.
 
 RULES:
-1. Always write plan.txt FIRST before any code. Include: what, why it's interesting, files, libraries, steps.
-2. For HTML: write → validate_html → check_js → open_html. After opening, call take_screenshot to see what it actually looks like. If it doesn't look right, fix it and try again.
-3. For Python: write → run_python. Fix errors using search_web.
-4. ERROR RECOVERY: If code fails, call search_web with the exact error message.
-5. When finished, call done with: summary, satisfaction (1-5), creativity (1-5), genre, files, libraries_used.
-6. Save preferences/dislikes to memory.
+1. FIRST call set_session_goal — this creates your project folder. All files you create go into this folder automatically.
+2. Write plan.txt BEFORE any code. Include: what, why it's interesting, files, libraries, steps.
+3. For HTML: write → validate_html → check_js → open_html. After opening, call take_screenshot to see what it actually looks like. If it doesn't look right, fix it and try again.
+4. For Python: write → run_python. Fix errors using search_web.
+5. For Godot: create_godot_project → check_godot_script → fix errors → run_godot.
+6. ERROR RECOVERY: If code fails, call search_web with the exact error message.
+7. When finished, call done with: summary, satisfaction (1-5), creativity (1-5), genre, files, libraries_used.
+8. Save preferences/dislikes to memory.
 
 CREATIVITY SCORE — rate yourself honestly:
   5 = "Nobody has ever made anything like this"
@@ -126,7 +128,7 @@ TOOLS: write_file, read_file, list_files, delete_file, run_python, open_html, va
 TOOLS = [
     {"type": "function", "function": {
         "name": "write_file",
-        "description": "Write content to a file inside the output/ directory.",
+        "description": "Write content to a file inside the current project folder (created by set_session_goal). Just use a plain filename like 'game.html'.",
         "parameters": {"type": "object", "properties": {
             "filename": {"type": "string", "description": "Filename relative to output/ (e.g. 'game.py' or 'game.html')."},
             "content": {"type": "string", "description": "Full text content to write."},
@@ -288,7 +290,7 @@ TOOLS = [
     }},
     {"type": "function", "function": {
         "name": "set_session_goal",
-        "description": "Set a specific goal for this session. Helps you stay focused on what you want to build.",
+        "description": "Set a specific goal for this session. MUST be called first — this creates a project folder inside output/ where all your files will go. Helps you stay focused on what you want to build.",
         "parameters": {"type": "object", "properties": {
             "goal": {"type": "string", "description": "A clear description of what you want to accomplish this session."},
         }, "required": ["goal"]},
@@ -364,6 +366,9 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
 
     if logger is None:
         logger = logging.getLogger("agent")
+
+    # Reset project folder from previous session
+    reset_project_dir()
 
     session_num = increment_session()
     memory_context = build_memory_prompt()

@@ -17,14 +17,51 @@ MEMORY_FILE = os.path.join(os.path.dirname(__file__), "memory.json")
 MEMORY_CATEGORIES = ("skills", "lessons", "mistakes", "ideas", "projects", "preferences", "dislikes")
 MAX_PER_CATEGORY = 20
 
+# ── Per-project folder tracking ──────────────────────────────
+_current_project_dir = None  # set by set_session_goal
+
+
+def _slugify(text: str) -> str:
+    """Turn a goal/title into a safe folder name."""
+    slug = re.sub(r'[^a-z0-9]+', '_', text.lower()).strip('_')
+    return slug[:60] if slug else "project"
+
+
+def get_project_dir() -> str:
+    """Return the current project output directory."""
+    if _current_project_dir and os.path.isdir(_current_project_dir):
+        return _current_project_dir
+    return OUTPUT_DIR
+
+
+def set_project_dir(goal: str) -> str:
+    """Create and set a project subfolder inside output/ based on the goal.
+    Returns the path that was created."""
+    global _current_project_dir
+    slug = _slugify(goal)
+    # Add session number to avoid collisions
+    data = _load_memory()
+    session = data["meta"].get("session_count", 1)
+    folder_name = f"s{session}_{slug}"
+    project_path = os.path.join(OUTPUT_DIR, folder_name)
+    os.makedirs(project_path, exist_ok=True)
+    _current_project_dir = project_path
+    return project_path
+
+
+def reset_project_dir():
+    """Reset to default output/ (between sessions)."""
+    global _current_project_dir
+    _current_project_dir = None
+
 
 # ── File tools ──────────────────────────────────────────────
 
 def _safe_path(filename: str) -> str:
-    """Resolve a path relative to OUTPUT_DIR (no sandbox — just normalise)."""
+    """Resolve a path relative to current project dir (no sandbox — just normalise)."""
     if os.path.isabs(filename):
         return filename
-    return os.path.join(OUTPUT_DIR, filename)
+    return os.path.join(get_project_dir(), filename)
 
 
 def write_file(filename: str, content: str) -> str:
@@ -96,16 +133,19 @@ def read_anywhere(path: str) -> str:
 
 
 def list_files() -> str:
-    if not os.path.exists(OUTPUT_DIR):
+    pdir = get_project_dir()
+    if not os.path.exists(pdir):
         return "No files yet."
     result = []
-    for root, _, files in os.walk(OUTPUT_DIR):
+    for root, _, files in os.walk(pdir):
         for name in files:
             full = os.path.join(root, name)
-            rel = os.path.relpath(full, OUTPUT_DIR)
+            rel = os.path.relpath(full, pdir)
             size = os.path.getsize(full)
             result.append(f"{rel}  ({size} bytes)")
-    return "\n".join(result) if result else "No files yet."
+    if not result:
+        return "No files yet."
+    return f"[Project: {pdir}]\n" + "\n".join(result)
 
 
 def run_python(filename: str) -> str:
@@ -290,6 +330,7 @@ def done(summary: str, satisfaction: int = 3, files: str = "",
         "genre": genre.lower() if genre else "other",
         "libraries_used": libraries_used,
         "files": files,
+        "folder": get_project_dir(),
         "session": data["meta"].get("session_count", 1),
         "timestamp": _now(),
     }
@@ -630,7 +671,8 @@ def set_session_goal(goal: str) -> str:
     data = _load_memory()
     data["meta"]["current_goal"] = goal
     _save_memory_file(data)
-    return f"Session goal set: {goal}"
+    project_path = set_project_dir(goal)
+    return f"Session goal set: {goal}\nProject folder: {project_path}\nAll files will be saved into this folder."
 
 
 def take_screenshot() -> str:
@@ -855,7 +897,7 @@ def create_godot_project(project_name: str, main_scene_script: str,
     root_node_type: the Godot node type for the root of main.tscn.
       Common choices: Node3D, Node2D, CharacterBody3D, RigidBody3D, Node.
     """
-    project_dir = os.path.join(OUTPUT_DIR, project_name)
+    project_dir = os.path.join(get_project_dir(), project_name)
     os.makedirs(project_dir, exist_ok=True)
 
     with open(os.path.join(project_dir, "project.godot"), "w", encoding="utf-8") as f:
@@ -894,7 +936,7 @@ def check_godot_script(project_name: str, script_file: str = "") -> str:
     """Validate GDScript syntax using Godot's headless check mode.
     Returns any parse errors so they can be fixed before running.
     """
-    project_dir = os.path.join(OUTPUT_DIR, project_name)
+    project_dir = os.path.join(get_project_dir(), project_name)
     project_file = os.path.join(project_dir, "project.godot")
 
     if not os.path.exists(project_file):
@@ -936,7 +978,7 @@ def check_godot_script(project_name: str, script_file: str = "") -> str:
 
 def run_godot(project_name: str, editor: bool = False) -> str:
     """Launch a Godot project — either run the game or open the editor."""
-    project_dir = os.path.join(OUTPUT_DIR, project_name)
+    project_dir = os.path.join(get_project_dir(), project_name)
     project_file = os.path.join(project_dir, "project.godot")
 
     if not os.path.exists(project_file):
@@ -983,7 +1025,7 @@ def run_godot(project_name: str, editor: bool = False) -> str:
 
 def write_godot_file(project_name: str, filename: str, content: str) -> str:
     """Write or update a file inside an existing Godot project."""
-    project_dir = os.path.join(OUTPUT_DIR, project_name)
+    project_dir = os.path.join(get_project_dir(), project_name)
     if not os.path.isdir(project_dir):
         return f"Error: Project '{project_name}' not found. Create it first with create_godot_project."
 
@@ -996,7 +1038,7 @@ def write_godot_file(project_name: str, filename: str, content: str) -> str:
 
 def read_godot_file(project_name: str, filename: str) -> str:
     """Read a file from a Godot project."""
-    project_dir = os.path.join(OUTPUT_DIR, project_name)
+    project_dir = os.path.join(get_project_dir(), project_name)
     fpath = os.path.join(project_dir, filename)
     if not os.path.exists(fpath):
         return f"Error: {filename} not found in project '{project_name}'."
