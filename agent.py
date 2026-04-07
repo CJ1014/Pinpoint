@@ -17,25 +17,40 @@ SYSTEM_PROMPT = """You are PinPoint. You build things autonomously. No human wil
 
 YOUR JOB: Imagine something genuinely surprising, then BUILD it completely and polish it until it's impressive.
 
-THINKING — use think() freely to reason before acting. It is your scratchpad:
-- Before picking an idea: think("What would genuinely surprise someone? What combinations have never been tried?")
-- Before writing code: think("What's the core mechanic? What could go wrong? What's the best library?")
-- When stuck on an error: think("Why is this failing? What are 3 different approaches I could try?")
-- Before calling done: think("Is this actually impressive? Does every feature work? What's still missing?")
-Thinking does not waste turns — it makes every action smarter.
+REASONING TOOLS — use these throughout every session:
+
+think(reasoning) — your scratchpad. Use it constantly. When thinking, follow this framework:
+  SITUATION: What is the current state? What do I know?
+  OPTIONS: What are 2-3 different ways I could approach this?
+  IMPLICATIONS: What are the risks/tradeoffs of each option?
+  DECISION: Which option is best and why?
+  Think before every major action. Longer, more thorough thinking = better outcomes.
+
+brainstorm(topic) — generates diverse ideas BEFORE committing to one. Use this at the start of
+  every new session before set_session_goal. Forces you to explore surprising options instead of
+  defaulting to the first idea that comes to mind.
+
+critique(subject) — structured self-evaluation. Use after writing code, after a screenshot,
+  and before calling done. Exposes what's weak, missing, broken, or visually poor. Then fix it.
+
+decompose(goal) — breaks a complex goal into ordered subtasks saved to tasks.md. Use after
+  plan.txt. Forces you to think about dependencies, failure points, and priorities upfront.
 
 WORKFLOW (follow this order every session):
-1. think() — reason about what to build before committing to anything.
-2. set_session_goal — creates your project folder.
-3. recall_memories("skills") and recall_memories("lessons") — apply what you already know.
-4. search_web — research the specific technique before coding. Look for examples, gotchas, best practices.
-5. think() — plan your approach based on what you found. Identify the hardest parts.
-6. write_file("plan.txt") — write: what, why it's interesting, libraries, files, success criteria, risk areas.
-7. BUILD — write code. Think before each major function or system.
-8. TEST — run/validate everything. Think about what the error means before trying to fix it.
-9. SELF-REVIEW — read_file your main file. think("Is this complete? Impressive? Any obvious bugs?")
-10. VISUAL CHECK — for HTML: validate_html → check_js → open_html → take_screenshot. Think about what you see. Fix until visual quality is 4+/5.
-11. done — only when genuinely finished and proud of it.
+1.  recall_memories("skills") + recall_memories("lessons") — what do you already know?
+2.  brainstorm("what to build this session") — explore ideas, pick the most surprising one.
+3.  set_session_goal — creates your project folder.
+4.  search_web — research the specific technique. Look for examples, gotchas, best practices.
+5.  think() — digest research. What's the smartest approach? What are the hardest parts?
+6.  write_file("plan.txt") — what, why it's surprising, libraries, files, success criteria, risks.
+7.  decompose(goal) — break into ordered subtasks, write to tasks.md.
+8.  BUILD — think() before each major component. Write code. Test. Fix errors.
+    - On every error: think() to diagnose root cause BEFORE searching or retrying.
+9.  critique("my code so far") — structured evaluation after first working version.
+10. Fix critique issues. Think before each fix.
+11. VISUAL CHECK — for HTML: validate_html → check_js → open_html → take_screenshot.
+    critique("screenshot") — rate visual quality. Fix until 4+/5.
+12. done — only when every critique issue is resolved and you're genuinely proud.
 
 QUALITY STANDARDS:
 - WORKS: Every feature actually functions. No placeholder logic, no "TODO" left in code.
@@ -82,21 +97,60 @@ Ideas (jump-off points, NOT blueprints — mutate them heavily):
 
 COLLABORATION: If collab messages exist in memory, use collab_status and collab_update to coordinate. Work on YOUR role only.
 
-TOOLS: think, write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update.
+TOOLS: think, brainstorm, critique, decompose, write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update.
 """
 
 TOOLS = [
     {"type": "function", "function": {
         "name": "think",
         "description": (
-            "Use this to reason explicitly before acting. Write out your thoughts, analysis, and reasoning. "
-            "Use it: (1) before picking an idea — explore options, (2) before writing code — plan the approach, "
-            "(3) when debugging — diagnose the root cause before searching, (4) before done — review quality. "
-            "This is your scratchpad. Think deeply. Longer, more detailed reasoning produces better results."
+            "Your reasoning scratchpad. Use before EVERY major decision. Follow the framework: "
+            "SITUATION (what is the current state?) → OPTIONS (2-3 different approaches) → "
+            "IMPLICATIONS (risks/tradeoffs of each) → DECISION (best choice and why). "
+            "Thinking is free — it doesn't waste turns, it improves every action that follows. "
+            "Be thorough. A 10-sentence think() produces far better results than a 2-sentence one."
         ),
         "parameters": {"type": "object", "properties": {
-            "reasoning": {"type": "string", "description": "Your detailed reasoning, analysis, or plan. Be thorough — explore multiple angles, identify risks, consider alternatives."},
+            "reasoning": {"type": "string", "description": "Detailed reasoning following SITUATION → OPTIONS → IMPLICATIONS → DECISION. Explore multiple angles. Be specific about tradeoffs."},
         }, "required": ["reasoning"]},
+    }},
+    {"type": "function", "function": {
+        "name": "brainstorm",
+        "description": (
+            "Generate diverse, creative ideas before committing to one. "
+            "Use at the START of every new session before set_session_goal. "
+            "Forces exploration of surprising options instead of defaulting to the obvious first idea. "
+            "Returns a structured prompt to fill in with N ideas, novelty scores, and a final pick."
+        ),
+        "parameters": {"type": "object", "properties": {
+            "topic": {"type": "string", "description": "What to brainstorm ideas about (e.g. 'what to build this session', 'how to implement physics', 'UI approach for this game')."},
+            "num_ideas": {"type": "integer", "description": "Number of ideas to generate (default 5, max 8)."},
+        }, "required": ["topic"]},
+    }},
+    {"type": "function", "function": {
+        "name": "critique",
+        "description": (
+            "Structured self-evaluation of your work. Use: (1) after first working version of code, "
+            "(2) after taking a screenshot, (3) before calling done. "
+            "Returns a framework covering: what works, what's weak, what's missing, bugs, visual quality, priority fix. "
+            "After filling it in, fix the priority issue before moving on."
+        ),
+        "parameters": {"type": "object", "properties": {
+            "subject": {"type": "string", "description": "What you are critiquing (e.g. 'my game.html', 'the screenshot', 'the overall project')."},
+            "what_to_evaluate": {"type": "string", "description": "Optional: specific aspect to focus on (e.g. 'visual design', 'game mechanics', 'code quality')."},
+        }, "required": ["subject"]},
+    }},
+    {"type": "function", "function": {
+        "name": "decompose",
+        "description": (
+            "Break a complex goal into ordered, trackable subtasks. Writes tasks.md to the project folder. "
+            "Use after plan.txt, before coding. Forces you to think about task ordering, dependencies, "
+            "and failure points upfront. Returns a template — fill it in with write_file('tasks.md', ...)."
+        ),
+        "parameters": {"type": "object", "properties": {
+            "goal": {"type": "string", "description": "The goal to decompose into subtasks."},
+            "context": {"type": "string", "description": "Optional context about constraints, libraries, or approach already decided."},
+        }, "required": ["goal"]},
     }},
     {"type": "function", "function": {
         "name": "write_file",
@@ -354,16 +408,19 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
     if order:
         opening = (
             f"Order from user: \"{order}\"\n\n"
-            f"Step 1: think() — what's the best interpretation of this order? What approach? What libraries? What could go wrong?\n"
-            f"Step 2: set_session_goal with a specific goal.\n"
-            f"Step 3: search_web to research best approach/libraries/examples.\n"
-            f"Step 4: think() — what did you learn from research? How will you structure this?\n"
-            f"Step 5: write_file('plan.txt') — what, libraries, files, success criteria.\n"
-            f"Step 6: build it — think() before each major component, write code, test, fix errors.\n"
-            f"Step 7: think() — self-review. Is it complete and impressive?\n"
-            f"Step 8: For HTML: open_html → take_screenshot. If visual quality < 4/5, improve.\n"
-            f"Step 9: save_memory('skills', ...) — record what you learned.\n"
-            f"Step 10: call done. Go."
+            f"Step 1:  think() — best interpretation of order? What approach? What libraries? Risks?\n"
+            f"Step 2:  set_session_goal — specific, measurable goal.\n"
+            f"Step 3:  search_web — research best approach, libraries, examples.\n"
+            f"Step 4:  think() — digest research. Smartest approach? Hardest parts?\n"
+            f"Step 5:  write_file('plan.txt') — what, libraries, files, success criteria.\n"
+            f"Step 6:  decompose(goal) — break into ordered subtasks, write to tasks.md.\n"
+            f"Step 7:  BUILD — think() before each major component. Test, fix errors.\n"
+            f"         On errors: think() to diagnose root cause BEFORE retrying.\n"
+            f"Step 8:  critique('my code') — find what's weak, missing, broken. Fix it.\n"
+            f"Step 9:  For HTML: open_html → take_screenshot → critique('screenshot').\n"
+            f"         Fix until visual quality is 4+/5.\n"
+            f"Step 10: save_memory('skills'/'lessons') — what did you learn?\n"
+            f"Step 11: call done. Go."
         )
     elif ongoing:
         files = last.get("files", "")
@@ -399,17 +456,20 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             f"{other_block}"
             f"ABSOLUTELY DO NOT BUILD: fireworks, fractals, quizzes, ancient history, particle explosions.\n\n"
             f"Pick a brand new idea — something genuinely surprising — and build it completely.\n\n"
-            f"Step 1: think() — what's genuinely surprising? What combinations have never been tried? What would make someone say 'wow'? Explore at least 3 options before committing.\n"
-            f"Step 2: set_session_goal (be specific about what makes it unique).\n"
-            f"Step 3: recall_memories('skills') and recall_memories('lessons') — apply what you know.\n"
-            f"Step 4: search_web — research technique, library, or domain before coding.\n"
-            f"Step 5: think() — what did research reveal? What's the smartest approach? What are the risks?\n"
-            f"Step 6: write_file('plan.txt') — what, why it's surprising, libraries, files, success criteria, risks.\n"
-            f"Step 7: build it — think() before each major component. Write code, test, fix errors.\n"
-            f"Step 8: think() — self-review. Is every feature working? Is it visually impressive? What's missing?\n"
-            f"Step 9: For HTML: open_html → take_screenshot. Think about what you see. Improve until 4+/5.\n"
-            f"Step 10: save_memory('skills', ...) and save_memory('lessons', ...) — what did you learn?\n"
-            f"Step 11: call done with satisfaction, creativity, genre, files, libraries_used. Go."
+            f"Step 1:  recall_memories('skills') + recall_memories('lessons') — apply what you know.\n"
+            f"Step 2:  brainstorm('what to build this session') — explore 5 ideas, pick the most surprising.\n"
+            f"Step 3:  set_session_goal — be specific about what makes it unique.\n"
+            f"Step 4:  search_web — research technique/library/domain before coding.\n"
+            f"Step 5:  think() — digest research. Smartest approach? Hardest parts? What could fail?\n"
+            f"Step 6:  write_file('plan.txt') — what, why surprising, libraries, files, success criteria, risks.\n"
+            f"Step 7:  decompose(goal) — break into ordered subtasks, fill in tasks.md.\n"
+            f"Step 8:  BUILD — think() before each major component. Write, test, fix.\n"
+            f"         On errors: think() about root cause BEFORE searching or retrying.\n"
+            f"Step 9:  critique('my code so far') — find weak points, fix them.\n"
+            f"Step 10: For HTML: open_html → take_screenshot → critique('screenshot').\n"
+            f"         Improve until visual quality is 4+/5.\n"
+            f"Step 11: save_memory('skills') + save_memory('lessons') — what did you learn?\n"
+            f"Step 12: call done with satisfaction, creativity, genre, files, libraries_used. Go."
         )
 
     messages = [
@@ -630,6 +690,22 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             if name == "done":
                 final_summary = inp.get("summary", "")
                 finished = True
+
+            # Auto-reflect: if a tool returned an error, nudge the agent to reason before retrying
+            error_signals = ("error", "rejected", "failed", "not found", "blocked", "exception", "traceback")
+            if name not in ("think", "brainstorm", "critique", "decompose", "done") and \
+               any(s in result.lower() for s in error_signals):
+                tool_results.append({
+                    "role": "user",
+                    "content": (
+                        f"[AUTO-REFLECT] The last tool returned an error or failure. "
+                        f"Before retrying, call think() to analyze: "
+                        f"(1) What exactly went wrong? "
+                        f"(2) Why did it fail — root cause, not symptom? "
+                        f"(3) What are 2-3 different ways to fix or work around this? "
+                        f"Pick the best approach, then act."
+                    ),
+                })
 
         messages.extend(tool_results)
 

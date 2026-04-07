@@ -916,8 +916,8 @@ _THINK_LOG_FILE = os.path.join(OUTPUT_DIR, "_thinking_log.txt")
 
 
 def think(reasoning: str) -> str:
-    """Log explicit reasoning and return it — acts as a scratchpad.
-    The output is visible and logged but does not affect files.
+    """Log explicit reasoning — acts as a scratchpad.
+    Returns the reasoning so it stays in conversation context.
     """
     timestamp = _now()
     entry = f"[{timestamp}]\n{reasoning}\n{'─'*60}\n"
@@ -927,8 +927,141 @@ def think(reasoning: str) -> str:
             f.write(entry)
     except Exception:
         pass
-    # Return the reasoning back so it stays in the conversation context
     return f"Thought logged:\n{reasoning}"
+
+
+def brainstorm(topic: str, num_ideas: int = 5) -> str:
+    """Generate diverse, creative ideas on a topic and rank them by novelty.
+
+    Forces exploration of multiple directions before committing to one.
+    Use BEFORE set_session_goal to make sure you're picking the most
+    surprising idea, not just the first one that came to mind.
+
+    Returns a structured list of ideas with novelty analysis.
+    The agent should pick the highest-novelty idea that is also buildable.
+    """
+    timestamp = _now()
+    entry = f"[{timestamp}] BRAINSTORM: {topic} | requested {num_ideas} ideas\n{'─'*60}\n"
+    try:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        with open(_THINK_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(entry)
+    except Exception:
+        pass
+    return (
+        f"BRAINSTORM REQUEST: '{topic}'\n\n"
+        f"Generate {num_ideas} distinct ideas. For EACH idea write:\n"
+        f"  Idea N: [name]\n"
+        f"  What: [one sentence description]\n"
+        f"  Why surprising: [what makes it novel or unexpected]\n"
+        f"  Core mechanic: [the interesting technical/creative challenge]\n"
+        f"  Novelty score: [1-5 — 5 = never been done]\n\n"
+        f"After listing all ideas, pick the one with the highest novelty score that\n"
+        f"you can realistically build well. Explain why you chose it.\n"
+        f"Then call set_session_goal with that chosen idea."
+    )
+
+
+def critique(subject: str, what_to_evaluate: str = "") -> str:
+    """Critically evaluate your current work with structured analysis.
+
+    Use this:
+    - After writing a first draft of code: find bugs before testing
+    - After seeing a screenshot: evaluate visual quality honestly
+    - When a project feels 'done': check what's actually missing
+    - When stuck: get fresh perspective on the problem
+
+    Returns a structured critique framework to fill in.
+    """
+    timestamp = _now()
+    entry = f"[{timestamp}] CRITIQUE: {subject}\n{'─'*60}\n"
+    try:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        with open(_THINK_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(entry)
+    except Exception:
+        pass
+
+    context = f" (evaluating: {what_to_evaluate})" if what_to_evaluate else ""
+    return (
+        f"CRITIQUE REQUEST: '{subject}'{context}\n\n"
+        f"Perform a structured evaluation. Answer each section honestly:\n\n"
+        f"1. WHAT WORKS\n"
+        f"   List 2-3 things that are genuinely good about this.\n\n"
+        f"2. WHAT'S WEAK\n"
+        f"   List 2-3 things that are mediocre, incomplete, or could be much better.\n\n"
+        f"3. WHAT'S MISSING\n"
+        f"   List features, polish, or depth that would make this genuinely impressive.\n\n"
+        f"4. BUGS / BROKEN THINGS\n"
+        f"   List anything that doesn't work correctly or might fail.\n\n"
+        f"5. VISUAL QUALITY (if applicable)\n"
+        f"   Rate visual design 1-5. What specifically looks bad?\n\n"
+        f"6. PRIORITY FIX\n"
+        f"   The single most important thing to fix RIGHT NOW. Be specific.\n\n"
+        f"After filling this in, fix the Priority Fix item first, then work through the rest."
+    )
+
+
+def decompose(goal: str, context: str = "") -> str:
+    """Break a complex goal into ordered, trackable subtasks.
+
+    Creates a tasks.md file in the project folder that tracks progress.
+    Use this after writing plan.txt and before starting to code.
+    Returns a task structure for the agent to fill in.
+    """
+    project_dir = get_project_dir()
+    tasks_path = os.path.join(project_dir, "tasks.md")
+
+    timestamp = _now()
+    entry = f"[{timestamp}] DECOMPOSE: {goal}\n{'─'*60}\n"
+    try:
+        os.makedirs(project_dir, exist_ok=True)
+        with open(_THINK_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(entry)
+    except Exception:
+        pass
+
+    template = f"""# Task Breakdown: {goal}
+Generated: {timestamp}
+Context: {context if context else 'none'}
+
+## Subtasks (check off as you complete them)
+
+<!-- Fill in your subtasks below. Example format:
+- [ ] Set up project structure and write plan.txt
+- [ ] Implement core mechanic (the most important thing)
+- [ ] Add visual/UI layer
+- [ ] Test core mechanic, fix bugs
+- [ ] Add polish — sounds, animations, edge cases
+- [ ] Self-review with critique()
+- [ ] Final testing, call done
+-->
+
+- [ ]
+
+## Notes
+<!-- Record decisions, discoveries, and blockers here -->
+
+"""
+    try:
+        with open(tasks_path, "w", encoding="utf-8") as f:
+            f.write(template)
+    except Exception as e:
+        return f"Error creating tasks.md: {e}"
+
+    return (
+        f"DECOMPOSE REQUEST: '{goal}'\n\n"
+        f"A tasks.md file has been created at {tasks_path}.\n\n"
+        f"Now fill it in: break this goal into 5-8 concrete, ordered subtasks.\n"
+        f"Each task should be specific and completable in one focused work block.\n"
+        f"Order them by dependency — what must be done first?\n\n"
+        f"Think about:\n"
+        f"  - What is the core mechanic / hardest part? (do this FIRST)\n"
+        f"  - What scaffolding must exist before other things can work?\n"
+        f"  - What's polish vs. what's essential?\n"
+        f"  - What are the most likely failure points?\n\n"
+        f"Write the subtasks into tasks.md using write_file('tasks.md', ...) then start on task 1."
+    )
 
 
 # ── Dispatch ────────────────────────────────────────────────
@@ -991,6 +1124,12 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return run_gui(tool_input["filename"])
     elif tool_name == "think":
         return think(tool_input["reasoning"])
+    elif tool_name == "brainstorm":
+        return brainstorm(tool_input["topic"], int(tool_input.get("num_ideas", 5)))
+    elif tool_name == "critique":
+        return critique(tool_input["subject"], tool_input.get("what_to_evaluate", ""))
+    elif tool_name == "decompose":
+        return decompose(tool_input["goal"], tool_input.get("context", ""))
     elif tool_name == "collab_status":
         return collab_status()
     elif tool_name == "collab_update":
