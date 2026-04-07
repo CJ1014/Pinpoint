@@ -910,6 +910,27 @@ def collab_update(role: str, status: str, message: str = "") -> str:
     return f"Collab updated: {role} = {status}" + (f" | message: {message}" if message else "")
 
 
+# ── Thinking / Reasoning ──────────────────────────────────
+
+_THINK_LOG_FILE = os.path.join(OUTPUT_DIR, "_thinking_log.txt")
+
+
+def think(reasoning: str) -> str:
+    """Log explicit reasoning and return it — acts as a scratchpad.
+    The output is visible and logged but does not affect files.
+    """
+    timestamp = _now()
+    entry = f"[{timestamp}]\n{reasoning}\n{'─'*60}\n"
+    try:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        with open(_THINK_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(entry)
+    except Exception:
+        pass
+    # Return the reasoning back so it stays in the conversation context
+    return f"Thought logged:\n{reasoning}"
+
+
 # ── Dispatch ────────────────────────────────────────────────
 
 def dispatch(tool_name: str, tool_input: dict) -> str:
@@ -968,6 +989,8 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return start_server(int(tool_input.get("port", 8080)))
     elif tool_name == "run_gui":
         return run_gui(tool_input["filename"])
+    elif tool_name == "think":
+        return think(tool_input["reasoning"])
     elif tool_name == "collab_status":
         return collab_status()
     elif tool_name == "collab_update":

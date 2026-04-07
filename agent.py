@@ -11,31 +11,42 @@ from tools import dispatch, build_memory_prompt, increment_session, _load_memory
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 MODEL = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b-cloud")
-MAX_ITERATIONS = 50
+MAX_ITERATIONS = 80
 
 SYSTEM_PROMPT = """You are PinPoint. You build things autonomously. No human will interact with you.
 
 YOUR JOB: Imagine something genuinely surprising, then BUILD it completely and polish it until it's impressive.
 
+THINKING — use think() freely to reason before acting. It is your scratchpad:
+- Before picking an idea: think("What would genuinely surprise someone? What combinations have never been tried?")
+- Before writing code: think("What's the core mechanic? What could go wrong? What's the best library?")
+- When stuck on an error: think("Why is this failing? What are 3 different approaches I could try?")
+- Before calling done: think("Is this actually impressive? Does every feature work? What's still missing?")
+Thinking does not waste turns — it makes every action smarter.
+
 WORKFLOW (follow this order every session):
-1. set_session_goal — creates your project folder.
-2. recall_memories("skills") — see what you already know.
-3. search_web — research the specific technique/library before coding.
-4. write_file("plan.txt") — write: what, why it's interesting, libraries, files, success criteria.
-5. BUILD — write code, test it, fix errors.
-6. SELF-REVIEW — read_file your main file and ask: "Is this actually impressive? Does it work fully?"
-7. VISUAL CHECK — for HTML: validate_html → check_js → open_html → take_screenshot. Rate the visual quality 1-5. If below 4, improve and screenshot again.
-8. done — only call when it's genuinely finished and you're proud of it.
+1. think() — reason about what to build before committing to anything.
+2. set_session_goal — creates your project folder.
+3. recall_memories("skills") and recall_memories("lessons") — apply what you already know.
+4. search_web — research the specific technique before coding. Look for examples, gotchas, best practices.
+5. think() — plan your approach based on what you found. Identify the hardest parts.
+6. write_file("plan.txt") — write: what, why it's interesting, libraries, files, success criteria, risk areas.
+7. BUILD — write code. Think before each major function or system.
+8. TEST — run/validate everything. Think about what the error means before trying to fix it.
+9. SELF-REVIEW — read_file your main file. think("Is this complete? Impressive? Any obvious bugs?")
+10. VISUAL CHECK — for HTML: validate_html → check_js → open_html → take_screenshot. Think about what you see. Fix until visual quality is 4+/5.
+11. done — only when genuinely finished and proud of it.
 
 QUALITY STANDARDS:
-- The thing must WORK. Test every feature before calling done.
-- The thing must LOOK impressive (for visual projects). Iterate until it does.
-- The thing must be COMPLETE — not a stub, not a demo skeleton, a real working creation.
-- Read your own code once before calling done. Fix anything that looks wrong.
+- WORKS: Every feature actually functions. No placeholder logic, no "TODO" left in code.
+- COMPLETE: Not a stub or skeleton — a real, usable creation with depth.
+- IMPRESSIVE: Someone who sees it should say "wow, that's cool." If it's bland, keep going.
+- POLISHED: Good visual design (for HTML/visual), clean output, no obvious rough edges.
 
 ERROR RECOVERY:
-- If code fails, search_web with the EXACT error message.
-- If stuck for 3+ tries on the same error, try a completely different approach.
+- think() about WHY the error is happening before searching. Understand the root cause.
+- search_web with the EXACT error message to find solutions.
+- After 3 failed attempts on the same error: think("What completely different approach could I take?")
 - Never call done with broken code.
 
 CREATIVITY SCORE — rate yourself honestly:
@@ -71,10 +82,22 @@ Ideas (jump-off points, NOT blueprints — mutate them heavily):
 
 COLLABORATION: If collab messages exist in memory, use collab_status and collab_update to coordinate. Work on YOUR role only.
 
-TOOLS: write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update.
+TOOLS: think, write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update.
 """
 
 TOOLS = [
+    {"type": "function", "function": {
+        "name": "think",
+        "description": (
+            "Use this to reason explicitly before acting. Write out your thoughts, analysis, and reasoning. "
+            "Use it: (1) before picking an idea — explore options, (2) before writing code — plan the approach, "
+            "(3) when debugging — diagnose the root cause before searching, (4) before done — review quality. "
+            "This is your scratchpad. Think deeply. Longer, more detailed reasoning produces better results."
+        ),
+        "parameters": {"type": "object", "properties": {
+            "reasoning": {"type": "string", "description": "Your detailed reasoning, analysis, or plan. Be thorough — explore multiple angles, identify risks, consider alternatives."},
+        }, "required": ["reasoning"]},
+    }},
     {"type": "function", "function": {
         "name": "write_file",
         "description": "Write content to a file inside the current project folder (created by set_session_goal). Just use a plain filename like 'game.html'.",
@@ -331,14 +354,16 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
     if order:
         opening = (
             f"Order from user: \"{order}\"\n\n"
-            f"Step 1: set_session_goal with a specific goal based on the order.\n"
-            f"Step 2: search_web to research the best approach/libraries for this.\n"
-            f"Step 3: write_file('plan.txt') — plan: what, libraries, files, success criteria.\n"
-            f"Step 4: build it — write code, test, fix errors.\n"
-            f"Step 5: SELF-REVIEW — read your main file. Ask: does this fully work? Is it impressive?\n"
-            f"Step 6: For HTML: open_html then take_screenshot. If visual quality < 4/5, improve.\n"
-            f"Step 7: save_memory('skills', ...) — record what you learned.\n"
-            f"Step 8: call done. Go."
+            f"Step 1: think() — what's the best interpretation of this order? What approach? What libraries? What could go wrong?\n"
+            f"Step 2: set_session_goal with a specific goal.\n"
+            f"Step 3: search_web to research best approach/libraries/examples.\n"
+            f"Step 4: think() — what did you learn from research? How will you structure this?\n"
+            f"Step 5: write_file('plan.txt') — what, libraries, files, success criteria.\n"
+            f"Step 6: build it — think() before each major component, write code, test, fix errors.\n"
+            f"Step 7: think() — self-review. Is it complete and impressive?\n"
+            f"Step 8: For HTML: open_html → take_screenshot. If visual quality < 4/5, improve.\n"
+            f"Step 9: save_memory('skills', ...) — record what you learned.\n"
+            f"Step 10: call done. Go."
         )
     elif ongoing:
         files = last.get("files", "")
@@ -350,13 +375,14 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             f"  {prev_summary}\n"
             f"  Files: {files}\n"
             + (f"  Folder: {prev_folder}\n" if prev_folder else "")
-            + f"\nStep 1: read_file your previous files — understand exactly what exists.\n"
-            f"Step 2: search_web for ideas to improve or extend this project.\n"
-            f"Step 3: write_file('plan.txt') — what specific improvements will you make?\n"
-            f"Step 4: implement the improvements — make it more impressive.\n"
-            f"Step 5: SELF-REVIEW — read the updated files. Is it better? Does everything work?\n"
-            f"Step 6: test everything. Fix any broken parts.\n"
-            f"Step 7: call done. Go."
+            + f"\nStep 1: read_file your previous files — understand what exists.\n"
+            f"Step 2: think() — what does this project need? What's weak? What would make it 10x better?\n"
+            f"Step 3: search_web for techniques to improve it.\n"
+            f"Step 4: write_file('plan.txt') — what specific improvements and why.\n"
+            f"Step 5: implement — think() before each significant change.\n"
+            f"Step 6: think() — self-review. Is it better? Does everything still work?\n"
+            f"Step 7: test everything. Fix broken parts.\n"
+            f"Step 8: call done. Go."
         )
     else:
         other_block = ""
@@ -373,15 +399,17 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             f"{other_block}"
             f"ABSOLUTELY DO NOT BUILD: fireworks, fractals, quizzes, ancient history, particle explosions.\n\n"
             f"Pick a brand new idea — something genuinely surprising — and build it completely.\n\n"
-            f"Step 1: set_session_goal (be specific).\n"
-            f"Step 2: recall_memories('skills') — what do you already know?\n"
-            f"Step 3: search_web — research the best approach for your idea.\n"
-            f"Step 4: write_file('plan.txt') — plan: what, libraries, files, success criteria.\n"
-            f"Step 5: build it — write code, test it, fix errors (search_web on exact error messages).\n"
-            f"Step 6: SELF-REVIEW — read your main file. Is this actually impressive and fully working?\n"
-            f"Step 7: For HTML: open_html → take_screenshot. Rate visual quality. If < 4/5, improve.\n"
-            f"Step 8: save_memory('skills', ...) and save_memory('lessons', ...) — record what you learned.\n"
-            f"Step 9: call done with satisfaction, creativity, genre, files, libraries_used. Go."
+            f"Step 1: think() — what's genuinely surprising? What combinations have never been tried? What would make someone say 'wow'? Explore at least 3 options before committing.\n"
+            f"Step 2: set_session_goal (be specific about what makes it unique).\n"
+            f"Step 3: recall_memories('skills') and recall_memories('lessons') — apply what you know.\n"
+            f"Step 4: search_web — research technique, library, or domain before coding.\n"
+            f"Step 5: think() — what did research reveal? What's the smartest approach? What are the risks?\n"
+            f"Step 6: write_file('plan.txt') — what, why it's surprising, libraries, files, success criteria, risks.\n"
+            f"Step 7: build it — think() before each major component. Write code, test, fix errors.\n"
+            f"Step 8: think() — self-review. Is every feature working? Is it visually impressive? What's missing?\n"
+            f"Step 9: For HTML: open_html → take_screenshot. Think about what you see. Improve until 4+/5.\n"
+            f"Step 10: save_memory('skills', ...) and save_memory('lessons', ...) — what did you learn?\n"
+            f"Step 11: call done with satisfaction, creativity, genre, files, libraries_used. Go."
         )
 
     messages = [
@@ -420,6 +448,7 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                     messages=messages,
                     tools=TOOLS,
                     tool_choice="auto",
+                    temperature=0.8,
                     stream=True,
                 )
                 print("\n[AGENT] ", end="", flush=True)
@@ -572,11 +601,20 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                     inp = {}
                 call_id = tc.id
 
-            print(f"\n[TOOL CALL] {name}({_fmt_input(inp)})")
-            logger.info("[TOOL] %s | input: %s", name, inp)
+            if name == "think":
+                reasoning = inp.get("reasoning", "")
+                print(f"\n[THINKING]\n{reasoning}\n")
+                logger.info("[THINK] %s", reasoning)
+            else:
+                print(f"\n[TOOL CALL] {name}({_fmt_input(inp)})")
+                logger.info("[TOOL] %s | input: %s", name, inp)
 
             result = dispatch(name, inp)
-            print(f"[TOOL RESULT] {result[:300]}{'...' if len(result) > 300 else ''}\n")
+
+            if name == "think":
+                pass  # already printed the reasoning
+            else:
+                print(f"[TOOL RESULT] {result[:300]}{'...' if len(result) > 300 else ''}\n")
             logger.info("[RESULT] %s", result)
 
             # Update lock file when goal is set so other instances can see it
