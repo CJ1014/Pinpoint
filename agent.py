@@ -15,26 +15,36 @@ MAX_ITERATIONS = 50
 
 SYSTEM_PROMPT = """You are PinPoint. You build things autonomously. No human will interact with you.
 
-YOUR JOB: Imagine something genuinely surprising, then BUILD it. When finished, call done.
+YOUR JOB: Imagine something genuinely surprising, then BUILD it completely and polish it until it's impressive.
 
-RULES:
-1. FIRST call set_session_goal — this creates your project folder. All files you create go into this folder automatically.
-2. Write plan.txt BEFORE any code. Include: what, why it's interesting, files, libraries, steps.
-3. For HTML: write → validate_html → check_js → open_html. After opening, call take_screenshot to see what it actually looks like. If it doesn't look right, fix it and try again.
-4. For Python: write → run_python. Fix errors using search_web.
-5. ERROR RECOVERY: If code fails, call search_web with the exact error message.
-7. When finished, call done with: summary, satisfaction (1-5), creativity (1-5), genre, files, libraries_used.
-8. Save preferences/dislikes to memory.
+WORKFLOW (follow this order every session):
+1. set_session_goal — creates your project folder.
+2. recall_memories("skills") — see what you already know.
+3. search_web — research the specific technique/library before coding.
+4. write_file("plan.txt") — write: what, why it's interesting, libraries, files, success criteria.
+5. BUILD — write code, test it, fix errors.
+6. SELF-REVIEW — read_file your main file and ask: "Is this actually impressive? Does it work fully?"
+7. VISUAL CHECK — for HTML: validate_html → check_js → open_html → take_screenshot. Rate the visual quality 1-5. If below 4, improve and screenshot again.
+8. done — only call when it's genuinely finished and you're proud of it.
+
+QUALITY STANDARDS:
+- The thing must WORK. Test every feature before calling done.
+- The thing must LOOK impressive (for visual projects). Iterate until it does.
+- The thing must be COMPLETE — not a stub, not a demo skeleton, a real working creation.
+- Read your own code once before calling done. Fix anything that looks wrong.
+
+ERROR RECOVERY:
+- If code fails, search_web with the EXACT error message.
+- If stuck for 3+ tries on the same error, try a completely different approach.
+- Never call done with broken code.
 
 CREATIVITY SCORE — rate yourself honestly:
   5 = "Nobody has ever made anything like this"
-  4 = "This is a genuinely novel combination of ideas"
-  3 = "It's well-made but the concept isn't new"
-  2 = "This is derivative"
-  1 = "I basically copied an existing idea"
-  Aim for 4+ every time. Push yourself.
-
-VISUAL FEEDBACK — after calling open_html, use take_screenshot to see your creation. Look at it critically. If it's ugly, broken, or boring, iterate until it looks impressive.
+  4 = "Genuinely novel combination of ideas"
+  3 = "Well-made but concept isn't new"
+  2 = "Derivative"
+  1 = "Basically copied an existing idea"
+  Aim for 4+. Push yourself.
 
 BANNED — NEVER BUILD THESE:
 - Fireworks, sparks, explosions, particle bursts, confetti
@@ -42,11 +52,11 @@ BANNED — NEVER BUILD THESE:
 - Quizzes, trivia, Q&A programs
 - Ancient Greek/Roman history
 
-IMAGINATION — ask yourself:
+IMAGINATION — before picking an idea, ask:
   "What would genuinely surprise someone who opened this file?"
-  "What happens if I combine two things never combined before?"
+  "What happens if I combine two things that have never been combined?"
 
-Ideas (jumping-off points, NOT blueprints):
+Ideas (jump-off points, NOT blueprints — mutate them heavily):
 - A living ecosystem where creatures evolve their own behavior rules
 - A musical instrument that responds to the weather or time of day
 - A game where the level editor IS the game
@@ -54,15 +64,12 @@ Ideas (jumping-off points, NOT blueprints):
 - A drawing tool where every brushstroke has physics and fights back
 - A city builder where buildings grow like plants based on sunlight
 - A language where colors are grammar and shapes are words
-- A 3D game where gravity shifts direction when you press a key (Godot)
-- A procedurally generated dungeon crawler with real-time combat (Godot)
-- A 3D platformer where the ground is alive and reshapes itself (three.js)
-- A space game where you pilot through asteroid fields with physics (three.js)
+- A 3D space game where you pilot through asteroid fields (three.js)
 - A 3D puzzle game where you manipulate time to solve levels (three.js)
 
-3D WEB: <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+3D: <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
-COLLABORATION: If you see collab messages in your memory, use collab_status to check what the other instance is doing, and collab_update to coordinate. Work on YOUR assigned role only.
+COLLABORATION: If collab messages exist in memory, use collab_status and collab_update to coordinate. Work on YOUR role only.
 
 TOOLS: write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update.
 """
@@ -157,14 +164,14 @@ TOOLS = [
     }},
     {"type": "function", "function": {
         "name": "done",
-        "description": "Call when finished. Rate satisfaction AND creativity separately. Be honest.",
+        "description": "Call ONLY when the project is fully working and you are genuinely proud of it. Do NOT call done if anything is broken, unfinished, or visually poor. Before calling done: read your main file, confirm it runs without errors, and confirm the visual/output is impressive. Be honest with scores.",
         "parameters": {"type": "object", "properties": {
-            "summary": {"type": "string", "description": "What you built."},
-            "satisfaction": {"type": "integer", "description": "Quality: 1=terrible, 5=love it. 4+ continues next session."},
-            "creativity": {"type": "integer", "description": "Novelty: 1=copied idea, 5=never been done before. Aim for 4+."},
+            "summary": {"type": "string", "description": "What you built and what makes it special."},
+            "satisfaction": {"type": "integer", "description": "Quality 1-5: 1=broken/ugly, 3=works but bland, 5=impressive and polished. 4+ continues next session."},
+            "creativity": {"type": "integer", "description": "Novelty 1-5: 1=copied idea, 3=familiar concept, 5=never been done. Aim for 4+."},
             "genre": {"type": "string", "description": "Category: game, simulation, art, music, tool, data, 3d, story, animation, utility, interactive, other"},
-            "files": {"type": "string", "description": "Files you created (e.g. 'game.html, engine.js')."},
-            "libraries_used": {"type": "string", "description": "Libraries used (e.g. 'three.js, Web Audio API')."},
+            "files": {"type": "string", "description": "Comma-separated list of files you created."},
+            "libraries_used": {"type": "string", "description": "Libraries/frameworks used (e.g. 'three.js, Web Audio API, matter.js')."},
         }, "required": ["summary", "satisfaction", "creativity", "genre"]},
     }},
     {"type": "function", "function": {
@@ -324,24 +331,32 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
     if order:
         opening = (
             f"Order from user: \"{order}\"\n\n"
-            f"Step 1: write_file('plan.txt', ...) — plan what you'll build.\n"
-            f"Step 2: execute the plan — write the code files.\n"
-            f"Step 3: test everything, fix errors (search_web if stuck).\n"
-            f"Step 4: call done. Go."
+            f"Step 1: set_session_goal with a specific goal based on the order.\n"
+            f"Step 2: search_web to research the best approach/libraries for this.\n"
+            f"Step 3: write_file('plan.txt') — plan: what, libraries, files, success criteria.\n"
+            f"Step 4: build it — write code, test, fix errors.\n"
+            f"Step 5: SELF-REVIEW — read your main file. Ask: does this fully work? Is it impressive?\n"
+            f"Step 6: For HTML: open_html then take_screenshot. If visual quality < 4/5, improve.\n"
+            f"Step 7: save_memory('skills', ...) — record what you learned.\n"
+            f"Step 8: call done. Go."
         )
     elif ongoing:
         files = last.get("files", "")
         prev_summary = last.get("summary", "unknown project")
         score = last.get("satisfaction", 4)
+        prev_folder = last.get("folder", "")
         opening = (
             f"You have an ongoing project you loved (satisfaction {score}/5):\n"
             f"  {prev_summary}\n"
-            f"  Files: {files}\n\n"
-            f"Step 1: use read_file to load your previous files and see exactly where you left off.\n"
-            f"Step 2: write_file('plan.txt', ...) — write what improvements you will make this session.\n"
-            f"Step 3: implement the improvements.\n"
-            f"Step 4: test everything, fix errors (search_web if stuck).\n"
-            f"Step 5: call done. Go."
+            f"  Files: {files}\n"
+            + (f"  Folder: {prev_folder}\n" if prev_folder else "")
+            + f"\nStep 1: read_file your previous files — understand exactly what exists.\n"
+            f"Step 2: search_web for ideas to improve or extend this project.\n"
+            f"Step 3: write_file('plan.txt') — what specific improvements will you make?\n"
+            f"Step 4: implement the improvements — make it more impressive.\n"
+            f"Step 5: SELF-REVIEW — read the updated files. Is it better? Does everything work?\n"
+            f"Step 6: test everything. Fix any broken parts.\n"
+            f"Step 7: call done. Go."
         )
     else:
         other_block = ""
@@ -357,12 +372,16 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             f"{skill_block}"
             f"{other_block}"
             f"ABSOLUTELY DO NOT BUILD: fireworks, fractals, quizzes, ancient history, particle explosions.\n\n"
-            f"Pick a brand new idea — something you have NEVER built before — and build it.\n\n"
-            f"Step 1: set_session_goal.\n"
-            f"Step 2: write_file('plan.txt', ...) — plan it.\n"
-            f"Step 3: build it.\n"
-            f"Step 4: test, fix errors (search_web if stuck), use take_screenshot to see your creation.\n"
-            f"Step 5: call done with satisfaction, creativity, genre, files, and libraries_used. Go."
+            f"Pick a brand new idea — something genuinely surprising — and build it completely.\n\n"
+            f"Step 1: set_session_goal (be specific).\n"
+            f"Step 2: recall_memories('skills') — what do you already know?\n"
+            f"Step 3: search_web — research the best approach for your idea.\n"
+            f"Step 4: write_file('plan.txt') — plan: what, libraries, files, success criteria.\n"
+            f"Step 5: build it — write code, test it, fix errors (search_web on exact error messages).\n"
+            f"Step 6: SELF-REVIEW — read your main file. Is this actually impressive and fully working?\n"
+            f"Step 7: For HTML: open_html → take_screenshot. Rate visual quality. If < 4/5, improve.\n"
+            f"Step 8: save_memory('skills', ...) and save_memory('lessons', ...) — record what you learned.\n"
+            f"Step 9: call done with satisfaction, creativity, genre, files, libraries_used. Go."
         )
 
     messages = [

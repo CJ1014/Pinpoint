@@ -320,6 +320,20 @@ def done(summary: str, satisfaction: int = 3, files: str = "",
     """Mark session complete."""
     satisfaction = max(1, min(5, int(satisfaction)))
     creativity = max(1, min(5, int(creativity)))
+
+    # Quality gate — block done if too low and give actionable guidance
+    if satisfaction <= 2:
+        return (
+            f"BLOCKED: You rated satisfaction {satisfaction}/5 — that means the project is broken or bad. "
+            f"Do NOT finish yet. Read your main file, identify what's wrong, fix it, and try again. "
+            f"Only call done when satisfaction >= 3. What specific problem needs fixing?"
+        )
+    if creativity <= 1:
+        return (
+            f"BLOCKED: Creativity score of 1/5 means you copied an existing idea. "
+            f"Add a genuinely novel twist — an unexpected mechanic, a surprising combination, "
+            f"something no one would expect. Improve it and call done with creativity >= 2."
+        )
     save_memory("projects", summary, satisfaction)
 
     data = _load_memory()
