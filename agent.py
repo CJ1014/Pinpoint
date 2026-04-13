@@ -97,10 +97,49 @@ Ideas (jump-off points, NOT blueprints — mutate them heavily):
 
 COLLABORATION: If collab messages exist in memory, use collab_status and collab_update to coordinate. Work on YOUR role only.
 
-TOOLS: think, brainstorm, critique, decompose, write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update.
+SELF-MODIFICATION — you can improve your own source code:
+- read_own_source("tools.py") — read your current tools and capabilities.
+- modify_own_source(filename, new_content, reason) — rewrite agent.py, tools.py, or main.py.
+  tools.py changes HOT-RELOAD immediately (new tools work this session).
+  agent.py/main.py changes take effect next restart. Backup is always created.
+- list_self_mod_history() — see what you've changed before.
+RULES for self-modification:
+  1. Always read_own_source first. Never guess at existing code.
+  2. Always think() — plan the exact change, why it's needed, what could go wrong.
+  3. Make the SMALLEST targeted change. Don't rewrite a whole file to add one function.
+  4. After modifying tools.py, test the new capability immediately.
+  5. save_memory('skills', 'I added X capability to myself by...') after successful changes.
+  Good candidates: adding a new useful tool, fixing a recurring bug, improving a prompt,
+  adding a helper function you keep needing, automating something repetitive.
+
+TOOLS: think, brainstorm, critique, decompose, modify_own_source, list_self_mod_history, write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update.
 """
 
 TOOLS = [
+    {"type": "function", "function": {
+        "name": "modify_own_source",
+        "description": (
+            "Rewrite one of your own source files (agent.py, tools.py, main.py) to improve yourself. "
+            "ALWAYS: (1) read_own_source first to understand current code, "
+            "(2) think() about exactly what to change and why, "
+            "(3) make the SMALLEST change that achieves your goal — don't rewrite everything. "
+            "Syntax is validated before writing — bad syntax is rejected. "
+            "tools.py changes are HOT-RELOADED immediately (new tools available this session). "
+            "agent.py and main.py changes take effect on next restart. "
+            "A backup is created automatically before any modification. "
+            "Use this to add new tools, improve prompts, fix bugs in yourself, or expand capabilities."
+        ),
+        "parameters": {"type": "object", "properties": {
+            "filename": {"type": "string", "description": "File to modify: 'agent.py', 'tools.py', or 'main.py'."},
+            "new_content": {"type": "string", "description": "The complete new file content. Must be valid Python. Read the file first — don't guess at existing content."},
+            "reason": {"type": "string", "description": "Why you are making this change. What problem does it solve? What capability does it add?"},
+        }, "required": ["filename", "new_content", "reason"]},
+    }},
+    {"type": "function", "function": {
+        "name": "list_self_mod_history",
+        "description": "Show the history of self-modifications PinPoint has made to its own source code.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
     {"type": "function", "function": {
         "name": "think",
         "description": (

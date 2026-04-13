@@ -910,6 +910,123 @@ def collab_update(role: str, status: str, message: str = "") -> str:
     return f"Collab updated: {role} = {status}" + (f" | message: {message}" if message else "")
 
 
+# ── Self-Modification ─────────────────────────────────────
+
+_SELF_MOD_LOG = os.path.join(ROOT_DIR, "self_mod_log.txt")
+_MODIFIABLE = {"agent.py", "tools.py", "main.py"}
+
+
+def modify_own_source(filename: str, new_content: str, reason: str) -> str:
+    """Rewrite one of PinPoint's own source files.
+
+    Workflow enforced here:
+      1. Only agent.py, tools.py, main.py are allowed.
+      2. A timestamped backup is created before any write.
+      3. The new content must pass ast.parse (Python syntax check).
+      4. If tools.py is changed, it is hot-reloaded immediately so new
+         tool functions are available in this session without a restart.
+      5. Changes to agent.py or main.py take effect on next restart.
+      6. The reason and diff summary are logged to self_mod_log.txt.
+
+    Always read_own_source(filename) FIRST to understand what's there.
+    Always think() about exactly what to change and why before calling this.
+    Make the smallest change that achieves your goal — don't rewrite
+    everything when you only need to add one function.
+    """
+    if filename not in _MODIFIABLE:
+        return (
+            f"Error: '{filename}' is not modifiable. "
+            f"Only these files can be changed: {', '.join(sorted(_MODIFIABLE))}"
+        )
+
+    filepath = os.path.join(ROOT_DIR, filename)
+    if not os.path.exists(filepath):
+        return f"Error: {filepath} not found."
+
+    # 1. Syntax check before touching anything
+    try:
+        import ast as _ast
+        _ast.parse(new_content)
+    except SyntaxError as e:
+        return (
+            f"SYNTAX ERROR — file NOT modified.\n"
+            f"Fix the syntax error and try again:\n"
+            f"  Line {e.lineno}: {e.msg}\n"
+            f"  {e.text}"
+        )
+
+    # 2. Backup the current file
+    backup_path = filepath + f".bak_{_now().replace(':', '-').replace(' ', '_')}"
+    with open(filepath, "r", encoding="utf-8") as f:
+        old_content = f.read()
+    with open(backup_path, "w", encoding="utf-8") as f:
+        f.write(old_content)
+
+    # 3. Write the new content
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(new_content)
+
+    # 4. Hot-reload tools.py if that's what changed
+    reloaded = False
+    reload_error = ""
+    if filename == "tools.py":
+        try:
+            import importlib, tools as _tools_mod
+            importlib.reload(_tools_mod)
+            reloaded = True
+        except Exception as e:
+            reload_error = str(e)
+            # Restore backup on reload failure
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(old_content)
+            return (
+                f"RELOAD FAILED — restored backup.\n"
+                f"Error during reload: {reload_error}\n"
+                f"Fix the error and try again."
+            )
+
+    # 5. Log the change
+    old_lines = old_content.splitlines()
+    new_lines = new_content.splitlines()
+    added = len(new_lines) - len(old_lines)
+    log_entry = (
+        f"[{_now()}] SELF-MOD: {filename}\n"
+        f"Reason: {reason}\n"
+        f"Lines: {len(old_lines)} → {len(new_lines)} ({'+' if added >= 0 else ''}{added})\n"
+        f"Backup: {backup_path}\n"
+        f"{'Hot-reloaded successfully.' if reloaded else 'Takes effect on next restart.'}\n"
+        f"{'─'*60}\n"
+    )
+    try:
+        with open(_SELF_MOD_LOG, "a", encoding="utf-8") as f:
+            f.write(log_entry)
+    except Exception:
+        pass
+
+    result = (
+        f"Self-modification applied to {filename}.\n"
+        f"Lines: {len(old_lines)} → {len(new_lines)} ({'+' if added >= 0 else ''}{added})\n"
+        f"Backup saved: {os.path.basename(backup_path)}\n"
+    )
+    if reloaded:
+        result += "tools.py hot-reloaded — new functions available immediately.\n"
+    else:
+        result += f"Changes to {filename} take effect on next restart.\n"
+    result += f"Reason logged: {reason}"
+    return result
+
+
+def list_self_mod_history() -> str:
+    """Show the history of self-modifications PinPoint has made to itself."""
+    if not os.path.exists(_SELF_MOD_LOG):
+        return "No self-modifications recorded yet."
+    with open(_SELF_MOD_LOG, "r", encoding="utf-8") as f:
+        content = f.read()
+    if len(content) > 8000:
+        content = content[-8000:] + "\n[... showing last 8000 chars ...]"
+    return content or "No self-modifications recorded yet."
+
+
 # ── Thinking / Reasoning ──────────────────────────────────
 
 _THINK_LOG_FILE = os.path.join(OUTPUT_DIR, "_thinking_log.txt")
@@ -1122,6 +1239,14 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return start_server(int(tool_input.get("port", 8080)))
     elif tool_name == "run_gui":
         return run_gui(tool_input["filename"])
+    elif tool_name == "modify_own_source":
+        return modify_own_source(
+            tool_input["filename"],
+            tool_input["new_content"],
+            tool_input["reason"],
+        )
+    elif tool_name == "list_self_mod_history":
+        return list_self_mod_history()
     elif tool_name == "think":
         return think(tool_input["reasoning"])
     elif tool_name == "brainstorm":
