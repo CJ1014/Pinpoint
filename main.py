@@ -249,6 +249,26 @@ def main() -> None:
     check_ollama()
     logger = setup_logging()
 
+    # ── Highest-priority Ctrl+C handler ──────────────────────
+    # os._exit() bypasses all Python exception handling and kills
+    # the process immediately — works even when blocked in a C
+    # extension (e.g. httpx streaming from Ollama).
+    import signal
+    _sessions_run = [0]  # list so the closure can mutate it
+
+    def _force_exit(signum, frame):
+        print(f"\n\n{'='*60}")
+        print(f"  PinPoint stopped after {_sessions_run[0]} session(s).")
+        print(f"  All files saved in: {OUTPUT_DIR}")
+        print(f"{'='*60}\n")
+        os._exit(0)
+
+    try:
+        signal.signal(signal.SIGINT, _force_exit)
+    except Exception:
+        pass  # fallback to default if signal setup fails
+    # ─────────────────────────────────────────────────────────
+
     print(BANNER)
     print(f"  Output directory : {OUTPUT_DIR}")
     print(f"  Log file         : {os.path.join(OUTPUT_DIR, 'agent_log.txt')}")
@@ -334,53 +354,44 @@ def main() -> None:
         return [g for g in goals if g]
 
     session = 0
-    try:
-        while True:
-            session += 1
-            other_goals = get_other_goals()
-            print(f"\n{'='*60}")
-            print(f"  Starting session #{session}")
-            if order:
-                print(f"  Order: {order}")
-            if other_goals:
-                print(f"  Other instances working on: {'; '.join(other_goals)}")
-            print(f"{'='*60}\n")
-
-            write_lock("deciding...")
-            summary = ""
-            try:
-                summary = agent.run(
-                    logger=logger,
-                    order=order,
-                    interrupt_queue=interrupt_queue,
-                    other_goals=other_goals,
-                    write_lock=write_lock,
-                )
-            except KeyboardInterrupt:
-                raise
-            except Exception as e:
-                print(f"\n[ERROR in session #{session}]: {e}")
-                logger.exception("Session %d crashed", session)
-            finally:
-                clear_lock()
-
-            print("\n--- Files in output/ ---")
-            print(list_files())
-
-            if summary:
-                print("\n--- Session summary ---")
-                print(summary)
-
-            print(f"\n[Resting {REST_BETWEEN_SESSIONS}s before next session — press Ctrl+C to stop]")
-            for _ in range(REST_BETWEEN_SESSIONS * 10):
-                time.sleep(0.1)  # small slices so Ctrl+C is caught quickly
-
-    except KeyboardInterrupt:
-        clear_lock()
-        print(f"\n\n{'='*60}")
-        print(f"  PinPoint stopped after {session} session(s).")
-        print(f"  All files saved in: {OUTPUT_DIR}")
+    while True:
+        session += 1
+        _sessions_run[0] = session  # keep signal handler count in sync
+        other_goals = get_other_goals()
+        print(f"\n{'='*60}")
+        print(f"  Starting session #{session}")
+        if order:
+            print(f"  Order: {order}")
+        if other_goals:
+            print(f"  Other instances working on: {'; '.join(other_goals)}")
         print(f"{'='*60}\n")
+
+        write_lock("deciding...")
+        summary = ""
+        try:
+            summary = agent.run(
+                logger=logger,
+                order=order,
+                interrupt_queue=interrupt_queue,
+                other_goals=other_goals,
+                write_lock=write_lock,
+            )
+        except Exception as e:
+            print(f"\n[ERROR in session #{session}]: {e}")
+            logger.exception("Session %d crashed", session)
+        finally:
+            clear_lock()
+
+        print("\n--- Files in output/ ---")
+        print(list_files())
+
+        if summary:
+            print("\n--- Session summary ---")
+            print(summary)
+
+        print(f"\n[Resting {REST_BETWEEN_SESSIONS}s before next session — press Ctrl+C to stop]")
+        for _ in range(REST_BETWEEN_SESSIONS * 10):
+            time.sleep(0.1)
 
 
 if __name__ == "__main__":
