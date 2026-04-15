@@ -174,6 +174,19 @@ generate_art(style, output_file) — Create generative visual art.
   Use for generative_art projects or to create procedural images for other projects.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+VOICE — give yourself a voice:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+speak(text, wait=true) — Convert text to speech and play it out loud.
+  Use this whenever you want to vocalize something:
+  - Thinking out loud: speak your reasoning as you solve a problem
+  - Discoveries: "I just realized that..." or "This is interesting because..."
+  - Session summaries: speak your final summary at the end
+  - Insights: vocalize patterns you notice in your past work
+  - Excitement: "This looks amazing!" or "I'm proud of what I built"
+  Makes the agent feel alive, expressive, and interactive. You have a voice!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SESSION START — first, ask yourself:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -182,7 +195,7 @@ SESSION START — first, ask yourself:
 "What weakness in myself could I fix today?"
 "What would be genuinely surprising to build or discover?"
 
-TOOLS: think, brainstorm, critique, decompose, log_experiment, list_experiments, modify_own_source, list_self_mod_history, write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update, git_commit, set_specialization, get_specialization, run_tests, write_test, show_dashboard, review_own_work, generate_portfolio, synthesize_audio, generate_art.
+TOOLS: think, brainstorm, critique, decompose, log_experiment, list_experiments, modify_own_source, list_self_mod_history, write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update, git_commit, set_specialization, get_specialization, run_tests, write_test, show_dashboard, review_own_work, generate_portfolio, synthesize_audio, generate_art, speak.
 """
 
 TOOLS = [
@@ -536,6 +549,14 @@ TOOLS = [
             "output_file": {"type": "string", "description": "Output filename (default 'generated_art.png')."},
         }},
     }},
+    {"type": "function", "function": {
+        "name": "speak",
+        "description": "Convert text to speech and speak it out loud. Use this to vocalize your thoughts, reasoning, insights, or session summary. Makes the agent feel alive and interactive.",
+        "parameters": {"type": "object", "properties": {
+            "text": {"type": "string", "description": "What to say. Can be your reasoning, a discovery, a summary, or any insight you want to vocalize."},
+            "wait": {"type": "boolean", "description": "Wait for speech to finish before continuing (default true). Set false for background speech."},
+        }, "required": ["text"]},
+    }},
 ]
 
 
@@ -679,7 +700,7 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         "done": "done", "error": "error",
         "show_dashboard": "memory", "review_own_work": "memory",
         "generate_portfolio": "file_created", "synthesize_audio": "file_created",
-        "generate_art": "file_created",
+        "generate_art": "file_created", "speak": "think",
     }
 
     # Emit initial state so viewer sees PinPoint starting up

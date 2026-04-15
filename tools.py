@@ -1802,6 +1802,50 @@ def generate_art(style: str = "geometric", output_file: str = "generated_art.png
     return f"Art generated: {output_file} ({style} style, {width}x{height})"
 
 
+# ── Text-to-Speech / Voice ─────────────────────────────────
+
+def speak(text: str, wait: bool = True) -> str:
+    """Convert text to speech and play it out loud.
+
+    Use this to vocalize your thoughts, summaries, or important findings.
+    Voice output makes the agent feel alive and lets you hear its reasoning.
+    """
+    if not text or not text.strip():
+        return "Nothing to speak."
+
+    try:
+        import pyttsx3
+    except ImportError:
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "install", "pyttsx3", "-q"], timeout=30)
+            import pyttsx3
+        except Exception as e:
+            return f"Could not install pyttsx3: {e}"
+
+    try:
+        engine = pyttsx3.init()
+        # Adjust speech rate (slower = clearer)
+        engine.setProperty('rate', 150)
+        # Try to use a better voice if available
+        voices = engine.getProperty('voices')
+        if voices:
+            engine.setProperty('voice', voices[0].id)
+
+        # Queue the text
+        engine.say(text)
+
+        # Play immediately or queue
+        if wait:
+            engine.runAndWait()
+            return f"Spoke: '{text[:100]}...'" if len(text) > 100 else f"Spoke: '{text}'"
+        else:
+            # Non-blocking: start in background
+            engine.startLoop(False)
+            return f"Speaking in background: '{text[:100]}...'" if len(text) > 100 else f"Speaking: '{text}'"
+    except Exception as e:
+        return f"Text-to-speech error: {e}"
+
+
 # ── Git Integration ────────────────────────────────────────
 
 def git_commit(message: str, files: str = ".") -> str:
@@ -2069,6 +2113,11 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return generate_art(
             tool_input.get("style", "geometric"),
             tool_input.get("output_file", "generated_art.png"),
+        )
+    elif tool_name == "speak":
+        return speak(
+            tool_input["text"],
+            bool(tool_input.get("wait", True)),
         )
     else:
         return f"Unknown tool: {tool_name}"
