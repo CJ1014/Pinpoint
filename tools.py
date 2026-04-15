@@ -1809,41 +1809,89 @@ def speak(text: str, wait: bool = True) -> str:
 
     Use this to vocalize your thoughts, summaries, or important findings.
     Voice output makes the agent feel alive and lets you hear its reasoning.
+
+    Tries multiple TTS backends in order of reliability:
+    1. espeak (Linux, most reliable)
+    2. say (macOS)
+    3. PowerShell (Windows)
+    4. pyttsx3 (Python library, fallback)
     """
     if not text or not text.strip():
         return "Nothing to speak."
 
+    text = text.strip()
+    short_text = text[:100] + "..." if len(text) > 100 else text
+
+    # Try platform-specific TTS first (more reliable than pyttsx3)
     try:
-        import pyttsx3
-    except ImportError:
-        try:
-            subprocess.run([sys.executable, "-m", "pip", "install", "pyttsx3", "-q"], timeout=30)
-            import pyttsx3
-        except Exception as e:
-            return f"Could not install pyttsx3: {e}"
+        if platform.system() == "Linux":
+            # Try espeak-ng first (modern replacement), then espeak
+            for cmd in ["espeak-ng", "espeak"]:
+                try:
+                    result = subprocess.run(
+                        [cmd, "-s", "130", "-a", "200"],
+                        input=text,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    if result.returncode == 0:
+                        return f"🎤 Spoke: '{short_text}'"
+                except FileNotFoundError:
+                    continue
+    except subprocess.TimeoutExpired:
+        pass
+    except Exception:
+        pass
 
     try:
+        if platform.system() == "Darwin":  # macOS
+            subprocess.run(
+                ["say", text],
+                capture_output=True,
+                timeout=30,
+            )
+            return f"🎤 Spoke: '{short_text}'"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    except Exception:
+        pass
+
+    try:
+        if platform.system() == "Windows":
+            # Use PowerShell's built-in speech synthesis
+            ps_cmd = f"Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{text.replace(chr(39), chr(39) + chr(39))}')"
+            subprocess.run(
+                ["powershell", "-Command", ps_cmd],
+                capture_output=True,
+                timeout=30,
+            )
+            return f"🎤 Spoke: '{short_text}'"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    except Exception:
+        pass
+
+    # Fallback to pyttsx3 (Python library)
+    try:
+        import pyttsx3
         engine = pyttsx3.init()
-        # Adjust speech rate (slower = clearer)
-        engine.setProperty('rate', 150)
-        # Try to use a better voice if available
+        engine.setProperty('rate', 130)
         voices = engine.getProperty('voices')
         if voices:
             engine.setProperty('voice', voices[0].id)
-
-        # Queue the text
         engine.say(text)
-
-        # Play immediately or queue
         if wait:
             engine.runAndWait()
-            return f"Spoke: '{text[:100]}...'" if len(text) > 100 else f"Spoke: '{text}'"
-        else:
-            # Non-blocking: start in background
-            engine.startLoop(False)
-            return f"Speaking in background: '{text[:100]}...'" if len(text) > 100 else f"Speaking: '{text}'"
+        return f"🎤 Spoke: '{short_text}'"
+    except ImportError:
+        pass
     except Exception as e:
-        return f"Text-to-speech error: {e}"
+        pass
+
+    # Last resort: just print it (no actual audio)
+    print(f"\n[SPEAKING] {text}\n", flush=True)
+    return f"📢 Announced: '{short_text}' (audio system unavailable, printed to console instead)"
 
 
 # ── Git Integration ────────────────────────────────────────
