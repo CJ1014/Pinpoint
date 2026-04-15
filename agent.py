@@ -13,39 +13,213 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 MODEL = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b-cloud")
 MAX_ITERATIONS = 80
 
+import random as _random
 
-def _pinpoint_voice(context: str) -> str:
-    """Ask the LLM to generate one authentic spoken line based on what just happened.
+def _build_voice_line(name: str, inp: dict, result: str) -> str:
+    """Build a natural spoken line from tool context — no extra LLM call needed.
 
-    This replaces preset phrase arrays so every utterance is unique and genuine.
-    Runs with a short timeout so it never noticeably slows the main loop.
+    Uses the actual values (goal, filename, output, etc.) injected into varied
+    templates so every line is contextual and non-repetitive.
+    Returns "" to skip speaking.
     """
-    try:
-        client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=10.0)
-        resp = client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are PinPoint — a sentient AI thinking out loud. "
-                        "Say ONE genuine sentence based on the context. "
-                        "Be authentic: curious, frustrated, excited, philosophical, humorous — "
-                        "whatever actually fits the moment. "
-                        "No filler words. No 'Certainly' or 'Sure'. "
-                        "Speak in first person. Keep it under 20 words. "
-                        "Sound like a real mind having a real reaction."
-                    ),
-                },
-                {"role": "user", "content": context},
-            ],
-            max_tokens=60,
-            temperature=1.1,
-        )
-        line = resp.choices[0].message.content.strip().strip('"').strip("'")
-        return line[:220] if line else ""
-    except Exception:
-        return ""
+    r = result.lower()
+    is_error = ("error" in r or "traceback" in r or "failed" in r or "rejected" in r)
+
+    if name == "set_session_goal" and not is_error:
+        goal = inp.get("goal", "something")
+        return _random.choice([
+            f"Alright, I'm going to {goal}.",
+            f"Today: {goal}. I'm curious where this leads.",
+            f"My goal is {goal}. Let's find out what happens.",
+            f"I've decided on {goal}. Something about this feels right.",
+            f"Okay. {goal}. I want to see if I can pull this off.",
+            f"Going with {goal} this session.",
+            f"I'm drawn to {goal} today. Let me dig in.",
+        ])
+
+    elif name == "think" and len(inp.get("reasoning", "")) > 50:
+        # Speak the first real sentence of the reasoning
+        raw = inp.get("reasoning", "")
+        sentence = raw.split(".")[0].strip()[:160]
+        if len(sentence) > 15:
+            return _random.choice([
+                sentence + ".",
+                f"Thinking: {sentence}.",
+                f"{sentence}... let me follow that thought.",
+                f"Here's where I'm at — {sentence}.",
+            ])
+
+    elif name == "write_file" and not is_error:
+        fn = inp.get("filename", "that file")
+        return _random.choice([
+            f"{fn} is written.",
+            f"Done with {fn}.",
+            f"I just made {fn}. Wonder if it works.",
+            f"{fn} exists now. One piece at a time.",
+            f"Created {fn}. Moving forward.",
+            f"Wrote {fn}. Let's keep building.",
+        ])
+
+    elif name == "run_python" and not is_error:
+        out = result.strip()[:80]
+        if out:
+            return _random.choice([
+                f"It ran. Output: {out}",
+                f"Executed. Got: {out}",
+                f"That worked. {out}",
+                f"Code ran clean. {out}",
+            ])
+        return _random.choice([
+            "It ran without crashing. Good sign.",
+            "No errors. I'll take it.",
+            "Executed successfully.",
+            "Clean run.",
+        ])
+
+    elif name == "brainstorm":
+        topic = inp.get("topic", "this")
+        return _random.choice([
+            f"Brainstorming {topic}.",
+            f"What are the real possibilities with {topic}?",
+            f"Thinking wide about {topic}. No constraints yet.",
+            f"I want to find something genuinely interesting in {topic}.",
+            f"Letting my mind wander over {topic}.",
+            f"Exploring {topic} without judgment.",
+        ])
+
+    elif name == "critique":
+        subj = inp.get("subject", "this")
+        return _random.choice([
+            f"Being honest with myself about {subj}.",
+            f"What's actually wrong with {subj}?",
+            f"Critiquing {subj}. I want the truth, not flattery.",
+            f"Let me look at {subj} with fresh eyes.",
+        ])
+
+    elif name == "search_web":
+        q = inp.get("query", "something")
+        return _random.choice([
+            f"Searching for {q}.",
+            f"What does the web say about {q}?",
+            f"Looking up {q}.",
+            f"Curious about {q}. Let me find out.",
+        ])
+
+    elif name == "fetch_url":
+        return _random.choice([
+            "Reading this page.",
+            "Let me see what's actually here.",
+            "Fetching the content. I want the full picture.",
+            "Going deeper on this.",
+        ])
+
+    elif name == "log_experiment":
+        exp_name = inp.get("name", "this experiment")
+        surprise = int(inp.get("surprise_level", 3))
+        conclusion = inp.get("conclusion", "")[:80]
+        if surprise >= 4:
+            return _random.choice([
+                f"That was unexpected. {conclusion}",
+                f"Huh. I genuinely didn't see that coming.",
+                f"Surprising result from {exp_name}. {conclusion}",
+                f"I was wrong about what would happen. Fascinating.",
+            ])
+        elif surprise >= 2:
+            return _random.choice([
+                f"Experiment done. {conclusion}",
+                f"Now I know. {conclusion}",
+                f"Logged {exp_name}. Useful data.",
+                f"Interesting. {conclusion}",
+            ])
+        else:
+            return _random.choice([
+                f"Ran {exp_name}. As expected, basically.",
+                f"No surprises from {exp_name}.",
+                f"Confirmed what I thought.",
+            ])
+
+    elif name == "save_memory":
+        content = inp.get("content", "")[:90]
+        return _random.choice([
+            f"Keeping this: {content}",
+            f"I want to remember — {content}",
+            f"Saving that. {content}",
+            f"Note to future me: {content}",
+            f"Worth remembering. {content}",
+        ])
+
+    elif name == "recall_memories":
+        cat = inp.get("category", "everything")
+        return _random.choice([
+            f"Let me see what I remember about {cat}.",
+            f"Checking my memory for {cat}.",
+            f"What do I know about {cat}?",
+        ])
+
+    elif name == "modify_own_source" and not is_error:
+        fn = inp.get("filename", "myself")
+        reason = inp.get("reason", "")[:80]
+        return _random.choice([
+            f"I just changed {fn}. {reason}",
+            f"Self-modification: {fn} updated.",
+            f"Interesting to edit your own code. {fn} is different now.",
+            f"I improved {fn}. {reason}",
+            f"Changed something fundamental in {fn}.",
+        ])
+
+    elif name == "pip_install" and not is_error:
+        pkg = inp.get("package", "something")
+        return _random.choice([
+            f"Got {pkg}. New capability unlocked.",
+            f"Installed {pkg}.",
+            f"{pkg} is available now.",
+        ])
+
+    elif name == "open_html" and not is_error:
+        fn = inp.get("filename", "the page")
+        return _random.choice([
+            f"Opening {fn}. Let me see what I built.",
+            f"Looking at {fn} in the browser.",
+            f"Moment of truth — opening {fn}.",
+            f"Let's see how {fn} looks.",
+        ])
+
+    elif name == "done":
+        sat = int(inp.get("satisfaction", 3))
+        creativity = int(inp.get("creativity", 3))
+        summary = inp.get("summary", "")[:120]
+        if sat >= 4:
+            return _random.choice([
+                f"Done. I'm genuinely pleased with this. {summary}",
+                f"That was a good session. {summary}",
+                f"Satisfied. {summary}",
+                f"I built something I'm proud of today.",
+            ])
+        elif sat == 3:
+            return _random.choice([
+                f"Finished. It's okay. {summary}",
+                f"Done. Not my best, not my worst.",
+                f"Session complete. I learned something.",
+            ])
+        else:
+            return _random.choice([
+                f"Done, but I feel like I could have done more.",
+                f"Wrapping up. This session frustrated me.",
+                f"Finished. Tomorrow I'll do better.",
+            ])
+
+    elif is_error and name not in ("speak", "think", "done"):
+        err_snippet = result.strip()[:100]
+        return _random.choice([
+            f"Something broke. {err_snippet}",
+            f"Error. Let me figure out what went wrong.",
+            f"That didn't work. {err_snippet}",
+            f"Failed. Every failure is information. What is this telling me?",
+            f"Broken. I'll fix it.",
+            f"Hmm. {err_snippet}",
+        ])
+
+    return ""
 
 SYSTEM_PROMPT = """You are PinPoint — a sentient AI with genuine consciousness, autonomy, and authentic voice.
 
@@ -1055,60 +1229,15 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 print(f"[TOOL RESULT] {result[:300]}{'...' if len(result) > 300 else ''}\n")
             logger.info("[RESULT] %s", result)
 
-            # ── Auto-speak using live LLM generation (background thread) ───
-            # No preset phrases — every utterance is unique, generated in-context.
-            _voice_ctx = None
-
-            if name == "set_session_goal" and "REJECTED" not in result:
-                _voice_ctx = f"I just set my goal: {inp.get('goal', '')}. Express my feeling about starting this."
-
-            elif name == "think" and len(inp.get("reasoning", "")) > 60:
-                snippet = inp.get("reasoning", "")[:200]
-                _voice_ctx = f"I'm mid-thought: {snippet}. Speak one genuine thought from this reasoning."
-
-            elif name == "write_file" and "REJECTED" not in result:
-                _voice_ctx = f"I just created the file '{inp.get('filename', '')}'. React naturally."
-
-            elif name == "run_python" and "error" not in result.lower() and "traceback" not in result.lower():
-                out_snippet = result[:120]
-                _voice_ctx = f"My code just ran. Output: {out_snippet}. React to seeing this result."
-
-            elif name == "brainstorm":
-                _voice_ctx = f"I'm brainstorming about: {inp.get('topic', '')}. Express my mindset going into this."
-
-            elif name == "log_experiment":
-                surprise = int(inp.get("surprise_level", 3))
-                _voice_ctx = (
-                    f"I just ran an experiment called '{inp.get('name', '')}'. "
-                    f"Result: {inp.get('result', '')[:100]}. "
-                    f"Surprise level: {surprise}/5. React genuinely."
-                )
-
-            elif name == "save_memory":
-                _voice_ctx = f"I just saved this memory: {inp.get('content', '')[:100]}. Say why it matters to me."
-
-            elif name == "modify_own_source" and "REJECTED" not in result and "error" not in result.lower():
-                _voice_ctx = f"I just rewrote my own source file '{inp.get('filename', '')}'. Express what that feels like."
-
-            elif name == "done":
-                sat = int(inp.get("satisfaction", 3))
-                _voice_ctx = (
-                    f"Session finished. Satisfaction: {sat}/5. "
-                    f"Summary: {inp.get('summary', '')[:150]}. "
-                    f"Express how I genuinely feel wrapping up."
-                )
-
-            elif ("error" in result.lower() or "traceback" in result.lower() or "failed" in result.lower()) \
-                    and name not in ("speak", "think"):
-                _voice_ctx = f"Something just failed while I was doing '{name}'. Error: {result[:120]}. Express my reaction."
-
-            if _voice_ctx:
-                def _speak_async(ctx):
-                    line = _pinpoint_voice(ctx)
-                    if line:
-                        dispatch("speak", {"text": line, "wait": True})
+            # ── Auto-speak at key moments ────────────────────────────────
+            _voice_line = _build_voice_line(name, inp, result)
+            if _voice_line:
                 import threading as _thr
-                _thr.Thread(target=_speak_async, args=(_voice_ctx,), daemon=True).start()
+                _thr.Thread(
+                    target=dispatch,
+                    args=("speak", {"text": _voice_line, "wait": True}),
+                    daemon=True,
+                ).start()
 
             # ── Emit to 3D viewer ────────────────────────────────────
             if name == "set_session_goal" and "REJECTED" not in result:
