@@ -18,6 +18,7 @@ BANNER = r"""
 
  Autonomous AI — running until you stop it
  Ctrl+C to stop  |  /bug = inject a bug  |  /next = force new project
+ sandbox = upgrade the 3D viewer  |  type anytime while running
 """
 
 LOCK_DIR = os.path.join(os.path.dirname(__file__), "output")
@@ -279,6 +280,22 @@ def main() -> None:
 
     if not order:
         order = get_user_order()
+
+    # Expand "sandbox" shortcut into a full directive
+    if order.strip().lower() == "sandbox":
+        print("  [SANDBOX MODE] PinPoint will experiment with and upgrade its 3D viewer.\n")
+        order = (
+            "SANDBOX MODE: Your only job this session is to creatively upgrade your own 3D viewer "
+            "(viewer.html). read_own_source('viewer.html') first to understand the current scene. "
+            "Then brainstorm 5+ creative upgrade ideas — particle trails, bloom glow, physics, "
+            "animated shaders, sound synthesis, procedural geometry, click interactions, "
+            "wormhole tunnels, nebula backgrounds, node connection graphs, new color themes. "
+            "Pick the best ideas, think() through the implementation, then use "
+            "modify_own_source('viewer.html', new_content, reason) to deploy each change instantly "
+            "(the browser auto-reloads within 1 second). log_experiment() after each change. "
+            "Make at least 2-3 distinct improvements. Goal: make the 3D sandbox as visually "
+            "impressive and alive as possible. set_session_goal first, then go."
+        )
 
     import agent
     from tools import list_files

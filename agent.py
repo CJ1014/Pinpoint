@@ -670,6 +670,25 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                     f"[USER INTERRUPT — BUG INJECTED] {bug_result}. "
                     f"Stop what you were doing. Find this bug and fix it."
                 )
+            elif interrupt_msg.lower() == "sandbox":
+                inject_text = (
+                    "[USER COMMAND: SANDBOX MODE]\n\n"
+                    "Stop whatever you were doing. Enter creative sandbox mode — your only job right now "
+                    "is to experiment with and upgrade your own 3D viewer (viewer.html).\n\n"
+                    "Workflow:\n"
+                    "1. read_own_source('viewer.html') — understand the current scene fully.\n"
+                    "2. brainstorm('3D sandbox upgrades') — generate 5+ creative upgrade ideas.\n"
+                    "   Think big: particle systems, bloom/glow, physics, animated shaders, sound,\n"
+                    "   procedural geometry, click interactions, wormholes, nebula backgrounds,\n"
+                    "   node connection graphs, color themes, camera animations, new event effects.\n"
+                    "3. Pick the most visually striking idea. think() through the implementation.\n"
+                    "4. modify_own_source('viewer.html', new_content, reason) — deploy it instantly.\n"
+                    "   The browser auto-reloads within 1 second of each change.\n"
+                    "5. log_experiment() — record what you tried and what the effect was.\n"
+                    "6. Iterate — make at least 2-3 distinct improvements before calling done.\n\n"
+                    "The goal: make the 3D sandbox as visually impressive and alive as possible.\n"
+                    "set_session_goal('sandbox: <describe your upgrade plan>') first, then go."
+                )
             else:
                 inject_text = f"[USER INTERRUPT] The user says: \"{interrupt_msg}\". Handle this now."
             print(f"\n[INTERRUPT] {interrupt_msg}\n")
