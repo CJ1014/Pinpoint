@@ -66,16 +66,50 @@ def get_user_order() -> str:
 
 
 def _input_listener(interrupt_queue: queue.Queue) -> None:
-    """Background thread: reads lines from stdin and puts them in the queue."""
-    while True:
-        try:
-            line = input()
-            if line is not None:
-                interrupt_queue.put(line.strip())
-        except EOFError:
-            break
-        except Exception:
-            break
+    """Background thread: reads lines from the keyboard and puts them in the queue.
+
+    On Windows, uses msvcrt for direct console reads (avoids stdin contention).
+    On other platforms, falls back to sys.stdin.readline().
+    """
+    if sys.platform == "win32":
+        import msvcrt
+        buf = ""
+        while True:
+            try:
+                if msvcrt.kbhit():
+                    ch = msvcrt.getwch()
+                    if ch in ("\r", "\n"):
+                        line = buf.strip()
+                        buf = ""
+                        if line:
+                            sys.stdout.write(f"\n[INPUT] {line}\n")
+                            sys.stdout.flush()
+                            interrupt_queue.put(line)
+                    elif ch == "\x08":  # Backspace
+                        if buf:
+                            buf = buf[:-1]
+                            sys.stdout.write("\b \b")
+                            sys.stdout.flush()
+                    elif ch >= " ":  # printable characters only
+                        buf += ch
+                        sys.stdout.write(ch)
+                        sys.stdout.flush()
+                else:
+                    time.sleep(0.05)  # avoid busy-loop
+            except Exception:
+                break
+    else:
+        while True:
+            try:
+                line = sys.stdin.readline()
+                if line:
+                    interrupt_queue.put(line.strip())
+                else:
+                    break
+            except EOFError:
+                break
+            except Exception:
+                break
 
 
 def inject_bug() -> str:
@@ -321,7 +355,8 @@ def main() -> None:
                 print(summary)
 
             print(f"\n[Resting {REST_BETWEEN_SESSIONS}s before next session — press Ctrl+C to stop]")
-            time.sleep(REST_BETWEEN_SESSIONS)
+            for _ in range(REST_BETWEEN_SESSIONS * 10):
+                time.sleep(0.1)  # small slices so Ctrl+C is caught quickly
 
     except KeyboardInterrupt:
         clear_lock()
