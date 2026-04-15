@@ -154,17 +154,37 @@ def inject_bug() -> str:
         return f"Bug injection failed: {e}"
 
 
+def _deploy_viewer() -> None:
+    """Copy viewer.html from the Pinpoint root into output/ so the web server can serve it."""
+    import shutil
+    src = os.path.join(os.path.dirname(__file__), "viewer.html")
+    dst = os.path.join(OUTPUT_DIR, "viewer.html")
+    if os.path.exists(src):
+        try:
+            shutil.copy2(src, dst)
+        except Exception:
+            pass
+
+
 def start_web_server(port: int = 8888) -> None:
     """Auto-start a web server to browse PinPoint's creations."""
     import http.server, socketserver
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    handler = http.server.SimpleHTTPRequestHandler
+
+    # Serve from the output/ directory
+    class _Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=OUTPUT_DIR, **kwargs)
+        def log_message(self, fmt, *args):  # silence access logs
+            pass
+
     try:
-        httpd = socketserver.TCPServer(("", port), handler)
+        httpd = socketserver.TCPServer(("", port), _Handler)
         httpd.allow_reuse_address = True
         t = threading.Thread(target=httpd.serve_forever, daemon=True)
         t.start()
         print(f"  Web gallery     : http://localhost:{port}/")
+        print(f"  3D live viewer  : http://localhost:{port}/viewer.html")
     except Exception:
         print(f"  Web gallery     : (port {port} busy, skipped)")
 
@@ -198,8 +218,17 @@ def main() -> None:
     print(f"  Output directory : {OUTPUT_DIR}")
     print(f"  Log file         : {os.path.join(OUTPUT_DIR, 'agent_log.txt')}")
 
-    # Auto-start web server to browse creations
+    # Deploy viewer.html into output/ and start the web server
+    _deploy_viewer()
     start_web_server(8888)
+
+    # Open the 3D viewer in the default browser
+    try:
+        import webbrowser
+        webbrowser.open("http://localhost:8888/viewer.html")
+    except Exception:
+        pass
+
     print()
 
     # Command-line order overrides interactive prompt

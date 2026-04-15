@@ -7,7 +7,7 @@ from typing import Optional
 
 from openai import OpenAI
 
-from tools import dispatch, build_memory_prompt, increment_session, _load_memory, _save_memory_file, reset_project_dir
+from tools import dispatch, build_memory_prompt, increment_session, _load_memory, _save_memory_file, reset_project_dir, emit_world_event
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 MODEL = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b-cloud")
@@ -520,6 +520,25 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
     final_summary = ""
     last_tool_calls = []  # Track previous calls to detect loops
 
+    # 3D viewer state — updated after every tool call
+    _current_goal: str = order or "deciding..."
+    _ws_status: str = "starting"
+
+    # Event-type map: tool name → viewer event type
+    _EVENT_TYPE_MAP = {
+        "think": "think", "brainstorm": "brainstorm",
+        "critique": "critique", "decompose": "decompose",
+        "write_file": "file_created", "write_anywhere": "file_created",
+        "log_experiment": "experiment", "modify_own_source": "self_mod",
+        "save_memory": "memory", "recall_memories": "memory",
+        "list_memory_categories": "memory",
+        "done": "done",
+        "error": "error",
+    }
+
+    # Emit initial state so viewer sees PinPoint starting up
+    emit_world_event(session_num, _current_goal, "starting", 0, "tool_call", "PinPoint starting up")
+
     print("\n" + "=" * 60)
     print("  AUTONOMOUS AI AGENT — starting up")
     print(f"  Model: {MODEL} (local Ollama)")
@@ -715,6 +734,33 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             else:
                 print(f"[TOOL RESULT] {result[:300]}{'...' if len(result) > 300 else ''}\n")
             logger.info("[RESULT] %s", result)
+
+            # ── Emit to 3D viewer ────────────────────────────────────
+            if name == "set_session_goal" and "REJECTED" not in result:
+                _current_goal = inp.get("goal", _current_goal)
+            _ws_status = "done" if name == "done" else "thinking"
+            _ev_type = _EVENT_TYPE_MAP.get(name, "tool_call")
+            # Build a short human-readable label for the event
+            if name == "think":
+                _label = inp.get("reasoning", "")[:80]
+            elif name in ("write_file", "write_anywhere"):
+                _label = f"wrote {inp.get('filename', inp.get('path', '?'))}"
+            elif name == "set_session_goal":
+                _label = f"goal: {inp.get('goal', '')[:60]}"
+            elif name == "log_experiment":
+                _label = f"experiment: {inp.get('name', '')[:60]}"
+            elif name == "modify_own_source":
+                _label = f"self-mod: {inp.get('filename', '')}"
+            elif name == "save_memory":
+                _label = f"memory: {inp.get('content', '')[:60]}"
+            elif name == "done":
+                _label = inp.get("summary", "session done")[:80]
+            else:
+                _label = name
+            if "error" in result.lower() or "failed" in result.lower() or "rejected" in result.lower():
+                _ev_type = "error"
+                _ws_status = "error"
+            emit_world_event(session_num, _current_goal, _ws_status, iteration, _ev_type, _label)
 
             # Update lock file when goal is set so other instances can see it
             if name == "set_session_goal" and write_lock and "REJECTED" not in result:

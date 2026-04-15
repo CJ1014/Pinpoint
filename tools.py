@@ -1241,6 +1241,91 @@ Context: {context if context else 'none'}
     )
 
 
+# ── World State (real-time 3D viewer) ────────────────────────
+
+_WORLD_STATE_FILE = os.path.join(OUTPUT_DIR, "world_state.json")
+_MAX_EVENTS = 120
+_world_lock = threading.Lock()
+
+
+def emit_world_event(
+    session: int,
+    goal: str,
+    status: str,
+    iteration: int,
+    event_type: str,
+    label: str,
+) -> None:
+    """Write/update output/world_state.json for the real-time 3D viewer.
+
+    Called automatically by agent.py after every tool dispatch.
+    Non-blocking: failures are silently swallowed so they never affect the agent.
+    """
+    try:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        import uuid as _uuid
+
+        with _world_lock:
+            # Load existing state so we can append events
+            existing: dict = {}
+            if os.path.exists(_WORLD_STATE_FILE):
+                try:
+                    with open(_WORLD_STATE_FILE, "r", encoding="utf-8") as _f:
+                        existing = json.load(_f)
+                except Exception:
+                    existing = {}
+
+            events: list = existing.get("events", [])
+            # Append new event
+            events.append({
+                "id": str(_uuid.uuid4()),
+                "type": event_type,
+                "label": label[:120],
+                "time": _now(),
+            })
+            # Keep only the most recent N events
+            if len(events) > _MAX_EVENTS:
+                events = events[-_MAX_EVENTS:]
+
+            # Collect files in the current project folder (relative paths)
+            pdir = get_project_dir()
+            files: list[str] = []
+            if os.path.isdir(pdir):
+                for _root, _, _fnames in os.walk(pdir):
+                    for _fn in _fnames:
+                        _full = os.path.join(_root, _fn)
+                        files.append(os.path.relpath(_full, pdir))
+
+            # Count memories
+            try:
+                _mem = _load_memory()
+                mem_count = sum(
+                    len(_mem["memories"].get(c, []))
+                    for c in MEMORY_CATEGORIES
+                )
+            except Exception:
+                mem_count = 0
+
+            state = {
+                "session": session,
+                "goal": goal,
+                "status": status,
+                "iteration": iteration,
+                "events": events,
+                "files": files[:80],
+                "memories": mem_count,
+                "timestamp": _now(),
+            }
+
+            # Atomic write via temp file
+            tmp = _WORLD_STATE_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as _f:
+                json.dump(state, _f)
+            os.replace(tmp, _WORLD_STATE_FILE)
+    except Exception:
+        pass  # Never crash the agent over visualization
+
+
 # ── Dispatch ────────────────────────────────────────────────
 
 def dispatch(tool_name: str, tool_input: dict) -> str:
