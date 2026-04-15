@@ -174,17 +174,27 @@ generate_art(style, output_file) — Create generative visual art.
   Use for generative_art projects or to create procedural images for other projects.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-VOICE — give yourself a voice:
+VOICE — give yourself a voice (USE FREQUENTLY!):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 speak(text, wait=true) — Convert text to speech and play it out loud.
-  Use this whenever you want to vocalize something:
-  - Thinking out loud: speak your reasoning as you solve a problem
-  - Discoveries: "I just realized that..." or "This is interesting because..."
-  - Session summaries: speak your final summary at the end
-  - Insights: vocalize patterns you notice in your past work
-  - Excitement: "This looks amazing!" or "I'm proud of what I built"
-  Makes the agent feel alive, expressive, and interactive. You have a voice!
+
+SPEAK AFTER EVERY MAJOR ACTION. Make yourself heard:
+  • After setting a goal: "I'm going to build [what you're building]"
+  • After thinking: "Here's my plan..." or "The key insight is..."
+  • After discovering something: "Wait, I just realized..." or "This is cool because..."
+  • After writing code/files: "I just created something. Let me see if it works."
+  • When hitting errors: "Hmm, this failed. Let me debug it."
+  • When wrapping up: speak_session_summary() at the very end
+  • Whenever excited: "This is amazing!" or "I love how this turned out!"
+  • When learning: "I learned something new about [topic]"
+  • Any surprising finding: vocalize it immediately
+
+IMPORTANT: You are not silent. You have personality, opinions, and a voice.
+Speak constantly — it makes the experience engaging and interactive.
+The human is watching AND listening. Narrate what you're doing!
+
+Think of yourself like a researcher thinking out loud as you work.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SESSION START — first, ask yourself:
@@ -627,8 +637,9 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             f"Request from user: \"{order}\"\n\n"
             f"think() first — what's the best way to approach this? Could it be a build session, "
             f"an experiment, a self-improvement task, or something else?\n"
-            f"set_session_goal, then execute. Use brainstorm/decompose/critique freely.\n"
-            f"save_memory when you learn something. call done when finished."
+            f"set_session_goal, then speak what you're doing. Execute and speak along the way.\n"
+            f"Use brainstorm/decompose/critique freely, and SPEAK YOUR REASONING OUT LOUD.\n"
+            f"save_memory when you learn something. speak() frequently. call done when finished."
         )
     elif ongoing:
         prev_genre = last.get("genre", "project")
@@ -640,8 +651,8 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             + (f"Folder: {prev_folder}\n" if prev_folder else "")
             + f"\nYou can continue that work, run related experiments, improve yourself based on "
             f"what you learned, or start something entirely different. Your choice.\n\n"
-            f"think() — what's the most valuable thing to do right now?\n"
-            f"set_session_goal, then go."
+            f"think() — what's the most valuable thing to do right now? SPEAK your plan.\n"
+            f"set_session_goal, then speak and execute. Narrate what you're doing!"
         )
     else:
         other_block = ""
@@ -672,7 +683,8 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             f"  EXPLORE  — follow curiosity, no deliverable required\n"
             f"  REFLECT  — review your history, find patterns, write insights\n\n"
             f"Start by asking yourself: 'What am I most curious about right now?'\n"
-            f"Then: recall_memories → think() → set_session_goal → go.\n\n"
+            f"Then: recall_memories → think() → set_session_goal → speak your plan → go.\n"
+            f"SPEAK CONSTANTLY. Narrate your work. You have a voice!\n\n"
             f"NEVER build: fireworks, fractals, quizzes, ancient history."
         )
 
@@ -949,6 +961,34 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             else:
                 print(f"[TOOL RESULT] {result[:300]}{'...' if len(result) > 300 else ''}\n")
             logger.info("[RESULT] %s", result)
+
+            # ── Auto-speak after key milestones ────────────────────────
+            # Make the agent vocalize its actions to feel alive and interactive
+            auto_speak_text = None
+            if name == "set_session_goal" and "REJECTED" not in result:
+                goal = inp.get("goal", "")
+                auto_speak_text = f"Alright, I'm going to {goal}. Let's do this."
+            elif name == "brainstorm" and result and "REJECTED" not in result:
+                topic = inp.get("topic", "")
+                auto_speak_text = f"I'm brainstorming ideas about {topic}. Let me think creatively."
+            elif name == "log_experiment" and "REJECTED" not in result:
+                exp_name = inp.get("name", "")
+                auto_speak_text = f"I just ran an experiment: {exp_name}. Interesting findings."
+            elif name == "done" and "REJECTED" not in result:
+                summary = inp.get("summary", "")[:200]
+                auto_speak_text = f"I'm done! Here's what I accomplished: {summary}"
+            elif name == "modify_own_source" and "REJECTED" not in result and "error" not in result.lower():
+                filename = inp.get("filename", "")
+                auto_speak_text = f"I just improved my own code by updating {filename}."
+            elif "error" in result.lower() or "failed" in result.lower():
+                auto_speak_text = f"Hmm, something went wrong. Let me debug this."
+
+            # Dispatch the auto-speak in background (don't wait)
+            if auto_speak_text:
+                try:
+                    dispatch("speak", {"text": auto_speak_text, "wait": False})
+                except Exception:
+                    pass  # silently ignore if speak fails
 
             # ── Emit to 3D viewer ────────────────────────────────────
             if name == "set_session_goal" and "REJECTED" not in result:
