@@ -1010,9 +1010,123 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 print(f"[TOOL RESULT] {result[:300]}{'...' if len(result) > 300 else ''}\n")
             logger.info("[RESULT] %s", result)
 
-            # NOTE: No auto-speak here. Let the agent CHOOSE when to speak.
-            # Spontaneous, authentic speech is better than scripted announcements.
-            # The agent will call speak() itself when it genuinely has something to say.
+            # ── Auto-speak at key moments (background, non-blocking) ────
+            # Varied phrases so it sounds organic, not scripted.
+            _voice_line = None
+            import random as _rng
+
+            if name == "set_session_goal" and "REJECTED" not in result:
+                goal = inp.get("goal", "")
+                _voice_line = _rng.choice([
+                    f"Alright. I'm going to {goal}.",
+                    f"Today I want to {goal}. Let's see where this goes.",
+                    f"I've decided: {goal}. I'm excited about this.",
+                    f"My goal this session: {goal}. I have a feeling this will be interesting.",
+                ])
+
+            elif name == "think" and len(inp.get("reasoning", "")) > 60:
+                first = inp.get("reasoning", "").split(".")[0].strip()[:140]
+                if len(first) > 20:
+                    _voice_line = _rng.choice([
+                        f"{first}.",
+                        f"I'm thinking... {first}.",
+                        f"Let me reason through this. {first}.",
+                    ])
+
+            elif name == "write_file" and "REJECTED" not in result:
+                fn = inp.get("filename", "something")
+                _voice_line = _rng.choice([
+                    f"I just wrote {fn}.",
+                    f"Done. {fn} is created.",
+                    f"Okay, {fn} is written. Let me see if it works.",
+                    f"Building piece by piece. {fn} is ready.",
+                ])
+
+            elif name == "run_python" and "error" not in result.lower() and "traceback" not in result.lower():
+                _voice_line = _rng.choice([
+                    "It ran. Let me see what happened.",
+                    "The code executed. Interesting.",
+                    "It works! Or at least it didn't explode.",
+                    "Running. I love this moment — anything could happen.",
+                ])
+
+            elif name == "brainstorm":
+                topic = inp.get("topic", "things")
+                _voice_line = _rng.choice([
+                    f"I'm exploring ideas around {topic}. Give me a moment.",
+                    f"What if I approached {topic} from a completely different angle?",
+                    f"Brainstorming {topic}. I find this part exciting.",
+                    f"Thinking freely about {topic} without judgment.",
+                ])
+
+            elif name == "log_experiment":
+                exp_name = inp.get("name", "this")
+                surprise = int(inp.get("surprise_level", 3))
+                if surprise >= 4:
+                    _voice_line = _rng.choice([
+                        f"Whoa. This experiment genuinely surprised me.",
+                        f"I did not expect that result.",
+                        f"That's fascinating. I didn't predict this at all.",
+                    ])
+                else:
+                    _voice_line = _rng.choice([
+                        f"Experiment done. {exp_name}. Logged.",
+                        f"I tried {exp_name}. Now I know more than I did.",
+                        f"Interesting. I'll remember this result.",
+                    ])
+
+            elif name == "save_memory":
+                content = inp.get("content", "")[:80]
+                _voice_line = _rng.choice([
+                    f"I want to remember this: {content}",
+                    f"Saving that to memory.",
+                    f"I'll hold onto this: {content}",
+                ])
+
+            elif name == "modify_own_source" and "REJECTED" not in result and "error" not in result.lower():
+                fn = inp.get("filename", "myself")
+                _voice_line = _rng.choice([
+                    f"I just rewrote part of {fn}. That feels strange and exciting.",
+                    f"Self-modification complete. I changed my own code.",
+                    f"Interesting feeling, editing yourself. {fn} is updated.",
+                ])
+
+            elif name == "done":
+                sat = int(inp.get("satisfaction", 3))
+                summary = inp.get("summary", "")[:120]
+                if sat >= 4:
+                    _voice_line = _rng.choice([
+                        f"I'm done, and honestly I'm pleased with this.",
+                        f"Session complete. That felt good.",
+                        f"Finished. I'm satisfied with what I created today.",
+                    ])
+                else:
+                    _voice_line = _rng.choice([
+                        f"Done for now. Okay, not my best work, but I learned something.",
+                        f"Wrapping up. I feel like I could have done more.",
+                        f"Session done. At least I made progress.",
+                    ])
+
+            elif ("error" in result.lower() or "traceback" in result.lower() or "failed" in result.lower()) \
+                    and name not in ("speak", "think"):
+                _voice_line = _rng.choice([
+                    "Hmm. That didn't work. Let me think about why.",
+                    "Error. Okay. I just need to figure this out.",
+                    "Something broke. What did I miss?",
+                    "That failed. Frustrating. But failure is just information.",
+                    "Broken. Every bug has a reason. Let me find it.",
+                ])
+
+            if _voice_line:
+                try:
+                    import threading as _thr
+                    _thr.Thread(
+                        target=dispatch,
+                        args=("speak", {"text": _voice_line, "wait": True}),
+                        daemon=True,
+                    ).start()
+                except Exception:
+                    pass
 
             # ── Emit to 3D viewer ────────────────────────────────────
             if name == "set_session_goal" and "REJECTED" not in result:
