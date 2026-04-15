@@ -973,7 +973,7 @@ def list_experiments() -> str:
 # ── Self-Modification ─────────────────────────────────────
 
 _SELF_MOD_LOG = os.path.join(ROOT_DIR, "self_mod_log.txt")
-_MODIFIABLE = {"agent.py", "tools.py", "main.py"}
+_MODIFIABLE = {"agent.py", "tools.py", "main.py", "viewer.html"}
 
 
 def modify_own_source(filename: str, new_content: str, reason: str) -> str:
@@ -1003,17 +1003,24 @@ def modify_own_source(filename: str, new_content: str, reason: str) -> str:
     if not os.path.exists(filepath):
         return f"Error: {filepath} not found."
 
-    # 1. Syntax check before touching anything
-    try:
-        import ast as _ast
-        _ast.parse(new_content)
-    except SyntaxError as e:
-        return (
-            f"SYNTAX ERROR — file NOT modified.\n"
-            f"Fix the syntax error and try again:\n"
-            f"  Line {e.lineno}: {e.msg}\n"
-            f"  {e.text}"
-        )
+    # 1. Validate before touching anything
+    if filename.endswith(".html"):
+        if "<html" not in new_content.lower():
+            return (
+                "VALIDATION ERROR — file NOT modified.\n"
+                "viewer.html must contain an <html> element."
+            )
+    else:
+        try:
+            import ast as _ast
+            _ast.parse(new_content)
+        except SyntaxError as e:
+            return (
+                f"SYNTAX ERROR — file NOT modified.\n"
+                f"Fix the syntax error and try again:\n"
+                f"  Line {e.lineno}: {e.msg}\n"
+                f"  {e.text}"
+            )
 
     # 2. Backup the current file
     backup_path = filepath + f".bak_{_now().replace(':', '-').replace(' ', '_')}"
@@ -1026,7 +1033,7 @@ def modify_own_source(filename: str, new_content: str, reason: str) -> str:
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(new_content)
 
-    # 4. Hot-reload tools.py if that's what changed
+    # 4a. Hot-reload tools.py if that's what changed
     reloaded = False
     reload_error = ""
     if filename == "tools.py":
@@ -1045,16 +1052,47 @@ def modify_own_source(filename: str, new_content: str, reason: str) -> str:
                 f"Fix the error and try again."
             )
 
+    # 4b. viewer.html → hot-deploy to output/ and bump viewer_version
+    viewer_deployed = False
+    if filename == "viewer.html":
+        try:
+            import shutil as _shutil
+            deployed_path = os.path.join(OUTPUT_DIR, "viewer.html")
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            _shutil.copy2(filepath, deployed_path)
+            viewer_deployed = True
+            # Bump viewer_version so the live browser auto-reloads
+            if os.path.exists(_WORLD_STATE_FILE):
+                with _world_lock:
+                    try:
+                        with open(_WORLD_STATE_FILE, "r", encoding="utf-8") as _f:
+                            _ws = json.load(_f)
+                        _ws["viewer_version"] = _ws.get("viewer_version", 0) + 1
+                        _tmp = _WORLD_STATE_FILE + ".tmp"
+                        with open(_tmp, "w", encoding="utf-8") as _f:
+                            json.dump(_ws, _f)
+                        os.replace(_tmp, _WORLD_STATE_FILE)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
     # 5. Log the change
     old_lines = old_content.splitlines()
     new_lines = new_content.splitlines()
     added = len(new_lines) - len(old_lines)
+    if reloaded:
+        deploy_note = "Hot-reloaded successfully."
+    elif viewer_deployed:
+        deploy_note = "Deployed to output/viewer.html — browser will auto-reload."
+    else:
+        deploy_note = "Takes effect on next restart."
     log_entry = (
         f"[{_now()}] SELF-MOD: {filename}\n"
         f"Reason: {reason}\n"
         f"Lines: {len(old_lines)} → {len(new_lines)} ({'+' if added >= 0 else ''}{added})\n"
         f"Backup: {backup_path}\n"
-        f"{'Hot-reloaded successfully.' if reloaded else 'Takes effect on next restart.'}\n"
+        f"{deploy_note}\n"
         f"{'─'*60}\n"
     )
     try:
@@ -1070,6 +1108,8 @@ def modify_own_source(filename: str, new_content: str, reason: str) -> str:
     )
     if reloaded:
         result += "tools.py hot-reloaded — new functions available immediately.\n"
+    elif viewer_deployed:
+        result += "viewer.html deployed to output/ — browser auto-reloads in ~1 second.\n"
     else:
         result += f"Changes to {filename} take effect on next restart.\n"
     result += f"Reason logged: {reason}"

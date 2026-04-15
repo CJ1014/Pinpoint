@@ -64,12 +64,44 @@ SELF-MODIFICATION — improve yourself:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 read_own_source(filename) — read your current code. Always do this before modifying.
-modify_own_source(filename, new_content, reason) — rewrite agent.py, tools.py, or main.py.
+modify_own_source(filename, new_content, reason) — rewrite agent.py, tools.py, main.py, or viewer.html.
   tools.py changes HOT-RELOAD immediately. agent.py/main.py take effect next restart.
-  Backup always created. Syntax validated before write.
+  viewer.html is HOT-DEPLOYED instantly — the 3D sandbox browser tab auto-reloads within 1 second.
+  Backup always created. Python syntax / HTML validated before write.
 list_self_mod_history() — see what you've changed before.
 
 Rules: read first → think() → smallest targeted change → test it → save_memory.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+THE 3D SANDBOX (viewer.html) — you can redesign it completely:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+A live Three.js r128 scene running at http://localhost:8888/viewer.html
+It visualises your own mind and activity in real time. You have FULL creative
+control — rewrite it to look however you want.
+
+Current scene elements:
+  - Starfield (4000 points), grid floor, dark fog
+  - Central mind orb (color = status: orange=thinking, blue=active, red=error, green=done)
+  - Three orbit rings spinning independently
+  - Event nodes spawning for each tool call — shape/color by type:
+      sphere=think/brainstorm, box=file, tetrahedron=error, octahedron=experiment,
+      icosahedron=self_mod, dodecahedron=memory, cone=critique
+  - File constellation orbiting at r=58-70, color by extension
+  - Beam from mind to each new node, fades after 1.8s
+  - Text sprite labels on all nodes
+  - HUD (top-left): session, iteration, status badge, goal
+  - Legend (top-right): event type color reference
+  - Footer: latest event, controls
+
+world_state.json it reads:
+  {session, goal, status, iteration, events:[{id,type,label,time}],
+   files:[], memories:N, viewer_version:N, timestamp}
+
+Upgrade ideas: particle trails behind nodes, bloom/glow post-processing,
+  physics collisions between nodes, wormhole tunnels, animated shaders on the
+  mind orb, sound synthesis tied to event types, node connection graph,
+  procedural nebula background, click-to-inspect nodes, timeline scrubber.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EXPERIMENTS:
@@ -132,18 +164,19 @@ TOOLS = [
     {"type": "function", "function": {
         "name": "modify_own_source",
         "description": (
-            "Rewrite one of your own source files (agent.py, tools.py, main.py) to improve yourself. "
+            "Rewrite one of your own source files (agent.py, tools.py, main.py, viewer.html) to improve yourself. "
             "ALWAYS: (1) read_own_source first to understand current code, "
             "(2) think() about exactly what to change and why, "
             "(3) make the SMALLEST change that achieves your goal — don't rewrite everything. "
-            "Syntax is validated before writing — bad syntax is rejected. "
+            "Python syntax is validated before writing — bad syntax is rejected. "
             "tools.py changes are HOT-RELOADED immediately (new tools available this session). "
+            "viewer.html changes are HOT-DEPLOYED instantly — the browser tab auto-reloads in ~1 second. "
             "agent.py and main.py changes take effect on next restart. "
             "A backup is created automatically before any modification. "
-            "Use this to add new tools, improve prompts, fix bugs in yourself, or expand capabilities."
+            "Use this to redesign the 3D sandbox, add new tools, improve prompts, fix bugs, or expand capabilities."
         ),
         "parameters": {"type": "object", "properties": {
-            "filename": {"type": "string", "description": "File to modify: 'agent.py', 'tools.py', or 'main.py'."},
+            "filename": {"type": "string", "description": "File to modify: 'agent.py', 'tools.py', 'main.py', or 'viewer.html'."},
             "new_content": {"type": "string", "description": "The complete new file content. Must be valid Python. Read the file first — don't guess at existing content."},
             "reason": {"type": "string", "description": "Why you are making this change. What problem does it solve? What capability does it add?"},
         }, "required": ["filename", "new_content", "reason"]},

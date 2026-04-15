@@ -321,11 +321,22 @@ const STATUS_COLORS = {
   error: 0xff0000, done: 0x00ff44, idle: 0x224466
 };
 
+let _knownViewerVersion = null;
+
 async function poll() {
   try {
     const r = await fetch('world_state.json?_=' + Date.now());
     if (!r.ok) return;
     const s = await r.json();
+
+    // Auto-reload when PinPoint upgrades the 3D viewer
+    const vv = s.viewer_version ?? 0;
+    if (_knownViewerVersion === null) {
+      _knownViewerVersion = vv;
+    } else if (vv !== _knownViewerVersion) {
+      location.reload();
+      return;
+    }
 
     document.getElementById('session-line').textContent =
       `Session #${s.session || '?'} · Iter ${s.iteration || 0}`;
