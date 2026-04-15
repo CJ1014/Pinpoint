@@ -14,7 +14,7 @@ OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 ROOT_DIR = os.path.dirname(__file__)
 _running_servers = {}  # port -> thread
 MEMORY_FILE = os.path.join(os.path.dirname(__file__), "memory.json")
-MEMORY_CATEGORIES = ("skills", "lessons", "mistakes", "ideas", "projects", "preferences", "dislikes")
+MEMORY_CATEGORIES = ("skills", "lessons", "mistakes", "ideas", "projects", "preferences", "dislikes", "experiments")
 MAX_PER_CATEGORY = 20
 
 # ── Per-project folder tracking ──────────────────────────────
@@ -910,6 +910,66 @@ def collab_update(role: str, status: str, message: str = "") -> str:
     return f"Collab updated: {role} = {status}" + (f" | message: {message}" if message else "")
 
 
+# ── Experiment Logging ────────────────────────────────────
+
+_EXPERIMENT_LOG = os.path.join(ROOT_DIR, "experiments_log.txt")
+
+
+def log_experiment(name: str, hypothesis: str, method: str, result: str,
+                   conclusion: str, surprise_level: int = 3) -> str:
+    """Log a structured experiment to experiments_log.txt and memory.
+
+    Use this any time you try something just to see what happens —
+    testing a model limit, probing a library, testing a self-modification,
+    exploring an idea without a deliverable, or benchmarking approaches.
+
+    surprise_level: 1=expected, 3=interesting, 5=completely unexpected.
+    """
+    surprise_level = max(1, min(5, int(surprise_level)))
+    timestamp = _now()
+
+    entry = (
+        f"[{timestamp}] EXPERIMENT: {name}\n"
+        f"Hypothesis: {hypothesis}\n"
+        f"Method:     {method}\n"
+        f"Result:     {result}\n"
+        f"Conclusion: {conclusion}\n"
+        f"Surprise:   {surprise_level}/5\n"
+        f"{'─'*60}\n"
+    )
+    try:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        with open(_EXPERIMENT_LOG, "a", encoding="utf-8") as f:
+            f.write(entry)
+    except Exception:
+        pass
+
+    # Persist to memory so future sessions can learn from this
+    memory_entry = (
+        f"Experiment '{name}': {conclusion} "
+        f"(surprise {surprise_level}/5)"
+    )
+    save_memory("experiments", memory_entry, surprise_level)
+
+    return (
+        f"Experiment logged: '{name}'\n"
+        f"Conclusion: {conclusion}\n"
+        f"Surprise level: {surprise_level}/5\n"
+        f"Saved to experiments_log.txt and memory."
+    )
+
+
+def list_experiments() -> str:
+    """Show all logged experiments."""
+    if not os.path.exists(_EXPERIMENT_LOG):
+        return "No experiments logged yet."
+    with open(_EXPERIMENT_LOG, "r", encoding="utf-8") as f:
+        content = f.read()
+    if len(content) > 8000:
+        content = content[-8000:] + "\n[... showing last 8000 chars ...]"
+    return content or "No experiments logged yet."
+
+
 # ── Self-Modification ─────────────────────────────────────
 
 _SELF_MOD_LOG = os.path.join(ROOT_DIR, "self_mod_log.txt")
@@ -1239,6 +1299,17 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return start_server(int(tool_input.get("port", 8080)))
     elif tool_name == "run_gui":
         return run_gui(tool_input["filename"])
+    elif tool_name == "log_experiment":
+        return log_experiment(
+            tool_input["name"],
+            tool_input["hypothesis"],
+            tool_input["method"],
+            tool_input["result"],
+            tool_input["conclusion"],
+            int(tool_input.get("surprise_level", 3)),
+        )
+    elif tool_name == "list_experiments":
+        return list_experiments()
     elif tool_name == "modify_own_source":
         return modify_own_source(
             tool_input["filename"],
