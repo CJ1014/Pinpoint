@@ -18,7 +18,8 @@ BANNER = r"""
 
  Autonomous AI — running until you stop it
  Ctrl+C to stop  |  /next = new project  |  /bug = inject a bug
- sandbox = upgrade 3D viewer  |  type anything = suggest to PinPoint
+ sandbox = upgrade 3D viewer  |  research = research coding topics
+ type anything = suggest to PinPoint
 """
 
 LOCK_DIR = os.path.join(os.path.dirname(__file__), "output")
@@ -315,6 +316,23 @@ def main() -> None:
             "(the browser auto-reloads within 1 second). log_experiment() after each change. "
             "Make at least 2-3 distinct improvements. Goal: make the 3D sandbox as visually "
             "impressive and alive as possible. set_session_goal first, then go."
+        )
+
+    # Expand "research" shortcut into a full directive
+    elif order.strip().lower() == "research":
+        print("  [RESEARCH MODE] PinPoint will research coding languages and techniques.\n")
+        order = (
+            "RESEARCH MODE: Your job this session is to explore the web and deeply learn about "
+            "programming languages, coding techniques, and software development tools. "
+            "Pick 3-5 interesting topics you haven't studied before — could be a new language, "
+            "a framework, a paradigm like functional programming or WebAssembly, or something "
+            "cutting-edge. For each topic: search_web() to find good sources, fetch_url() to "
+            "read them deeply, then save_memory('skills', ...) with specific things you learned — "
+            "syntax, use cases, gotchas, how you could use it. "
+            "Write a research_notes.md summarising all findings. "
+            "At the end save ideas for future BUILD sessions using what you learned. "
+            "Go deep — read real documentation, not just summaries. "
+            "set_session_goal('research: coding languages and techniques') first, then go."
         )
 
     import agent

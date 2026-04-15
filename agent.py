@@ -689,6 +689,28 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                     "The goal: make the 3D sandbox as visually impressive and alive as possible.\n"
                     "set_session_goal('sandbox: <describe your upgrade plan>') first, then go."
                 )
+            elif interrupt_msg.lower() == "research":
+                inject_text = (
+                    "[USER COMMAND: RESEARCH MODE]\n\n"
+                    "Stop whatever you were doing. Enter deep research mode — your job is to "
+                    "explore the web and learn as much as possible about programming languages, "
+                    "coding techniques, and software development.\n\n"
+                    "Workflow:\n"
+                    "1. set_session_goal('research: coding languages and techniques')\n"
+                    "2. Pick 3-5 topics to research. Good starting points:\n"
+                    "   - A programming language you haven't used before\n"
+                    "   - An interesting framework, library, or tool\n"
+                    "   - A coding technique or paradigm (e.g. functional programming, WebAssembly, shaders)\n"
+                    "   - Something cutting-edge or unusual in software development\n"
+                    "3. For each topic: search_web() → fetch the most useful URLs → read deeply.\n"
+                    "4. After each topic, save_memory('skills', ...) with what you learned — "
+                    "specific syntax, use cases, gotchas, and how you could use it.\n"
+                    "5. Write a research_notes.md file summarising everything you found.\n"
+                    "6. At the end, think() about which languages/tools you want to try using "
+                    "in a future BUILD session, and save that as an idea in memory.\n\n"
+                    "Go deep — follow interesting links, read actual documentation and tutorials, "
+                    "not just summaries. The goal is to genuinely expand what you know and can do."
+                )
             else:
                 inject_text = (
                     f"[SUGGESTION FROM USER] \"{interrupt_msg}\"\n\n"
