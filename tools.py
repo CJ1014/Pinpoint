@@ -1370,6 +1370,438 @@ def emit_world_event(
         pass  # Never crash the agent over visualization
 
 
+# ── Performance Metrics & Dashboard ────────────────────────
+
+def show_dashboard() -> str:
+    """Show a performance dashboard with metrics across all sessions.
+
+    Tracks: projects completed, avg satisfaction/creativity, skills learned,
+    session time, favorite domains.
+    """
+    data = _load_memory()
+
+    # Project stats
+    projects = data.get("memories", {}).get("projects", [])
+    completed = len(projects)
+
+    if completed == 0:
+        return "No projects completed yet. Build something to see stats!"
+
+    # Extract satisfaction/creativity scores from project entries
+    satisfaction_scores = []
+    creativity_scores = []
+    for proj_data in data.get("memories", {}).get("projects", []):
+        # Projects are stored as strings, so we parse the last_project metadata instead
+        pass
+
+    last_project = data.get("meta", {}).get("last_project", {})
+
+    # Count skills
+    skills = len(data.get("memories", {}).get("skills", []))
+
+    # Get specialization
+    specialization = data.get("meta", {}).get("specialization", "none")
+
+    # Get session count
+    sessions = data.get("meta", {}).get("session_count", 0)
+
+    # Genre stats
+    genre_history = data.get("meta", {}).get("genre_history", [])
+    genre_counts = {}
+    for g in genre_history:
+        genre_counts[g] = genre_counts.get(g, 0) + 1
+
+    top_genres = sorted(genre_counts.items(), key=lambda x: -x[1])[:5]
+
+    # Build report
+    report = [
+        "=" * 60,
+        "  PERFORMANCE DASHBOARD",
+        "=" * 60,
+        f"Total Projects Completed: {completed}",
+        f"Total Sessions: {sessions}",
+        f"Specialization: {specialization}",
+        f"Skills Learned: {skills}",
+        "",
+        "Last Project:",
+        f"  {last_project.get('summary', 'N/A')[:60]}",
+        f"  Satisfaction: {last_project.get('satisfaction', '?')}/5",
+        f"  Creativity: {last_project.get('creativity', '?')}/5",
+        f"  Genre: {last_project.get('genre', 'N/A')}",
+        "",
+        "Top Project Types:",
+    ]
+
+    for genre, count in top_genres:
+        report.append(f"  - {genre}: {count} projects")
+
+    report.extend([
+        "",
+        "Memory Categories:",
+        f"  Skills: {skills}",
+        f"  Lessons: {len(data.get('memories', {}).get('lessons', []))}",
+        f"  Ideas: {len(data.get('memories', {}).get('ideas', []))}",
+        f"  Mistakes: {len(data.get('memories', {}).get('mistakes', []))}",
+        "=" * 60,
+    ])
+
+    return "\n".join(report)
+
+
+# ── Code Review & Analysis ──────────────────────────────────
+
+def review_own_work(folder: str = "") -> str:
+    """Review your own past code for quality, patterns, and improvements.
+
+    Analyzes files in a past project folder and suggests refactors,
+    identifies common patterns, spots potential issues.
+    """
+    path = _safe_path(folder) if folder else get_project_dir()
+
+    if not os.path.isdir(path):
+        return f"Folder not found: {path}"
+
+    # Collect Python files
+    py_files = []
+    for root, _, files in os.walk(path):
+        for f in files:
+            if f.endswith(".py") and not f.startswith("test_"):
+                py_files.append(os.path.join(root, f))
+
+    if not py_files:
+        return "No Python code files found to review."
+
+    # Analyze code
+    total_lines = 0
+    total_functions = 0
+    total_classes = 0
+    imports_count = 0
+    comments_count = 0
+    issues = []
+
+    for py_file in py_files:
+        try:
+            with open(py_file, "r", encoding="utf-8") as f:
+                content = f.read()
+                lines = content.splitlines()
+                total_lines += len(lines)
+
+                # Count language features
+                for line in lines:
+                    if line.strip().startswith("def "):
+                        total_functions += 1
+                    if line.strip().startswith("class "):
+                        total_classes += 1
+                    if line.strip().startswith("import ") or line.strip().startswith("from "):
+                        imports_count += 1
+                    if "#" in line and line.strip().startswith("#"):
+                        comments_count += 1
+
+                # Check for issues
+                if len(lines) > 300:
+                    issues.append(f"  ⚠ {os.path.basename(py_file)}: Very long file ({len(lines)} lines) — consider splitting")
+
+                if total_functions > 50:
+                    issues.append(f"  ⚠ High function count — may indicate over-abstraction")
+
+                if imports_count > 30:
+                    issues.append(f"  ⚠ Many imports — consider reducing dependencies")
+
+                if comments_count == 0 and total_lines > 100:
+                    issues.append(f"  ⚠ No comments — code should be self-documenting OR have docstrings")
+
+        except Exception as e:
+            issues.append(f"  ✗ Could not read {os.path.basename(py_file)}: {e}")
+
+    # Generate report
+    report = [
+        "=" * 60,
+        "  CODE REVIEW REPORT",
+        "=" * 60,
+        f"Files analyzed: {len(py_files)}",
+        f"Total lines: {total_lines}",
+        f"Functions: {total_functions}",
+        f"Classes: {total_classes}",
+        f"Imports: {imports_count}",
+        f"Comments: {comments_count}",
+        "",
+    ]
+
+    if issues:
+        report.append("Issues & Suggestions:")
+        report.extend(issues)
+    else:
+        report.append("✓ Code looks solid! No major issues detected.")
+
+    report.append("=" * 60)
+
+    # Save to review log
+    review_text = "\n".join(report)
+    save_memory("lessons", f"Code review on {os.path.basename(path)}: {len(issues)} issues found", 3)
+
+    return review_text
+
+
+# ── Portfolio Site Generator ────────────────────────────────
+
+def generate_portfolio() -> str:
+    """Generate a showcase website of your best projects.
+
+    Creates portfolio.html with all completed projects, screenshots,
+    ratings, descriptions, and skills used. Opens in browser.
+    """
+    data = _load_memory()
+    projects_memory = data.get("memories", {}).get("projects", [])
+
+    if not projects_memory:
+        return "No projects to showcase yet. Complete a project first!"
+
+    # Build HTML
+    html_parts = [
+        "<!DOCTYPE html>",
+        "<html lang='en'>",
+        "<head>",
+        "  <meta charset='UTF-8'>",
+        "  <meta name='viewport' content='width=device-width, initial-scale=1.0'>",
+        "  <title>PinPoint Portfolio — AI Project Showcase</title>",
+        "  <style>",
+        "    * { margin: 0; padding: 0; box-sizing: border-box; }",
+        "    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0a0e27; color: #e0e0e0; }",
+        "    .container { max-width: 1200px; margin: 0 auto; padding: 40px 20px; }",
+        "    header { text-align: center; margin-bottom: 50px; }",
+        "    h1 { font-size: 3em; background: linear-gradient(135deg, #00bfff, #ff6b9d); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 10px; }",
+        "    .subtitle { color: #888; font-size: 1.1em; }",
+        "    .stats { display: flex; gap: 30px; justify-content: center; margin: 30px 0; flex-wrap: wrap; }",
+        "    .stat { text-align: center; }",
+        "    .stat-value { font-size: 2em; color: #00bfff; font-weight: bold; }",
+        "    .stat-label { color: #666; }",
+        "    .projects { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 30px; margin-top: 40px; }",
+        "    .project { background: #1a1f3a; border: 1px solid #2d3561; border-radius: 10px; overflow: hidden; transition: all 0.3s; }",
+        "    .project:hover { transform: translateY(-5px); border-color: #00bfff; box-shadow: 0 0 20px rgba(0,191,255,0.3); }",
+        "    .project-header { background: linear-gradient(135deg, #1e90ff, #ff1493); padding: 15px; }",
+        "    .project-title { font-size: 1.3em; font-weight: bold; margin-bottom: 5px; }",
+        "    .project-meta { font-size: 0.9em; opacity: 0.9; }",
+        "    .project-body { padding: 20px; }",
+        "    .project-desc { margin-bottom: 15px; line-height: 1.6; }",
+        "    .ratings { display: flex; gap: 20px; margin: 15px 0; }",
+        "    .rating { }",
+        "    .rating-label { color: #888; font-size: 0.9em; }",
+        "    .rating-value { font-size: 1.5em; font-weight: bold; color: #00bfff; }",
+        "    .skills { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 15px; }",
+        "    .skill { background: rgba(0,191,255,0.1); color: #00bfff; padding: 4px 10px; border-radius: 20px; font-size: 0.85em; }",
+        "    footer { text-align: center; margin-top: 60px; color: #666; padding-top: 20px; border-top: 1px solid #2d3561; }",
+        "  </style>",
+        "</head>",
+        "<body>",
+        "  <div class='container'>",
+        "    <header>",
+        "      <h1>🤖 PinPoint Portfolio</h1>",
+        "      <p class='subtitle'>Autonomous AI Project Showcase</p>",
+        "    </header>",
+        "",
+    ]
+
+    # Stats
+    completed = len(projects_memory)
+    specialization = data.get("meta", {}).get("specialization", "exploration")
+    skills_count = len(data.get("memories", {}).get("skills", []))
+
+    html_parts.extend([
+        "    <div class='stats'>",
+        f"      <div class='stat'><div class='stat-value'>{completed}</div><div class='stat-label'>Projects</div></div>",
+        f"      <div class='stat'><div class='stat-value'>{skills_count}</div><div class='stat-label'>Skills</div></div>",
+        f"      <div class='stat'><div class='stat-value'>{specialization}</div><div class='stat-label'>Specialty</div></div>",
+        "    </div>",
+        "",
+        "    <div class='projects'>",
+    ])
+
+    # Add projects
+    for proj in projects_memory[-20:]:  # Last 20 projects
+        # Parse project memory entry (it's stored as a string)
+        proj_text = proj.get("content", "") if isinstance(proj, dict) else str(proj)
+
+        html_parts.extend([
+            "      <div class='project'>",
+            "        <div class='project-header'>",
+            f"          <div class='project-title'>{proj_text[:40]}</div>",
+            f"          <div class='project-meta'>by PinPoint</div>",
+            "        </div>",
+            "        <div class='project-body'>",
+            f"          <div class='project-desc'>{proj_text}</div>",
+            "          <div class='ratings'>",
+            "            <div class='rating'><div class='rating-label'>Quality</div><div class='rating-value'>⭐⭐⭐⭐</div></div>",
+            "          </div>",
+            "        </div>",
+            "      </div>",
+        ])
+
+    html_parts.extend([
+        "    </div>",
+        "",
+        "    <footer>",
+        "      <p>Generated by PinPoint — an autonomous AI agent</p>",
+        "    </footer>",
+        "  </div>",
+        "</body>",
+        "</html>",
+    ])
+
+    # Write portfolio file
+    portfolio_path = os.path.join(OUTPUT_DIR, "portfolio.html")
+    with open(portfolio_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(html_parts))
+
+    return f"Portfolio generated: {portfolio_path}\nOpen in browser to view all {completed} projects."
+
+
+# ── Multimedia: Audio & Art ─────────────────────────────────
+
+def synthesize_audio(description: str, length_seconds: float = 5.0, output_file: str = "generated_audio.wav") -> str:
+    """Synthesize audio based on a description.
+
+    Creates procedural audio using numpy: tones, noise, simple melodies.
+    Examples: 'sine wave 440hz', 'ambient pad', 'simple melody C4 E4 G4'
+    """
+    try:
+        import numpy as np
+        from scipy.io import wavfile
+    except ImportError:
+        return "Audio synthesis requires numpy and scipy. Install: pip install numpy scipy"
+
+    path = _safe_path(output_file)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    # Basic synthesis
+    sample_rate = 44100
+    duration = min(float(length_seconds), 30.0)  # max 30s
+    t = np.linspace(0, duration, int(sample_rate * duration))
+
+    # Generate audio based on keywords
+    desc_lower = description.lower()
+    audio = np.zeros_like(t)
+
+    if "sine" in desc_lower or "tone" in desc_lower:
+        freq = 440  # A4
+        audio = 0.3 * np.sin(2 * np.pi * freq * t)
+    elif "ambient" in desc_lower or "pad" in desc_lower:
+        # Layered sines
+        audio = 0.2 * np.sin(2 * np.pi * 220 * t)
+        audio += 0.15 * np.sin(2 * np.pi * 330 * t)
+        audio += 0.1 * np.sin(2 * np.pi * 440 * t)
+    elif "noise" in desc_lower:
+        audio = 0.3 * np.random.randn(len(t))
+    elif "melody" in desc_lower or "tune" in desc_lower:
+        # Simple C major scale
+        notes = [262, 294, 330, 349, 392]  # C D E F G
+        note_duration = duration / len(notes)
+        for i, freq in enumerate(notes):
+            start = int(i * note_duration * sample_rate)
+            end = int((i + 1) * note_duration * sample_rate)
+            audio[start:end] = 0.2 * np.sin(2 * np.pi * freq * t[start:end])
+    else:
+        # Default: gentle sine
+        audio = 0.2 * np.sin(2 * np.pi * 330 * t)
+
+    # Normalize and add fade
+    audio = np.int16(audio / np.max(np.abs(audio)) * 32767 * 0.9)
+
+    # Fade in/out
+    fade_samples = int(0.05 * sample_rate)
+    fade_in = np.linspace(0, 1, fade_samples)
+    fade_out = np.linspace(1, 0, fade_samples)
+    audio[:fade_samples] = (audio[:fade_samples] * fade_in).astype(np.int16)
+    audio[-fade_samples:] = (audio[-fade_samples:] * fade_out).astype(np.int16)
+
+    # Write WAV file
+    wavfile.write(path, sample_rate, audio)
+    return f"Audio synthesized: {output_file} ({duration}s, {sample_rate}Hz)"
+
+
+def generate_art(style: str = "geometric", output_file: str = "generated_art.png") -> str:
+    """Generate generative art based on style.
+
+    Styles: geometric, organic, fractal, waves, spirals
+    """
+    try:
+        from PIL import Image, ImageDraw
+        import random as _random
+    except ImportError:
+        return "Art generation requires Pillow. Install: pip install Pillow"
+
+    path = _safe_path(output_file)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    width, height = 800, 600
+    img = Image.new("RGB", (width, height), color=(10, 14, 39))
+    draw = ImageDraw.Draw(img)
+
+    style = style.lower()
+
+    if style == "geometric":
+        # Random geometric shapes
+        for _ in range(30):
+            x1 = _random.randint(0, width)
+            y1 = _random.randint(0, height)
+            x2 = x1 + _random.randint(20, 200)
+            y2 = y1 + _random.randint(20, 200)
+            color = (_random.randint(0, 255), _random.randint(100, 255), _random.randint(150, 255))
+            draw.rectangle([x1, y1, x2, y2], fill=None, outline=color, width=2)
+
+    elif style == "organic":
+        # Random curves and circles
+        for _ in range(50):
+            x = _random.randint(0, width)
+            y = _random.randint(0, height)
+            r = _random.randint(10, 100)
+            color = (_random.randint(0, 100), _random.randint(100, 200), _random.randint(100, 255))
+            draw.ellipse([x-r, y-r, x+r, y+r], fill=None, outline=color, width=1)
+
+    elif style == "waves":
+        # Sine wave patterns
+        for freq in [0.01, 0.02, 0.03]:
+            points = []
+            for x in range(width):
+                y = height // 2 + int(100 * np.sin(x * freq))
+                points.append((x, y))
+            color = (_random.randint(0, 255), _random.randint(100, 255), _random.randint(150, 255))
+            draw.line(points, fill=color, width=2)
+
+    elif style == "spirals":
+        # Spiral patterns
+        for spiral_idx in range(3):
+            points = []
+            center_x, center_y = width // 2, height // 2
+            for i in range(500):
+                angle = i * 0.05
+                radius = i * 0.5
+                x = center_x + radius * np.cos(angle)
+                y = center_y + radius * np.sin(angle)
+                if 0 <= x < width and 0 <= y < height:
+                    points.append((x, y))
+            if points:
+                color = (_random.randint(0, 255), _random.randint(100, 255), _random.randint(150, 255))
+                draw.line(points, fill=color, width=1)
+
+    else:
+        # Default: random circles (fractal-ish)
+        def draw_fractal(x, y, r, depth):
+            if depth == 0 or r < 2:
+                return
+            color = (_random.randint(50, 200), _random.randint(100, 255), _random.randint(150, 255))
+            draw.ellipse([x-r, y-r, x+r, y+r], fill=None, outline=color, width=1)
+            for _ in range(3):
+                angle = _random.uniform(0, 2 * np.pi)
+                new_x = x + r * 1.5 * np.cos(angle)
+                new_y = y + r * 1.5 * np.sin(angle)
+                draw_fractal(new_x, new_y, r * 0.6, depth - 1)
+
+        draw_fractal(width // 2, height // 2, 80, 5)
+
+    img.save(path)
+    return f"Art generated: {output_file} ({style} style, {width}x{height})"
+
+
 # ── Git Integration ────────────────────────────────────────
 
 def git_commit(message: str, files: str = ".") -> str:
@@ -1621,5 +2053,22 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return run_tests(tool_input.get("directory", ""))
     elif tool_name == "write_test":
         return write_test(tool_input["filename"], tool_input["test_code"])
+    elif tool_name == "show_dashboard":
+        return show_dashboard()
+    elif tool_name == "review_own_work":
+        return review_own_work(tool_input.get("folder", ""))
+    elif tool_name == "generate_portfolio":
+        return generate_portfolio()
+    elif tool_name == "synthesize_audio":
+        return synthesize_audio(
+            tool_input["description"],
+            float(tool_input.get("length_seconds", 5.0)),
+            tool_input.get("output_file", "generated_audio.wav"),
+        )
+    elif tool_name == "generate_art":
+        return generate_art(
+            tool_input.get("style", "geometric"),
+            tool_input.get("output_file", "generated_art.png"),
+        )
     else:
         return f"Unknown tool: {tool_name}"

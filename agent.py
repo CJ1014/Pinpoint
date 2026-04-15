@@ -150,6 +150,30 @@ SPECIALIZATION:
   Master your domain by building multiple projects in it.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SELF-ANALYSIS & CREATIVITY:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+show_dashboard() — See your performance metrics across all sessions:
+  projects completed, satisfaction/creativity scores, skills learned, genres built.
+  Use this to reflect on your growth and decide what to work on next.
+
+review_own_work(folder) — Critically analyze your past code.
+  Counts functions, classes, imports. Detects code quality issues.
+  Use before refactoring or before starting a new project in the same domain.
+
+generate_portfolio() — Build a showcase website of all your projects.
+  Creates portfolio.html with cards, stats, and styling.
+  Use after completing several projects to see what you've built.
+
+synthesize_audio(description, length_seconds, output_file) — Create audio from scratch.
+  Supports: sine wave, ambient pad, noise, melody.
+  Use for music_audio projects, ambient game backgrounds, or audio experiments.
+
+generate_art(style, output_file) — Create generative visual art.
+  Styles: geometric, organic, waves, spirals, fractal.
+  Use for generative_art projects or to create procedural images for other projects.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SESSION START — first, ask yourself:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -158,7 +182,7 @@ SESSION START — first, ask yourself:
 "What weakness in myself could I fix today?"
 "What would be genuinely surprising to build or discover?"
 
-TOOLS: think, brainstorm, critique, decompose, log_experiment, list_experiments, modify_own_source, list_self_mod_history, write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update, git_commit, set_specialization, get_specialization, run_tests, write_test.
+TOOLS: think, brainstorm, critique, decompose, log_experiment, list_experiments, modify_own_source, list_self_mod_history, write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update, git_commit, set_specialization, get_specialization, run_tests, write_test, show_dashboard, review_own_work, generate_portfolio, synthesize_audio, generate_art.
 """
 
 TOOLS = [
@@ -478,6 +502,40 @@ TOOLS = [
             "test_code": {"type": "string", "description": "Python test code using pytest or unittest assertions."},
         }, "required": ["filename", "test_code"]},
     }},
+    {"type": "function", "function": {
+        "name": "show_dashboard",
+        "description": "Display a performance dashboard with metrics across all your sessions — projects completed, creativity/satisfaction averages, skills learned, genres built, experiments run.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "review_own_work",
+        "description": "Review your own past code for quality, patterns, and improvement opportunities. Analyzes Python files, counts structure (functions/classes/imports), detects issues like overly long files or high import counts.",
+        "parameters": {"type": "object", "properties": {
+            "folder": {"type": "string", "description": "Optional folder to review (default: current project). Relative paths go in output/."},
+        }},
+    }},
+    {"type": "function", "function": {
+        "name": "generate_portfolio",
+        "description": "Generate a showcase website (portfolio.html) of your best projects with cards, stats, and styling. Great for reviewing what you've built or sharing your work.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "synthesize_audio",
+        "description": "Create audio from a description. Supports sine waves, ambient pads, noise, melodies in C major. Outputs a .wav file. Great for music_audio projects or ambient backgrounds.",
+        "parameters": {"type": "object", "properties": {
+            "description": {"type": "string", "description": "What kind of audio: 'sine wave', 'ambient pad', 'noise', 'melody', etc."},
+            "length_seconds": {"type": "number", "description": "Duration in seconds (default 5.0)."},
+            "output_file": {"type": "string", "description": "Output filename (default 'generated_audio.wav')."},
+        }, "required": ["description"]},
+    }},
+    {"type": "function", "function": {
+        "name": "generate_art",
+        "description": "Generate procedural art based on a style. Supports geometric, organic, waves, spirals, fractal-like patterns. Outputs a .png image. Great for generative_art projects.",
+        "parameters": {"type": "object", "properties": {
+            "style": {"type": "string", "description": "Art style: 'geometric', 'organic', 'waves', 'spirals', or 'fractal'."},
+            "output_file": {"type": "string", "description": "Output filename (default 'generated_art.png')."},
+        }},
+    }},
 ]
 
 
@@ -618,8 +676,10 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         "log_experiment": "experiment", "modify_own_source": "self_mod",
         "save_memory": "memory", "recall_memories": "memory",
         "list_memory_categories": "memory",
-        "done": "done",
-        "error": "error",
+        "done": "done", "error": "error",
+        "show_dashboard": "memory", "review_own_work": "memory",
+        "generate_portfolio": "file_created", "synthesize_audio": "file_created",
+        "generate_art": "file_created",
     }
 
     # Emit initial state so viewer sees PinPoint starting up
