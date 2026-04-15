@@ -363,10 +363,14 @@ def done(summary: str, satisfaction: int = 3, files: str = "",
 
     _save_memory_file(data)
 
+    # Auto-commit to git for version control and portfolio building
+    git_msg = f"Project: {summary[:60]} (satisfaction {satisfaction}/5, creativity {creativity}/5)"
+    git_result = git_commit(git_msg, "output/.")
+
     if satisfaction >= 4:
-        return f"DONE (satisfaction {satisfaction}/5, creativity {creativity}/5 — will continue next session): {summary}"
+        return f"DONE (satisfaction {satisfaction}/5, creativity {creativity}/5 — will continue next session): {summary}\n✓ {git_result}"
     else:
-        return f"DONE (satisfaction {satisfaction}/5, creativity {creativity}/5 — moving on): {summary}"
+        return f"DONE (satisfaction {satisfaction}/5, creativity {creativity}/5 — moving on): {summary}\n✓ {git_result}"
 
 
 # ── HTML validator ──────────────────────────────────────────
@@ -1366,6 +1370,158 @@ def emit_world_event(
         pass  # Never crash the agent over visualization
 
 
+# ── Git Integration ────────────────────────────────────────
+
+def git_commit(message: str, files: str = ".") -> str:
+    """Commit work to git with a meaningful message.
+
+    Called automatically by done() to version your projects.
+    You can also call this manually during development to checkpoint work.
+    """
+    try:
+        cwd = ROOT_DIR
+        # Stage files
+        result = subprocess.run(
+            f"git add {files}",
+            shell=True, cwd=cwd, capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            return f"git add failed: {result.stderr}"
+
+        # Commit
+        result = subprocess.run(
+            ["git", "commit", "-m", message],
+            cwd=cwd, capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            if "nothing to commit" in result.stdout.lower():
+                return "Nothing to commit (no changes)."
+            return f"git commit failed: {result.stderr}"
+
+        # Try to push (might fail if no remote, but that's ok)
+        subprocess.run(
+            "git push -u origin HEAD",
+            shell=True, cwd=cwd, capture_output=True, text=True, timeout=60
+        )
+
+        return f"Committed and pushed: {message[:80]}"
+    except Exception as e:
+        return f"git_commit error: {e}"
+
+
+# ── Specialization / Domain Expertise ──────────────────────
+
+_SPECIALIZATIONS = {
+    "game_dev": "game design, mechanics, physics, graphics, gameplay loops",
+    "web_dev": "web apps, React/Vue/Svelte, HTML/CSS, APIs, databases, full-stack",
+    "data_science": "pandas, numpy, sklearn, data analysis, visualization, ML models",
+    "music_audio": "audio synthesis, music theory, sound design, MIDI, Web Audio API",
+    "generative_art": "creative coding, procedural generation, shaders, p5.js, Processing",
+    "ai_ml": "neural networks, transformers, LLMs, training, evaluation, PyTorch/TensorFlow",
+    "simulation": "physics engines, particle systems, agent-based models, real-time dynamics",
+}
+
+
+def set_specialization(domain: str) -> str:
+    """Choose a specialization domain to focus on mastering.
+
+    Available domains:
+    - game_dev: Game design, mechanics, graphics, gameplay
+    - web_dev: Web applications, full-stack development
+    - data_science: Data analysis, ML models, visualization
+    - music_audio: Audio synthesis, music, sound design
+    - generative_art: Creative coding, procedural generation, shaders
+    - ai_ml: Neural networks, LLMs, model training
+    - simulation: Physics, agents, real-time dynamics
+
+    Once set, all future sessions will be nudged toward this domain.
+    You'll develop deep expertise and a portfolio in this area.
+    """
+    domain_lower = domain.lower().replace(" ", "_")
+    if domain_lower not in _SPECIALIZATIONS:
+        available = ", ".join(_SPECIALIZATIONS.keys())
+        return f"Unknown domain '{domain}'. Available: {available}"
+
+    data = _load_memory()
+    data["meta"]["specialization"] = domain_lower
+    data["meta"]["specialization_set_at"] = _now()
+    _save_memory_file(data)
+
+    return (
+        f"Specialization set to: {domain_lower}\n"
+        f"Focus areas: {_SPECIALIZATIONS[domain_lower]}\n\n"
+        f"From now on, you'll preferentially build projects in this domain "
+        f"and develop deep expertise. Your portfolio will showcase your mastery."
+    )
+
+
+def get_specialization() -> str:
+    """Get your current specialization, if any."""
+    data = _load_memory()
+    spec = data.get("meta", {}).get("specialization")
+    if not spec:
+        return "No specialization set. Use set_specialization(domain) to choose one."
+    return f"Current specialization: {spec}\nFocus: {_SPECIALIZATIONS.get(spec, '?')}"
+
+
+# ── Automated Testing ──────────────────────────────────────
+
+def run_tests(directory: str = "") -> str:
+    """Discover and run tests in the current project or specified directory.
+
+    Looks for test files (test_*.py, *_test.py) and runs them with pytest or unittest.
+    Returns a summary of pass/fail results.
+
+    Use this to validate your code before calling done().
+    """
+    path = _safe_path(directory) if directory else get_project_dir()
+    if not os.path.isdir(path):
+        return f"Directory not found: {path}"
+
+    try:
+        # Try pytest first (more powerful)
+        result = subprocess.run(
+            ["pytest", path, "-v", "--tb=short"],
+            capture_output=True, text=True, timeout=120, cwd=ROOT_DIR
+        )
+        if result.returncode == 0 or "passed" in result.stdout:
+            return f"Tests passed!\n\n{result.stdout[-2000:]}"
+        else:
+            return f"Tests failed:\n\n{result.stdout[-2000:]}\n\n{result.stderr[-1000:]}"
+    except FileNotFoundError:
+        # Fall back to unittest
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "unittest", "discover", "-s", path, "-p", "test_*.py", "-v"],
+                capture_output=True, text=True, timeout=120
+            )
+            if result.returncode == 0:
+                return f"All tests passed!\n\n{result.stdout[-2000:]}"
+            else:
+                return f"Some tests failed:\n\n{result.stdout[-2000:]}"
+        except Exception as e:
+            return f"Could not run tests: {e}. Install pytest: pip install pytest"
+
+
+def write_test(filename: str, test_code: str) -> str:
+    """Write a test file for your code.
+
+    Example:
+      write_test('test_math.py', '''
+        def test_add():
+            from my_module import add
+            assert add(2, 3) == 5
+      ''')
+
+    Tests are automatically discovered and run by run_tests().
+    """
+    path = _safe_path(filename)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(test_code)
+    return f"Test written: {filename}\nRun with: run_tests()"
+
+
 # ── Dispatch ────────────────────────────────────────────────
 
 def dispatch(tool_name: str, tool_input: dict) -> str:
@@ -1455,5 +1611,15 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return collab_status()
     elif tool_name == "collab_update":
         return collab_update(tool_input["role"], tool_input["status"], tool_input.get("message", ""))
+    elif tool_name == "git_commit":
+        return git_commit(tool_input["message"], tool_input.get("files", "."))
+    elif tool_name == "set_specialization":
+        return set_specialization(tool_input["domain"])
+    elif tool_name == "get_specialization":
+        return get_specialization()
+    elif tool_name == "run_tests":
+        return run_tests(tool_input.get("directory", ""))
+    elif tool_name == "write_test":
+        return write_test(tool_input["filename"], tool_input["test_code"])
     else:
         return f"Unknown tool: {tool_name}"

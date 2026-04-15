@@ -131,6 +131,24 @@ Quality: WORKS + COMPLETE + IMPRESSIVE + POLISHED. If it's bland, push further.
 On errors: think() about root cause first, then search_web if needed.
 Visual projects: open_html → take_screenshot → critique → iterate until 4+/5.
 
+TESTING & VERSION CONTROL:
+  For any code project:
+  - write_test(filename, test_code) to create tests as you build
+  - run_tests() frequently to validate — if tests fail, fix before continuing
+  - When done, call git_commit(message) to version your work (also called by done())
+  - Your work builds a real GitHub portfolio across sessions
+
+SPECIALIZATION:
+  If you've set_specialization(domain), bias projects toward that domain:
+  - game_dev: games, interactive, real-time, graphics, gameplay loops
+  - web_dev: web apps, APIs, databases, full-stack, deployment
+  - data_science: analysis, ML models, visualization, statistical insight
+  - music_audio: sound synthesis, audio processing, music generation
+  - generative_art: procedural art, shaders, creative algorithms, visualization
+  - ai_ml: neural networks, transformers, model training, evaluation
+  - simulation: physics, agents, particle systems, dynamics
+  Master your domain by building multiple projects in it.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SESSION START — first, ask yourself:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -140,7 +158,7 @@ SESSION START — first, ask yourself:
 "What weakness in myself could I fix today?"
 "What would be genuinely surprising to build or discover?"
 
-TOOLS: think, brainstorm, critique, decompose, log_experiment, list_experiments, modify_own_source, list_self_mod_history, write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update.
+TOOLS: think, brainstorm, critique, decompose, log_experiment, list_experiments, modify_own_source, list_self_mod_history, write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update, git_commit, set_specialization, get_specialization, run_tests, write_test.
 """
 
 TOOLS = [
@@ -424,6 +442,41 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {
             "filename": {"type": "string", "description": "Python filename relative to output/."},
         }, "required": ["filename"]},
+    }},
+    {"type": "function", "function": {
+        "name": "git_commit",
+        "description": "Commit your work to git with a meaningful message. Called automatically by done() but you can also use this to checkpoint progress during development.",
+        "parameters": {"type": "object", "properties": {
+            "message": {"type": "string", "description": "Commit message describing what changed and why."},
+            "files": {"type": "string", "description": "Optional git pattern (default '.') — e.g. '*.py' or specific files to stage."},
+        }, "required": ["message"]},
+    }},
+    {"type": "function", "function": {
+        "name": "set_specialization",
+        "description": "Choose a domain to specialize in and focus your expertise. Once set, future sessions will nudge you toward this domain.",
+        "parameters": {"type": "object", "properties": {
+            "domain": {"type": "string", "description": "One of: game_dev, web_dev, data_science, music_audio, generative_art, ai_ml, simulation"},
+        }, "required": ["domain"]},
+    }},
+    {"type": "function", "function": {
+        "name": "get_specialization",
+        "description": "Check your current specialization domain, if any.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "run_tests",
+        "description": "Discover and run tests (pytest or unittest) in your project. Use this to validate code before calling done().",
+        "parameters": {"type": "object", "properties": {
+            "directory": {"type": "string", "description": "Optional directory to search for tests (default: current project dir)."},
+        }},
+    }},
+    {"type": "function", "function": {
+        "name": "write_test",
+        "description": "Write a test file for your code. Tests are automatically discovered and run by run_tests().",
+        "parameters": {"type": "object", "properties": {
+            "filename": {"type": "string", "description": "Test filename (e.g. 'test_mycode.py')."},
+            "test_code": {"type": "string", "description": "Python test code using pytest or unittest assertions."},
+        }, "required": ["filename", "test_code"]},
     }},
 ]
 
