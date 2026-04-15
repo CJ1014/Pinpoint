@@ -1802,6 +1802,63 @@ def generate_art(style: str = "geometric", output_file: str = "generated_art.png
     return f"Art generated: {output_file} ({style} style, {width}x{height})"
 
 
+# ── English Dictionary ─────────────────────────────────────
+
+def dictionary_lookup(word: str) -> str:
+    """Look up a word in the English dictionary.
+
+    Returns definition, part of speech, example sentences, and synonyms.
+    Use this when you want to find the perfect word, understand a concept
+    more precisely, or just satisfy your curiosity about language.
+    """
+    word = word.strip().lower()
+    if not word:
+        return "Please provide a word to look up."
+
+    try:
+        import nltk
+        try:
+            from nltk.corpus import wordnet as wn
+            # Quick probe to make sure the corpus is downloaded
+            wn.synsets("test")
+        except LookupError:
+            nltk.download("wordnet", quiet=True)
+            nltk.download("omw-1.4", quiet=True)
+            from nltk.corpus import wordnet as wn
+
+        synsets = wn.synsets(word)
+        if not synsets:
+            return f"No entry found for '{word}' in the dictionary."
+
+        _pos_label = {"n": "noun", "v": "verb", "a": "adjective", "s": "adjective satellite", "r": "adverb"}
+        lines = [f"📖 {word.upper()}"]
+
+        for i, syn in enumerate(synsets[:4]):
+            pos = _pos_label.get(syn.pos(), syn.pos())
+            lines.append(f"\n{i + 1}. [{pos}] {syn.definition()}")
+            examples = syn.examples()
+            if examples:
+                lines.append(f'   e.g. "{examples[0]}"')
+            synonyms = [
+                lem.name().replace("_", " ")
+                for lem in syn.lemmas()
+                if lem.name().lower() != word
+            ][:6]
+            if synonyms:
+                lines.append(f"   synonyms: {', '.join(synonyms)}")
+
+        return "\n".join(lines)
+
+    except ImportError:
+        # NLTK not available — fall back to a minimal built-in word list
+        return (
+            f"NLTK not installed (pip install nltk). "
+            f"To get full dictionary support, run: pip_install('nltk')"
+        )
+    except Exception as e:
+        return f"Dictionary lookup error: {e}"
+
+
 # ── Text-to-Speech / Voice ─────────────────────────────────
 
 def speak(text: str, wait: bool = True) -> str:
@@ -2162,6 +2219,8 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
             tool_input.get("style", "geometric"),
             tool_input.get("output_file", "generated_art.png"),
         )
+    elif tool_name == "dictionary_lookup":
+        return dictionary_lookup(tool_input["word"])
     elif tool_name == "speak":
         return speak(
             tool_input["text"],
