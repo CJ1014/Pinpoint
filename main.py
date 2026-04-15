@@ -17,8 +17,8 @@ BANNER = r"""
  |_|   |_|_| |_|_|   \___/|_|_| |_|\__|
 
  Autonomous AI — running until you stop it
- Ctrl+C to stop  |  /bug = inject a bug  |  /next = force new project
- sandbox = upgrade the 3D viewer  |  type anytime while running
+ Ctrl+C to stop  |  /next = new project  |  /bug = inject a bug
+ sandbox = upgrade 3D viewer  |  type anything = suggest to PinPoint
 """
 
 LOCK_DIR = os.path.join(os.path.dirname(__file__), "output")

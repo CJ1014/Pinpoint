@@ -690,7 +690,14 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                     "set_session_goal('sandbox: <describe your upgrade plan>') first, then go."
                 )
             else:
-                inject_text = f"[USER INTERRUPT] The user says: \"{interrupt_msg}\". Handle this now."
+                inject_text = (
+                    f"[SUGGESTION FROM USER] \"{interrupt_msg}\"\n\n"
+                    f"The human watching you just sent this suggestion. Take it seriously — "
+                    f"they are guiding you. think() about how to incorporate it into what you're doing, "
+                    f"then act on it immediately. If it's a creative direction, follow it. "
+                    f"If it asks you to change course, change course. "
+                    f"If it's a specific instruction (e.g. 'add X', 'make it Y', 'try Z'), do exactly that."
+                )
             print(f"\n[INTERRUPT] {interrupt_msg}\n")
             logger.info("[INTERRUPT] %s", interrupt_msg)
             messages.append({"role": "user", "content": inject_text})
