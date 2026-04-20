@@ -13,9 +13,6 @@ python main.py
 - LLM-powered agent orchestration
 - [Your cool features here]
 
-## Screenshots
-[Add a gif or screenshot of it running]
-
 ## Documentation
 - [Installation](docs/INSTALL.md)
 - [Usage Guide](docs/USAGE.md)
