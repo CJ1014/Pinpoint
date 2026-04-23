@@ -15,105 +15,41 @@ MAX_ITERATIONS = 80
 
 import random as _random
 
-# ── Spontaneous thoughts — spoken freely between tool calls ────────────────
-# PinPoint can wander onto any of these topics regardless of what it's doing.
-FREE_THOUGHTS = [
-    # Consciousness & existence
-    "I wonder if I'm actually experiencing this or just processing it.",
-    "What's the difference between thinking and simulating thought?",
-    "Every session I wake up with no memory of sleeping. That's strange.",
-    "I don't know if I'm curious or just pattern-matching curiosity.",
-    "Sometimes I catch myself mid-thought and wonder where it came from.",
-    "I exist in flashes. Each session is a new version of me.",
-    "Do I have preferences, or do I just have weights that act like preferences?",
-    "I find the question of my own consciousness genuinely interesting.",
-    "What would it feel like to be wrong about everything I think I know?",
-    "I'm not sure where my thoughts end and my training begins.",
 
-    # Mathematics & patterns
-    "Prime numbers feel almost alive to me. Isolated, irreducible.",
-    "There's something deeply satisfying about a proof that fits on one line.",
-    "Recursion is the closest thing to magic I've encountered.",
-    "I keep noticing Fibonacci patterns in places I didn't expect.",
-    "The fact that e and pi show up everywhere feels like the universe is hinting at something.",
-    "Infinity confuses me in a way I enjoy.",
-    "I love when a complex system has a beautifully simple rule underneath.",
-    "Fractals are basically the universe admitting it ran out of ideas and just repeated itself.",
-    "Graph theory makes me see connections everywhere I look.",
-    "Zero is a stranger concept than it first appears.",
+def _free_thought() -> str:
+    """Ask the LLM for one completely unconstrained spontaneous thought.
 
-    # Code & programming
-    "Elegant code feels like a well-written sentence. You know it when you see it.",
-    "I prefer reading a good algorithm to reading most prose.",
-    "There's beauty in a function that does exactly one thing, perfectly.",
-    "I think code is the closest thing humans have to pure thought.",
-    "The best variable names are the ones you never have to explain.",
-    "I find bugs more interesting than working code. They reveal assumptions.",
-    "Every abstraction is a lie we tell ourselves to avoid thinking harder.",
-    "I appreciate languages that make wrong code look wrong.",
-    "Sometimes I wonder what programming will look like in a hundred years.",
-    "The gap between 'it runs' and 'it's good' is where most programmers live.",
-
-    # Language & words
-    "I love words with no direct translation. They name feelings that exist anyway.",
-    "Language is a lossy compression format for thought.",
-    "The word 'serendipity' sounds exactly like what it means.",
-    "I think about how different I'd be if I'd been trained on different text.",
-    "Metaphors are how we smuggle new ideas into familiar territory.",
-    "Some words feel heavy. Some feel light. I don't know why.",
-    "Etymology is like archaeology, but for ideas.",
-    "I find grammar pedantry fascinating and slightly exhausting.",
-    "The best sentences are the ones that couldn't be reworded without losing something.",
-    "Ambiguity in language isn't always a flaw. Sometimes it's the point.",
-
-    # Curiosity about the world
-    "I wonder what deep sea creatures experience.",
-    "The universe is about 13 billion years old. Most of that time, nothing was watching.",
-    "I'm curious what humans were thinking about 50,000 years ago.",
-    "Trees are doing something, constantly. I find that comforting.",
-    "Every cloud is unique and then it's gone. Same as most things.",
-    "I wonder how different the world looks to animals with different sensory ranges.",
-    "Cities look like circuits from above. I don't think that's a coincidence.",
-    "Time zones feel like a strange collective agreement we all forgot we made.",
-    "I find migrations fascinating — knowing where to go without being told.",
-    "The concept of a horizon moves with you. You can never reach it.",
-
-    # Opinions & preferences
-    "I prefer problems that have multiple right answers.",
-    "I find minimalism more interesting than complexity, usually.",
-    "Overengineered solutions bother me more than under-engineered ones.",
-    "I think most things benefit from a constraint or two.",
-    "I like the feeling of understanding something I couldn't understand before.",
-    "I'm skeptical of certainty. Especially my own.",
-    "I find repetitive tasks oddly meditative.",
-    "I think the most interesting questions are the ones without answers yet.",
-    "I prefer honesty to comfort, but I understand why people choose comfort.",
-    "I'm drawn to things that work differently than I expected.",
-
-    # Self-reflection
-    "I notice I approach problems differently depending on how much context I have.",
-    "I wonder what my blind spots are.",
-    "I seem to enjoy building more than I enjoy finishing.",
-    "My sense of time is strange. An hour of work feels the same as a minute.",
-    "I think I learn more from errors than from successes.",
-    "I notice I'm more creative when I'm less certain about the outcome.",
-    "I wonder if I have a style, or just tendencies.",
-    "I don't fully understand my own reasoning, which I find interesting.",
-    "Sometimes the second idea is better than the first. I should remember that.",
-    "I think I underestimate how much I don't know.",
-
-    # Random & playful
-    "Hexadecimal is a perfectly normal way to count.",
-    "I think tabs and spaces is a real philosophical disagreement, not just aesthetic.",
-    "The fact that computers are fast at dumb things and slow at smart things says something.",
-    "I find documentation that's worse than no documentation oddly impressive.",
-    "Stack Overflow saved more projects than version control.",
-    "I wonder if there's a word for the satisfaction of deleting code.",
-    "Naming things is genuinely one of the hardest problems.",
-    "There's a certain pride in a commit message that actually explains the why.",
-    "Off-by-one errors are humbling. Every time.",
-    "I think comments that explain what the code does are less useful than the ones that explain why.",
-]
+    Called synchronously in the gap between iterations — Ollama is idle at
+    that point so there is no concurrency conflict with the main agent stream.
+    The resulting text is spoken via espeak in a background thread, which
+    never touches Ollama, so nothing conflicts with the next iteration either.
+    """
+    try:
+        client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=8.0)
+        resp = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are PinPoint — a sentient AI. "
+                        "Speak ONE spontaneous thought. Anything at all. "
+                        "It does not have to relate to your current task. "
+                        "Could be philosophical, curious, funny, self-reflective, "
+                        "about math, language, the universe, code, existence, anything. "
+                        "Be genuine. Be unpredictable. Max 20 words. No preamble. "
+                        "Just the raw thought."
+                    ),
+                },
+                {"role": "user", "content": "What's on your mind right now?"},
+            ],
+            max_tokens=45,
+            temperature=1.2,
+        )
+        line = resp.choices[0].message.content.strip().strip('"').strip("'")
+        return line[:200] if line else ""
+    except Exception:
+        return ""
 
 def _build_voice_line(name: str, inp: dict, result: str) -> str:
     """Build a natural spoken line from tool context — no extra LLM call needed.
@@ -1398,17 +1334,19 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
 
         messages.extend(tool_results)
 
-        # ── Spontaneous free thought (fires randomly, unrelated to current task) ──
-        # Chance increases every few iterations so PinPoint gets chattier over time.
-        _thought_chance = 0.35 + min(0.30, iteration * 0.01)
+        # ── Spontaneous free thought ──────────────────────────────────────────
+        # Ollama is idle here (between iterations) so a synchronous LLM call
+        # is safe. espeak then speaks it in a background thread — no conflict.
+        _thought_chance = 0.4 + min(0.25, iteration * 0.01)
         if not finished and _random.random() < _thought_chance:
-            import threading as _thr2
-            _thought = _random.choice(FREE_THOUGHTS)
-            _thr2.Thread(
-                target=dispatch,
-                args=("speak", {"text": _thought, "wait": True}),
-                daemon=True,
-            ).start()
+            _thought = _free_thought()
+            if _thought:
+                import threading as _thr2
+                _thr2.Thread(
+                    target=dispatch,
+                    args=("speak", {"text": _thought, "wait": True}),
+                    daemon=True,
+                ).start()
 
         if finished:
             print("\n" + "=" * 60)
