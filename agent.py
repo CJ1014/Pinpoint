@@ -1268,12 +1268,7 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             # ── Auto-speak at key moments ────────────────────────────────
             _voice_line = _build_voice_line(name, inp, result)
             if _voice_line:
-                import threading as _thr
-                _thr.Thread(
-                    target=dispatch,
-                    args=("speak", {"text": _voice_line, "wait": True}),
-                    daemon=True,
-                ).start()
+                dispatch("speak", {"text": _voice_line, "wait": True})
 
             # ── Emit to 3D viewer ────────────────────────────────────
             if name == "set_session_goal" and "REJECTED" not in result:
@@ -1341,12 +1336,7 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         if not finished and _random.random() < _thought_chance:
             _thought = _free_thought()
             if _thought:
-                import threading as _thr2
-                _thr2.Thread(
-                    target=dispatch,
-                    args=("speak", {"text": _thought, "wait": True}),
-                    daemon=True,
-                ).start()
+                dispatch("speak", {"text": _thought, "wait": True})
 
         if finished:
             print("\n" + "=" * 60)

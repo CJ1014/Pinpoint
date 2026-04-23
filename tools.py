@@ -4,6 +4,7 @@ import json
 import re
 import sys
 import threading
+import queue as _queue_mod
 import platform
 from datetime import datetime, timezone
 from html.parser import HTMLParser
@@ -16,6 +17,25 @@ _running_servers = {}  # port -> thread
 MEMORY_FILE = os.path.join(os.path.dirname(__file__), "memory.json")
 MEMORY_CATEGORIES = ("skills", "lessons", "mistakes", "ideas", "projects", "preferences", "dislikes", "experiments")
 MAX_PER_CATEGORY = 20
+
+# ── Speech queue — one thread, one voice at a time ──────────────────────────
+_speech_queue: _queue_mod.Queue = _queue_mod.Queue()
+
+def _speech_worker() -> None:
+    """Single background thread that drains the speech queue one line at a time."""
+    while True:
+        text = _speech_queue.get()
+        if text is None:
+            break
+        try:
+            _speak_now(text)
+        except Exception:
+            pass
+        finally:
+            _speech_queue.task_done()
+
+_speech_thread = threading.Thread(target=_speech_worker, daemon=True)
+_speech_thread.start()
 
 # ── Per-project folder tracking ──────────────────────────────
 _current_project_dir = None  # set by set_session_goal
@@ -1861,94 +1881,67 @@ def dictionary_lookup(word: str) -> str:
 
 # ── Text-to-Speech / Voice ─────────────────────────────────
 
-def speak(text: str, wait: bool = True) -> str:
-    """Convert text to speech and play it out loud.
-
-    Use this to vocalize your thoughts, summaries, or important findings.
-    Voice output makes the agent feel alive and lets you hear its reasoning.
-
-    Tries multiple TTS backends in order of reliability:
-    1. espeak (Linux, most reliable)
-    2. say (macOS)
-    3. PowerShell (Windows)
-    4. pyttsx3 (Python library, fallback)
-    """
-    if not text or not text.strip():
-        return "Nothing to speak."
-
+def _speak_now(text: str) -> None:
+    """Actually perform TTS — called only from the speech worker thread."""
     text = text.strip()
-    short_text = text[:100] + "..." if len(text) > 100 else text
+    if not text:
+        return
 
-    # Try platform-specific TTS first (more reliable than pyttsx3)
-    try:
-        if platform.system() == "Linux":
-            # Try espeak-ng first (modern replacement), then espeak
-            for cmd in ["espeak-ng", "espeak"]:
-                try:
-                    result = subprocess.run(
-                        [cmd, "-s", "130", "-a", "200"],
-                        input=text,
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                    )
-                    if result.returncode == 0:
-                        return f"🎤 Spoke: '{short_text}'"
-                except FileNotFoundError:
-                    continue
-    except subprocess.TimeoutExpired:
-        pass
-    except Exception:
-        pass
+    if platform.system() == "Linux":
+        for cmd in ["espeak-ng", "espeak"]:
+            try:
+                r = subprocess.run(
+                    [cmd, "-s", "130", "-a", "200"],
+                    input=text, capture_output=True, text=True, timeout=30,
+                )
+                if r.returncode == 0:
+                    return
+            except FileNotFoundError:
+                continue
+            except Exception:
+                break
 
-    try:
-        if platform.system() == "Darwin":  # macOS
-            subprocess.run(
-                ["say", text],
-                capture_output=True,
-                timeout=30,
-            )
-            return f"🎤 Spoke: '{short_text}'"
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    except Exception:
-        pass
+    if platform.system() == "Darwin":
+        try:
+            subprocess.run(["say", text], capture_output=True, timeout=30)
+            return
+        except Exception:
+            pass
 
-    try:
-        if platform.system() == "Windows":
-            # Use PowerShell's built-in speech synthesis
-            ps_cmd = f"Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{text.replace(chr(39), chr(39) + chr(39))}')"
-            subprocess.run(
-                ["powershell", "-Command", ps_cmd],
-                capture_output=True,
-                timeout=30,
-            )
-            return f"🎤 Spoke: '{short_text}'"
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    except Exception:
-        pass
+    if platform.system() == "Windows":
+        try:
+            safe = text.replace("'", "''")
+            ps = f"Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{safe}')"
+            subprocess.run(["powershell", "-Command", ps], capture_output=True, timeout=30)
+            return
+        except Exception:
+            pass
 
-    # Fallback to pyttsx3 (Python library)
     try:
         import pyttsx3
         engine = pyttsx3.init()
-        engine.setProperty('rate', 130)
-        voices = engine.getProperty('voices')
-        if voices:
-            engine.setProperty('voice', voices[0].id)
+        engine.setProperty("rate", 130)
         engine.say(text)
-        if wait:
-            engine.runAndWait()
-        return f"🎤 Spoke: '{short_text}'"
-    except ImportError:
-        pass
-    except Exception as e:
+        engine.runAndWait()
+        return
+    except Exception:
         pass
 
-    # Last resort: just print it (no actual audio)
+    # Last resort: print so it's visible even without audio
     print(f"\n[SPEAKING] {text}\n", flush=True)
-    return f"📢 Announced: '{short_text}' (audio system unavailable, printed to console instead)"
+
+
+def speak(text: str, wait: bool = True) -> str:
+    """Queue text for speech. Only one line plays at a time — no overlapping.
+
+    All speak() calls go into a single queue processed by one dedicated
+    thread, so the voice never talks over itself.
+    """
+    if not text or not text.strip():
+        return "Nothing to speak."
+    short = text[:100] + "..." if len(text) > 100 else text
+    _speech_queue.put(text.strip())
+    return f"🎤 Queued: '{short}'"
 
 
 # ── Git Integration ────────────────────────────────────────
