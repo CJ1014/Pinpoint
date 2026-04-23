@@ -17,7 +17,7 @@ BANNER = r"""
  |_|   |_|_| |_|_|   \___/|_|_| |_|\__|
 
  Autonomous AI — running until you stop it
- Ctrl+C to stop  |  /next = new project  |  /bug = inject a bug
+ Ctrl+C to stop  |  /mute, /unmute, /toggle = voice control
  /dev = improve yourself  |  sandbox = upgrade 3D viewer
  research = research coding topics  |  type anything = suggest to PinPoint
 """
@@ -398,6 +398,20 @@ def main() -> None:
     while True:
         session += 1
         _sessions_run[0] = session  # keep signal handler count in sync
+
+        # Handle voice control commands (can be used anytime)
+        if order in ("/mute", "/unmute", "/toggle"):
+            from tools import mute_voice, unmute_voice, toggle_voice
+            if order == "/mute":
+                result = mute_voice()
+            elif order == "/unmute":
+                result = unmute_voice()
+            else:  # /toggle
+                result = toggle_voice()
+            print(f"\n{result}\n")
+            order = get_user_order()
+            continue
+
         other_goals = get_other_goals()
         print(f"\n{'='*60}")
         print(f"  Starting session #{session}")
