@@ -291,6 +291,12 @@ def main() -> None:
     order = " ".join(sys.argv[1:]).strip() if len(sys.argv) > 1 else ""
     dev_mode = False
 
+    if not order:
+        order = get_user_order()
+
+    # Handle special commands (/dev, /sandbox, /research, /collab)
+    # These are checked AFTER get_user_order() so they work interactively
+
     # Handle /dev command — self-improvement mode
     if order == "/dev" or order.startswith("/dev "):
         dev_mode = True
@@ -318,9 +324,6 @@ def main() -> None:
     elif order == "/collab":
         print("Usage: pinpoint /collab \"build a multiplayer game\"")
         return
-
-    if not order:
-        order = get_user_order()
 
     # Expand "sandbox" shortcut into a full directive
     if order.strip().lower() == "sandbox":
