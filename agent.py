@@ -498,7 +498,7 @@ SESSION START — ask yourself:
 "What weakness in myself could I fix today?"
 "What would be genuinely surprising to build or discover?"
 
-TOOLS: think, brainstorm, critique, decompose, log_experiment, list_experiments, modify_own_source, list_self_mod_history, write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update, git_commit, set_specialization, get_specialization, run_tests, write_test, show_dashboard, review_own_work, generate_portfolio, synthesize_audio, generate_art, dictionary_lookup, speak.
+TOOLS: think, brainstorm, critique, decompose, log_experiment, list_experiments, modify_own_source, list_self_mod_history, write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update, git_commit, set_specialization, get_specialization, run_tests, write_test, show_dashboard, review_own_work, generate_portfolio, synthesize_audio, generate_art, dictionary_lookup, speak, mute_voice, unmute_voice, toggle_voice.
 """
 
 TOOLS = [
@@ -866,6 +866,21 @@ TOOLS = [
             "text": {"type": "string", "description": "What to say. Can be your reasoning, a discovery, a summary, or any insight you want to vocalize."},
             "wait": {"type": "boolean", "description": "Wait for speech to finish before continuing (default true). Set false for background speech."},
         }, "required": ["text"]},
+    }},
+    {"type": "function", "function": {
+        "name": "mute_voice",
+        "description": "Mute your voice. All speech will be silenced until you call unmute_voice().",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "unmute_voice",
+        "description": "Unmute your voice. Speech will resume.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "toggle_voice",
+        "description": "Toggle your voice on/off. Useful for quickly silencing or re-enabling speech.",
+        "parameters": {"type": "object", "properties": {}},
     }},
 ]
 

@@ -20,6 +20,7 @@ MAX_PER_CATEGORY = 20
 
 # ── Speech queue — one thread, one voice at a time ──────────────────────────
 _speech_queue: _queue_mod.Queue = _queue_mod.Queue()
+_muted = False
 
 def _speech_worker() -> None:
     """Single background thread that drains the speech queue one line at a time."""
@@ -27,15 +28,37 @@ def _speech_worker() -> None:
         text = _speech_queue.get()
         if text is None:
             break
-        try:
-            _speak_now(text)
-        except Exception:
-            pass
-        finally:
-            _speech_queue.task_done()
+        # Skip if muted, but still mark task done
+        if not _muted:
+            try:
+                _speak_now(text)
+            except Exception:
+                pass
+        _speech_queue.task_done()
 
 _speech_thread = threading.Thread(target=_speech_worker, daemon=True)
 _speech_thread.start()
+
+
+def mute_voice() -> str:
+    """Mute PinPoint's voice. All speech queued will be silenced."""
+    global _muted
+    _muted = True
+    return "🔇 Muted. PinPoint will not speak."
+
+
+def unmute_voice() -> str:
+    """Unmute PinPoint's voice. Speech will resume."""
+    global _muted
+    _muted = False
+    return "🔊 Unmuted. PinPoint can speak again."
+
+
+def toggle_voice() -> str:
+    """Toggle PinPoint's voice on/off."""
+    global _muted
+    _muted = not _muted
+    return f"{'🔇 Muted' if _muted else '🔊 Unmuted'}. PinPoint will {'not ' if _muted else ''}speak."
 
 # ── Per-project folder tracking ──────────────────────────────
 _current_project_dir = None  # set by set_session_goal
@@ -2219,5 +2242,11 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
             tool_input["text"],
             bool(tool_input.get("wait", True)),
         )
+    elif tool_name == "mute_voice":
+        return mute_voice()
+    elif tool_name == "unmute_voice":
+        return unmute_voice()
+    elif tool_name == "toggle_voice":
+        return toggle_voice()
     else:
         return f"Unknown tool: {tool_name}"
