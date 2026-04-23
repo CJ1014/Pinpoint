@@ -1125,7 +1125,18 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
 
         # Handle interrupt — inject the message and re-prompt immediately
         if interrupted:
-            if interrupt_msg.lower() == "/next":
+            if interrupt_msg.lower() in ("/mute", "/unmute", "/toggle"):
+                from tools import mute_voice, unmute_voice, toggle_voice
+                if interrupt_msg.lower() == "/mute":
+                    result = mute_voice()
+                elif interrupt_msg.lower() == "/unmute":
+                    result = unmute_voice()
+                else:
+                    result = toggle_voice()
+                print(f"\n{result}\n")
+                logger.info("[VOICE] %s", result)
+                continue  # Resume the session, don't inject anything
+            elif interrupt_msg.lower() == "/next":
                 print(f"\n[SKIP] Forcing move to new project.\n")
                 logger.info("[INTERRUPT] /next — forcing new project")
                 # Clear the ongoing project so next session starts fresh
