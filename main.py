@@ -18,8 +18,8 @@ BANNER = r"""
 
  Autonomous AI — running until you stop it
  Ctrl+C to stop  |  /next = new project  |  /bug = inject a bug
- sandbox = upgrade 3D viewer  |  research = research coding topics
- type anything = suggest to PinPoint
+ /dev = improve yourself  |  sandbox = upgrade 3D viewer
+ research = research coding topics  |  type anything = suggest to PinPoint
 """
 
 LOCK_DIR = os.path.join(os.path.dirname(__file__), "output")
