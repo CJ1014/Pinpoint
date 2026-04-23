@@ -871,8 +871,14 @@ TOOLS = [
 
 
 def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queue: Optional[queue.Queue] = None,
-        other_goals: list = None, write_lock=None) -> str:
+        other_goals: list = None, write_lock=None, dev_mode: bool = False) -> str:
     client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=300.0)
+
+    # Filter tools based on mode: dev_mode allows self-modification, normal mode restricts it
+    active_tools = TOOLS
+    if not dev_mode:
+        # In normal mode, remove modify_own_source to prevent accidental self-corruption
+        active_tools = [t for t in TOOLS if t.get("function", {}).get("name") != "modify_own_source"]
 
     if logger is None:
         logger = logging.getLogger("agent")
@@ -1046,7 +1052,7 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 stream = client.chat.completions.create(
                     model=MODEL,
                     messages=messages,
-                    tools=TOOLS,
+                    tools=active_tools,
                     tool_choice="auto",
                     temperature=0.8,
                     stream=True,

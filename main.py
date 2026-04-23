@@ -289,9 +289,29 @@ def main() -> None:
 
     # Command-line order overrides interactive prompt
     order = " ".join(sys.argv[1:]).strip() if len(sys.argv) > 1 else ""
+    dev_mode = False
+
+    # Handle /dev command — self-improvement mode
+    if order == "/dev" or order.startswith("/dev "):
+        dev_mode = True
+        dev_goal = order[4:].strip() if len(order) > 4 else ""
+        print("  [DEVELOPER MODE] PinPoint can now modify its own source code.\n")
+        order = (
+            f"DEVELOPER MODE: You have permission to modify your own source code (agent.py, tools.py, main.py, viewer.html). "
+            f"This is your chance to improve yourself. "
+            f"{'Goal: ' + dev_goal if dev_goal else 'What aspects of yourself do you want to improve?'}\n\n"
+            f"Process:\n"
+            f"1. read_own_source() to understand the current code\n"
+            f"2. think() about what could be better — bugs, inefficiencies, missing features, unclear logic\n"
+            f"3. modify_own_source() to make targeted improvements\n"
+            f"4. test the changes — run_python(), run_shell(), or just reason through them\n"
+            f"5. git_commit() with a clear message about what you improved\n\n"
+            f"Be thoughtful. Small, targeted changes are better than rewrites. "
+            f"Test before committing. set_session_goal first."
+        )
 
     # Handle /collab command
-    if order.startswith("/collab "):
+    elif order.startswith("/collab "):
         collab_goal = order[len("/collab "):].strip()
         setup_collab(collab_goal)
         order = f"COLLABORATION MODE: Check collab_status for your assigned role. Build your part of: {collab_goal}"
@@ -393,6 +413,7 @@ def main() -> None:
                 interrupt_queue=interrupt_queue,
                 other_goals=other_goals,
                 write_lock=write_lock,
+                dev_mode=dev_mode,
             )
         except Exception as e:
             print(f"\n[ERROR in session #{session}]: {e}")
