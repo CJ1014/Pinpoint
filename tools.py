@@ -21,14 +21,15 @@ MAX_PER_CATEGORY = 20
 # ── Speech queue — one thread, one voice at a time ──────────────────────────
 _speech_queue: _queue_mod.Queue = _queue_mod.Queue()
 _muted = False
+_playback_proc = None          # currently-running audio subprocess
+_playback_lock = threading.Lock()
+
 
 def _speech_worker() -> None:
-    """Single background thread that drains the speech queue one line at a time."""
     while True:
         text = _speech_queue.get()
         if text is None:
             break
-        # Skip if muted, but still mark task done
         if not _muted:
             try:
                 _speak_now(text)
@@ -40,25 +41,53 @@ _speech_thread = threading.Thread(target=_speech_worker, daemon=True)
 _speech_thread.start()
 
 
+def _kill_playback() -> None:
+    """Terminate the currently-playing audio process immediately."""
+    global _playback_proc
+    with _playback_lock:
+        proc = _playback_proc
+        _playback_proc = None
+    if proc is not None:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+
+def _drain_queue() -> None:
+    """Empty every pending item from the speech queue."""
+    while True:
+        try:
+            _speech_queue.get_nowait()
+            _speech_queue.task_done()
+        except _queue_mod.Empty:
+            break
+
+
 def mute_voice() -> str:
-    """Mute PinPoint's voice. All speech queued will be silenced."""
+    """Mute PinPoint's voice instantly — kills current audio and clears the queue."""
     global _muted
     _muted = True
-    return "🔇 Muted. PinPoint will not speak."
+    _kill_playback()
+    _drain_queue()
+    return "Voice muted."
 
 
 def unmute_voice() -> str:
     """Unmute PinPoint's voice. Speech will resume."""
     global _muted
     _muted = False
-    return "🔊 Unmuted. PinPoint can speak again."
+    return "Voice unmuted."
 
 
 def toggle_voice() -> str:
     """Toggle PinPoint's voice on/off."""
     global _muted
     _muted = not _muted
-    return f"{'🔇 Muted' if _muted else '🔊 Unmuted'}. PinPoint will {'not ' if _muted else ''}speak."
+    if _muted:
+        _kill_playback()
+        _drain_queue()
+    return "Voice muted." if _muted else "Voice unmuted."
 
 # ── Per-project folder tracking ──────────────────────────────
 _current_project_dir = None  # set by set_session_goal
@@ -1905,7 +1934,22 @@ def dictionary_lookup(word: str) -> str:
 # ── Text-to-Speech / Voice ─────────────────────────────────
 
 def _play_audio(path: str) -> None:
-    """Play an audio file using best available method."""
+    """Play an audio file. Tracks the subprocess so mute can kill it instantly."""
+    global _playback_proc
+
+    def _run(cmd, **kwargs):
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
+        with _playback_lock:
+            _playback_proc = proc
+        try:
+            proc.wait(timeout=120)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+        finally:
+            with _playback_lock:
+                if _playback_proc is proc:
+                    _playback_proc = None
+
     if platform.system() == "Windows":
         try:
             safe = path.replace("\\", "\\\\")
@@ -1921,32 +1965,25 @@ def _play_audio(path: str) -> None:
                 "Start-Sleep -Milliseconds $ms; "
                 "$mp.Close()"
             )
-            subprocess.run(
-                ["powershell", "-WindowStyle", "Hidden", "-Command", ps],
-                capture_output=True, timeout=120
-            )
-            return
-        except Exception:
-            pass
-        # Fallback: playsound
-        try:
-            from playsound import playsound
-            playsound(path, block=True)
+            _run(["powershell", "-WindowStyle", "Hidden", "-Command", ps])
             return
         except Exception:
             pass
     elif platform.system() == "Darwin":
-        subprocess.run(["afplay", path], capture_output=True, timeout=120)
-        return
+        try:
+            _run(["afplay", path])
+            return
+        except Exception:
+            pass
     else:
         for cmd in [
             ["mpg123", "-q", path],
             ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path],
         ]:
             try:
-                subprocess.run(cmd, capture_output=True, timeout=120, check=True)
+                _run(cmd)
                 return
-            except (FileNotFoundError, subprocess.CalledProcessError):
+            except FileNotFoundError:
                 continue
 
 
