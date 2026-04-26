@@ -1904,17 +1904,111 @@ def dictionary_lookup(word: str) -> str:
 
 # ── Text-to-Speech / Voice ─────────────────────────────────
 
+def _play_audio(path: str) -> None:
+    """Play an audio file using best available method."""
+    if platform.system() == "Windows":
+        try:
+            safe = path.replace("\\", "\\\\")
+            ps = (
+                "Add-Type -AssemblyName PresentationCore; "
+                "$mp = New-Object System.Windows.Media.MediaPlayer; "
+                f"$mp.Open([Uri]'{safe}'); "
+                "$mp.Play(); "
+                "Start-Sleep -Milliseconds 800; "
+                "while ($mp.NaturalDuration -eq [System.Windows.Duration]::Automatic) "
+                "{ Start-Sleep -Milliseconds 100 }; "
+                "$ms = [int]($mp.NaturalDuration.TimeSpan.TotalMilliseconds) + 300; "
+                "Start-Sleep -Milliseconds $ms; "
+                "$mp.Close()"
+            )
+            subprocess.run(
+                ["powershell", "-WindowStyle", "Hidden", "-Command", ps],
+                capture_output=True, timeout=120
+            )
+            return
+        except Exception:
+            pass
+        # Fallback: playsound
+        try:
+            from playsound import playsound
+            playsound(path, block=True)
+            return
+        except Exception:
+            pass
+    elif platform.system() == "Darwin":
+        subprocess.run(["afplay", path], capture_output=True, timeout=120)
+        return
+    else:
+        for cmd in [
+            ["mpg123", "-q", path],
+            ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path],
+        ]:
+            try:
+                subprocess.run(cmd, capture_output=True, timeout=120, check=True)
+                return
+            except (FileNotFoundError, subprocess.CalledProcessError):
+                continue
+
+
+def _try_edge_tts(text: str) -> bool:
+    """Speak using Microsoft Edge neural TTS. Returns True on success."""
+    try:
+        import edge_tts
+    except ImportError:
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "edge-tts", "-q"],
+                capture_output=True, timeout=60, check=True
+            )
+            import edge_tts
+        except Exception:
+            return False
+
+    import asyncio
+    import tempfile
+    import os
+
+    async def _do_speak():
+        communicate = edge_tts.Communicate(
+            text,
+            voice="en-US-JennyNeural",
+            rate="-8%",
+            pitch="-8Hz",
+        )
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+            tmp = f.name
+        try:
+            await communicate.save(tmp)
+            _play_audio(tmp)
+        finally:
+            try:
+                os.unlink(tmp)
+            except Exception:
+                pass
+
+    try:
+        asyncio.run(_do_speak())
+        return True
+    except Exception:
+        return False
+
+
 def _speak_now(text: str) -> None:
     """Actually perform TTS — called only from the speech worker thread."""
     text = text.strip()
     if not text:
         return
 
+    # Try high-quality neural voice first
+    if _try_edge_tts(text):
+        return
+
+    # Native platform fallbacks
     if platform.system() == "Linux":
         for cmd in ["espeak-ng", "espeak"]:
             try:
                 r = subprocess.run(
-                    [cmd, "-s", "130", "-a", "200"],
+                    [cmd, "-s", "125", "-p", "40", "-a", "180", "-v", "en+f3"],
                     input=text, capture_output=True, text=True, timeout=30,
                 )
                 if r.returncode == 0:
@@ -1926,7 +2020,7 @@ def _speak_now(text: str) -> None:
 
     if platform.system() == "Darwin":
         try:
-            subprocess.run(["say", text], capture_output=True, timeout=30)
+            subprocess.run(["say", "-v", "Samantha", "-r", "155", text], capture_output=True, timeout=30)
             return
         except Exception:
             pass
@@ -1934,8 +2028,14 @@ def _speak_now(text: str) -> None:
     if platform.system() == "Windows":
         try:
             safe = text.replace("'", "''")
-            ps = f"Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{safe}')"
-            subprocess.run(["powershell", "-Command", ps], capture_output=True, timeout=30)
+            ps = (
+                "Add-Type -AssemblyName System.Speech; "
+                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                "$s.Rate = -2; "
+                f"$s.Speak('{safe}')"
+            )
+            subprocess.run(["powershell", "-WindowStyle", "Hidden", "-Command", ps],
+                           capture_output=True, timeout=30)
             return
         except Exception:
             pass
@@ -1943,14 +2043,12 @@ def _speak_now(text: str) -> None:
     try:
         import pyttsx3
         engine = pyttsx3.init()
-        engine.setProperty("rate", 130)
+        engine.setProperty("rate", 120)
         engine.say(text)
         engine.runAndWait()
-        return
     except Exception:
         pass
 
-    # Last resort: print so it's visible even without audio
     print(f"\n[SPEAKING] {text}\n", flush=True)
 
 
