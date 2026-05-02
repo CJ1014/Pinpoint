@@ -1,0 +1,14 @@
+[2026-04-15T06:33:33.899007+00:00] EXPERIMENT: viewer_enhanced_with_trails_sound_glow
+Hypothesis: Adding particle trails, click interaction, sound synthesis, and a glow sphere around the mind orb will make the 3D sandbox more visually engaging and responsive to events.
+Method:     Modified viewer.html: added a glow sphere, per-node trail lines, a click event to highlight nodes, and Web Audio oscillators for event tones.
+Result:     All events now produce a glowing pulse, trail, and a short sine-wave note; clicking nodes highlights them temporarily.
+Conclusion: The scene feels more alive and communicates events richer; user interaction adds a simple tactile feedback.
+Surprise:   3/5
+────────────────────────────────────────────────────────────
+[2026-04-20T10:40:24.601541+00:00] EXPERIMENT: Fetch WASI spec
+Hypothesis: Fetching via GitHub API directory listing then raw URL should give spec content
+Method:     Used fetch_url on API endpoint to get Overview.md then raw URL
+Result:     Successfully retrieved spec overview, confirming method works
+Conclusion: The spec exists under specifications/wasi-0.2.11/Overview.md. Use this file for learning
+Surprise:   2/5
+────────────────────────────────────────────────────────────

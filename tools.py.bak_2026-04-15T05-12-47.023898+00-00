@@ -1,0 +1,27 @@
+# Added helper to summarize world_state.json
+
+def summarize_world_state() -> str:
+    """Return a short, human‑readable summary of the current world_state.json.
+    The file is expected in the project root (i.e. the directory returned by get_project_dir)."""
+    import json
+    from pathlib import Path
+    try:
+        world_path = Path(get_project_dir()) / "world_state.json"
+        if not world_path.is_file():
+            return "world_state.json not found."
+        data = json.loads(world_path.read_text(encoding="utf-8"))
+        s = (
+            f"Session {data.get('session', '?')} – Goal: {data.get('goal', 'unknown')} "
+            f"– Status: {data.get('status', 'unknown')} – Iteration: {data.get('iteration', '?')} "
+            f"– Events: {len(data.get('events', []))}"
+        )
+        return s
+    except Exception as e:
+        return f"Error summarizing world_state.json: {e}"
+
+# NOTE: the TOOLS list is defined later in this file.  The registration for
+# summarize_world_state will be added in a patch below.
+
+# ---
+# Append the new tool to the TOOLS list after its definition
+# ---

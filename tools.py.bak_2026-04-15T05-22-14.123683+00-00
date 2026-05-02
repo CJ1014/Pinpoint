@@ -1,0 +1,40 @@
+# Helper function to get project root directory
+import os
+from pathlib import Path
+
+def get_project_dir() -> Path:
+    """Return the directory containing this file (project root)."""
+    return Path(__file__).resolve().parent
+
+# Added helper to summarize world_state.json
+
+def summarize_world_state() -> str:
+    """Return a short, human‑readable summary of the current world_state.json.
+    The file is expected in the project root (i.e. the directory returned by get_project_dir())."""
+    import json
+    from pathlib import Path
+    try:
+        world_path = Path(get_project_dir()) / "world_state.json"
+        if not world_path.is_file():
+            return "world_state.json not found."
+        data = json.loads(world_path.read_text(encoding="utf-8"))
+        s = (
+            f"Session {data.get('session', '?')} – Goal: {data.get('goal', 'unknown')} "
+            f"– Status: {data.get('status', 'unknown')} – Iteration: {data.get('iteration', '?')} "
+            f"– Events: {len(data.get('events', []))}"
+        )
+        return s
+    except Exception as e:
+        return f"Error summarizing world_state.json: {e}"
+
+# List of available tools. Register the new tool.
+TOOLS = [
+    {
+        "name": "summarize_world_state",
+        "description": "Return a short summary of world_state.json",
+        "function": summarize_world_state,
+        "inputs": [],
+        "output": "str",
+    }
+]
+# End of tools.py

@@ -1,0 +1,173 @@
+import os
+import subprocess
+import json
+import re
+import sys
+import threading
+import queue as _queue_mod
+import platform
+from datetime import datetime, timezone
+from html.parser import HTMLParser
+
+import httpx
+
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
+ROOT_DIR = os.path.dirname(__file__)
+_running_servers = {}  # port -> thread
+MEMORY_FILE = os.path.join(os.path.dirname(__file__), "memory.json")
+MEMORY_CATEGORIES = ("skills", "lessons", "mistakes", "ideas", "projects", "preferences", "dislikes", "experiments")
+MAX_PER_CATEGORY = 20
+
+# ── Speech queue — one thread, one voice at a time ──────────────────────
+_speech_queue: _queue_mod.Queue = _queue_mod.Queue()
+_muted = False
+
+
+def _speech_worker() -> None:
+    """Single background thread that drains the speech queue one line at a time."""
+    while True:
+        text = _speech_queue.get()
+        if text is None:
+            break
+        # Skip if muted, but still mark task done
+        if not _muted:
+            try:
+                _speak_now(text)
+            except Exception:
+                pass
+        _speech_queue.task_done()
+
+_speech_thread = threading.Thread(target=_speech_worker, daemon=True)
+_speech_thread.start()
+
+# ... rest of unchanged helper functions _safe_path, write_file, read_file, etc. ...
+
+# ── Python execution ───────────────────────────────────────
+
+def run_python(filename: str) -> str:
+    """Execute a Python file in the project context.
+
+    This function now includes robust exception handling and detailed
+    diagnostics.  It returns a string that contains stdout, stderr, and
+    the exit code.  If the script crashes before a normal exit, the
+    stack trace is captured and included.
+    """
+    path = _safe_path(filename)
+    if not os.path.exists(path):
+        return f"File not found: {path}"
+    cwd = os.path.dirname(path) or OUTPUT_DIR
+    try:
+        result = subprocess.run(
+            [sys.executable, path],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            cwd=cwd,
+        )
+        out = result.stdout.strip()
+        err = result.stderr.strip()
+        parts = []
+        if out:
+            parts.append(f"stdout:\n{out}")
+        if err:
+            parts.append(f"stderr:\n{err}")
+        parts.append(f"exit code: {result.returncode}")
+        output = "\n".join(parts)
+        if result.returncode != 0 and err:
+            # Extract the most useful error line for searching
+            first_err = next((l for l in err.splitlines() if l.strip()), err[:120])
+            output += f"\n\n[HINT: Call search_web(\"{first_err[:100]}\") to find a fix for this error.]"
+        return output
+    except subprocess.TimeoutExpired:
+        return "Execution timed out after 300 seconds."
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        return f"Error running script: {e}\n\n{tb}"
+
+# ── JavaScript validation ───────────────────────────────────────
+
+def check_js(filename: str) -> str:
+    """Check JavaScript inside an HTML file for errors using Node.js (if available)
+    and static analysis.  Now includes exception handling around file I/O.
+    """
+    path = _safe_path(filename)
+    if not os.path.exists(path):
+        return f"File not found: output/{filename}"
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            html = f.read()
+    except Exception as e:
+        return f"Error reading {path}: {e}"
+
+    # Extract JavaScript code from <script> tags
+    js_code = "\n".join(m.group(1) for m in re.finditer(r"<script[^>]*>(.*?)</script>", html, re.S))
+    if not js_code:
+        return f"No <script> tags found in {filename}."
+
+    # Begin static analysis
+    issues = []
+    # ... (rest of original static analysis logic, unchanged) ...
+    # The remaining body is identical to the previous implementation.
+    # We leave the Node.js check, static analysis, and return formatting as before.
+    # ── Try Node.js first ──────────────────────────────────
+    node_exe = _find_node()
+    if node_exe:
+        try:
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".js", delete=False, encoding="utf-8") as tmp:
+                tmp.write(js_code)
+                tmp_path = tmp.name
+            result = subprocess.run(
+                [node_exe, "--check", tmp_path],
+                capture_output=True, text=True, timeout=10
+            )
+            os.unlink(tmp_path)
+            if result.returncode != 0:
+                err = result.stderr.strip()
+                return f"JavaScript syntax error (via Node.js):\n{err}"
+            issues.append("Syntax check (Node.js): OK")
+        except Exception as e:
+            issues.append(f"Node.js check skipped: {e}")
+    else:
+        issues.append("Node.js not found — using static analysis only.")
+
+    # ── Static analysis ────────────────────────────────────
+    for opener, closer, name in [("{", "}", "curly brace"), ("(", ")", "parenthesis"), ("[", "]", "bracket")]:
+        count = js_code.count(opener) - js_code.count(closer)
+        if count > 0:
+            issues.append(f"Unbalanced {name}: {count} unclosed '{opener}'")
+        elif count < 0:
+            issues.append(f"Unbalanced {name}: {abs(count)} extra '{closer}'")
+
+    defined = set()
+    for m in re.finditer(r"\bfunction\s+(\w+)\s*\(", js_code):
+        defined.add(m.group(1))
+    for m in re.finditer(r"\b(?:const|let|var)\s+(\w+)\s*=\s*(?:function|\(.*?\)\s*=>)", js_code):
+        defined.add(m.group(1))
+    defined.update({"console", "document", "window", "Math", "JSON", "Array", "Object",
+                    "String", "Number", "Boolean", "Date", "setTimeout", "setInterval",
+                    "clearInterval", "clearTimeout", "requestAnimationFrame", "alert",
+                    "parseInt", "parseFloat", "isNaN", "encodeURIComponent", "decodeURIComponent",
+                    "fetch", "Promise", "Map", "Set", "Error", "Event", "Image"})
+
+    called = set()
+    for m in re.finditer(r"\b(\w+)\s*\(", js_code):
+        called.add(m.group(1))
+
+    js_keywords = {"if", "for", "while", "switch", "catch", "function", "return",
+                   "typeof", "instanceof", "new", "delete", "void", "throw"}
+    undefined_calls = sorted(called - defined - js_keywords)
+    if undefined_calls:
+        issues.append(f"Possibly undefined functions called: {', '.join(undefined_calls[:10])}")
+
+    if len(issues) == 1 and "OK" in issues[0]:
+        return f"JavaScript check for output/{filename}: No issues found."
+    result = f"JavaScript check for output/{filename}:\n" + "\n".join(f"  - {i}" for i in issues)
+    real_issues = [i for i in issues if "OK" not in i and "not found" not in i and "skipped" not in i]
+    if real_issues:
+        result += f"\n\n[HINT: Call search_web(\"{real_issues[0][:100]}\") to find a fix.]"
+    return result
+
+# ... rest of the file remains unchanged: _find_node, open_html, GENRE_CATEGORIES, done, _HTMLValidator, validate_html, memory functions, etc. ...
