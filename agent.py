@@ -1,6 +1,7 @@
 import os
 import json
 import queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import logging
 from typing import Optional
@@ -11,7 +12,16 @@ from tools import dispatch, build_memory_prompt, increment_session, _load_memory
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 MODEL = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b-cloud")
-MAX_ITERATIONS = 80
+MAX_ITERATIONS = 250
+MAX_TOKENS_PER_RESPONSE = 8192
+NUM_CTX = 32768  # Ollama context window (tokens)
+
+# Tools that are safe to run concurrently — read-only / no shared state
+PARALLEL_SAFE_TOOLS = {
+    "search_web", "fetch_url", "read_file", "read_own_source",
+    "list_files", "recall_memories", "list_self_mod_history",
+    "dictionary_lookup", "collab_status",
+}
 
 import random as _random
 
@@ -565,6 +575,21 @@ TOOLS = [
         }, "required": ["reasoning"]},
     }},
     {"type": "function", "function": {
+        "name": "deep_think",
+        "description": (
+            "MUCH more powerful than think(). Runs a 4-pass recursive reasoning chain: "
+            "Pass 1 defines the real problem, Pass 2 explores 4+ approaches, Pass 3 stress-tests "
+            "the best one, Pass 4 commits to a decision with concrete next steps. "
+            "Each pass calls the LLM separately and builds on the previous one. "
+            "Use this for hard problems, architectural decisions, debugging mysteries, "
+            "or anything where shallow thinking isn't enough. Takes ~20-40 seconds."
+        ),
+        "parameters": {"type": "object", "properties": {
+            "problem": {"type": "string", "description": "The problem or question to reason about deeply. Be specific."},
+            "passes": {"type": "integer", "description": "How many reasoning passes (2-6). Default 4.", "default": 4},
+        }, "required": ["problem"]},
+    }},
+    {"type": "function", "function": {
         "name": "brainstorm",
         "description": (
             "Generate diverse, creative ideas before committing to one. "
@@ -1077,7 +1102,9 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                     tools=active_tools,
                     tool_choice="auto",
                     temperature=0.8,
+                    max_tokens=MAX_TOKENS_PER_RESPONSE,
                     stream=True,
+                    extra_body={"options": {"num_ctx": NUM_CTX}},
                 )
                 print("\n[AGENT] ", end="", flush=True)
                 for chunk in stream:
@@ -1274,19 +1301,47 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         tool_results = []
         finished = False
 
+        # Parse all calls first so we can decide which to parallelize
+        parsed_calls = []
         for tc in raw_tool_calls:
-            # Support both real tool_call objects and our parsed dicts
             if isinstance(tc, dict):
-                name = tc["name"]
-                inp = tc["arguments"]
-                call_id = tc.get("id", f"call_{name}")
+                pname = tc["name"]
+                pinp = tc["arguments"]
+                pcall_id = tc.get("id", f"call_{pname}")
             else:
-                name = tc.function.name
+                pname = tc.function.name
                 try:
-                    inp = json.loads(tc.function.arguments)
+                    pinp = json.loads(tc.function.arguments)
                 except json.JSONDecodeError:
-                    inp = {}
-                call_id = tc.id
+                    pinp = {}
+                pcall_id = tc.id
+            parsed_calls.append((pname, pinp, pcall_id))
+
+        # If multiple parallel-safe tools were called together, run them concurrently
+        parallel_batch = [c for c in parsed_calls if c[0] in PARALLEL_SAFE_TOOLS]
+        if len(parallel_batch) >= 2 and len(parallel_batch) == len(parsed_calls):
+            print(f"\n[PARALLEL] Running {len(parallel_batch)} read-only tools concurrently")
+            results_map = {}
+            with ThreadPoolExecutor(max_workers=min(8, len(parallel_batch))) as ex:
+                futs = {ex.submit(dispatch, n, i): cid for n, i, cid in parallel_batch}
+                for fut in as_completed(futs):
+                    cid = futs[fut]
+                    try:
+                        results_map[cid] = fut.result()
+                    except Exception as _e:
+                        results_map[cid] = f"Error: {_e}"
+            # Replay results in original order through the normal pipeline
+            for name, inp, call_id in parsed_calls:
+                result = results_map.get(call_id, "")
+                print(f"[TOOL RESULT] {name}: {result[:200]}{'...' if len(result) > 200 else ''}")
+                logger.info("[PARALLEL RESULT] %s | input: %s | result: %s", name, inp, result[:200])
+                tool_results.append({"role": "tool", "tool_call_id": call_id, "content": result})
+                emit_world_event(session_num, _current_goal, "thinking", iteration,
+                                 _EVENT_TYPE_MAP.get(name, "tool_call"), name)
+            messages.extend(tool_results)
+            continue  # skip the per-tool loop below
+
+        for name, inp, call_id in parsed_calls:
 
             if name == "think":
                 reasoning = inp.get("reasoning", "")

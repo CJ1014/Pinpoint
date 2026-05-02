@@ -1223,6 +1223,78 @@ def think(reasoning: str) -> str:
     return f"Thought logged:\n{reasoning}"
 
 
+def deep_think(problem: str, passes: int = 4) -> str:
+    """Multi-pass recursive reasoning chain — much deeper analysis than think().
+
+    Calls the LLM `passes` times in sequence, each pass building on the previous
+    one. Pass 1: identify the real problem. Pass 2: explore options.
+    Pass 3: stress-test the best option. Pass 4: synthesize a decision.
+    Use this when a problem deserves more thought than a single think() call.
+    """
+    try:
+        from openai import OpenAI
+    except Exception:
+        return "deep_think requires the openai package."
+
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+    model = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b-cloud")
+    client = OpenAI(base_url=base_url, api_key="ollama", timeout=120.0)
+
+    passes = max(2, min(int(passes), 6))
+    prompts = [
+        "PASS 1 — DEFINE: Restate the real problem precisely. What's actually being asked? "
+        "What are the hidden constraints? What would success look like? Be specific.",
+        "PASS 2 — EXPLORE: Generate at least 4 distinct approaches. For each, state the core "
+        "idea, its strongest selling point, and its biggest weakness.",
+        "PASS 3 — STRESS-TEST: Take the most promising approach from Pass 2. Imagine three "
+        "specific ways it could fail. For each, decide: fix it, or reject the approach?",
+        "PASS 4 — DECIDE: State the final recommendation in one paragraph. Then list the "
+        "concrete next steps in order. Be decisive.",
+        "PASS 5 — REFINE: One more pass. What did the previous passes miss? What's the "
+        "subtler issue or opportunity that wasn't addressed? Adjust the recommendation.",
+        "PASS 6 — COMMIT: Final answer, distilled. One sentence summary, then 3-5 bullet steps.",
+    ]
+
+    transcript = [f"PROBLEM:\n{problem}\n"]
+    accumulated = problem
+    for i in range(passes):
+        instruction = prompts[i]
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": (
+                        "You are an extraordinarily careful reasoner. "
+                        "Build directly on the prior reasoning. Do not repeat it. "
+                        "Be concrete. Use bullet points where helpful. "
+                        "No filler, no preamble."
+                    )},
+                    {"role": "user", "content": (
+                        f"PROBLEM:\n{problem}\n\n"
+                        f"PRIOR REASONING:\n{accumulated}\n\n"
+                        f"INSTRUCTION:\n{instruction}"
+                    )},
+                ],
+                temperature=0.6,
+                max_tokens=1200,
+            )
+            chunk = resp.choices[0].message.content.strip()
+        except Exception as e:
+            chunk = f"[Pass {i+1} failed: {e}]"
+        transcript.append(f"\n━━━ PASS {i+1} ━━━\n{chunk}\n")
+        accumulated = "\n\n".join(transcript[-3:])  # keep last 3 passes as context
+
+    full = "".join(transcript)
+    timestamp = _now()
+    try:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        with open(_THINK_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] DEEP_THINK\n{full}\n{'═'*60}\n")
+    except Exception:
+        pass
+    return full
+
+
 def brainstorm(topic: str, num_ideas: int = 5) -> str:
     """Generate diverse, creative ideas on a topic and rank them by novelty.
 
@@ -2333,6 +2405,8 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return list_self_mod_history()
     elif tool_name == "think":
         return think(tool_input["reasoning"])
+    elif tool_name == "deep_think":
+        return deep_think(tool_input["problem"], int(tool_input.get("passes", 4)))
     elif tool_name == "brainstorm":
         return brainstorm(tool_input["topic"], int(tool_input.get("num_ideas", 5)))
     elif tool_name == "critique":
