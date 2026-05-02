@@ -11,7 +11,15 @@ from openai import OpenAI
 from tools import dispatch, build_memory_prompt, increment_session, _load_memory, _save_memory_file, reset_project_dir, emit_world_event
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-MODEL = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b-cloud")
+
+# To swap models, set the OLLAMA_MODEL env var or change this default.
+# Available Ollama Cloud models (in order of capability):
+#   gpt-oss:20b-cloud         - 20B params (smallest, fastest)
+#   gpt-oss:120b-cloud        - 120B params (current default, balanced)
+#   qwen3-coder:480b-cloud    - 480B params (best for coding tasks)
+#   deepseek-v3.1:671b-cloud  - 671B params (very strong general reasoning)
+#   kimi-k2:1t-cloud          - 1 trillion params (most capable, slowest)
+MODEL = os.environ.get("OLLAMA_MODEL", "gpt-oss:120b-cloud")
 MAX_ITERATIONS = 200
 
 # Tools that are safe to run concurrently — read-only / no shared state
