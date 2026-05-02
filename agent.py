@@ -12,9 +12,7 @@ from tools import dispatch, build_memory_prompt, increment_session, _load_memory
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 MODEL = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b-cloud")
-MAX_ITERATIONS = 250
-MAX_TOKENS_PER_RESPONSE = 8192
-NUM_CTX = 32768  # Ollama context window (tokens)
+MAX_ITERATIONS = 200
 
 # Tools that are safe to run concurrently — read-only / no shared state
 PARALLEL_SAFE_TOOLS = {
@@ -1102,9 +1100,7 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                     tools=active_tools,
                     tool_choice="auto",
                     temperature=0.8,
-                    max_tokens=MAX_TOKENS_PER_RESPONSE,
                     stream=True,
-                    extra_body={"options": {"num_ctx": NUM_CTX}},
                 )
                 print("\n[AGENT] ", end="", flush=True)
                 for chunk in stream:
