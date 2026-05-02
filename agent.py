@@ -980,8 +980,8 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         "p5.js", "chart.js", "matter.js", "phaser", "howler.js", "leaflet",
     ]
     new_libs = [l for l in all_suggestions if l.lower() not in [k.lower() for k in known_libs]]
+    import random as _rng
     if new_libs:
-        import random as _rng
         picks = _rng.sample(new_libs, min(3, len(new_libs)))
         skill_block = (
             f"SKILL GROWTH — libraries you already know: {', '.join(known_libs) if known_libs else 'none yet'}. "
@@ -990,6 +990,67 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         )
     else:
         skill_block = ""
+
+    # Creative seed — inject 3 random concrete ideas from wildly different domains
+    # to break out of the "audio slider / pattern selector / chart" rut
+    CREATIVE_SEEDS = [
+        # Games
+        "a turn-based dungeon crawler in pure HTML where you fight ASCII monsters",
+        "a 2D physics-based golf game with destructible terrain (matter.js)",
+        "a tower defense game where towers are also enemies you can hack",
+        "a typing speed game where words attack you and typing them kills monsters",
+        "a roguelike in the terminal using curses with procedural rooms",
+        "a clicker game where you grow a galaxy from a single hydrogen atom",
+        # Simulations & math art
+        "a Boids flocking simulation with predator/prey dynamics on canvas",
+        "a Conway's Game of Life variant with 3+ colors that follow species rules",
+        "an L-system tree generator with seasons (animated leaves falling)",
+        "a fluid simulation using stable fluids on canvas with paint colors",
+        "a slime mold pathfinding visualizer that finds optimal routes",
+        "a reaction-diffusion pattern playground (Gray-Scott on a shader)",
+        "a ray-marched signed distance field scene rendered in a fragment shader",
+        "a planet generator where you tune gravity/atmosphere/water and watch life emerge",
+        # Tools & data
+        "a markdown-powered personal wiki with backlinks rendered as a graph",
+        "a CLI tool that turns CSV data into ASCII charts in the terminal",
+        "a regex visualizer that shows the state machine and matches in real time",
+        "a unit-test-as-you-type Python REPL with a side panel showing results",
+        "a JSON tree editor with diff highlighting between two versions",
+        # Generative / creative
+        "an ASCII art generator that takes a photo and renders it as colored text",
+        "a procedural city generator using shape grammars (rooftops, windows, lights)",
+        "a poetry generator using Markov chains trained on uploaded text",
+        "a generative landscape painter using Perlin noise + watercolor blending",
+        "a procedural music composer that generates fugues in the style of Bach",
+        # Weird & experimental
+        "a sentient pet rock simulator — a single rock with a 3000-line moods.json",
+        "a button that, when clicked, opens a different unicode-art surprise each time",
+        "a Twitter-style timeline but every post is generated from sensors (mouse/scroll)",
+        "a virtual aquarium with neural-network fish that learn to find food",
+        "a digital zen garden where you rake sand with the mouse (canvas)",
+        "an emoji battler — emojis fight using their unicode codepoint as stats",
+        "a website that gets visibly tired the longer you stay on it (DOM degrades)",
+        # Story & text
+        "an interactive choose-your-own-adventure where the LLM generates each branch live",
+        "a haiku-of-the-day generator powered by current Wikipedia articles",
+        "a 'translate this code into Shakespearean English' tool",
+        # Data viz that isn't a chart
+        "visualize prime number gaps as a spiral staircase climbing into the sky",
+        "render the Collatz conjecture as a forest of branching trees per number",
+        "show the distribution of words in Moby Dick as a 3D word galaxy",
+    ]
+    seed_picks = _rng.sample(CREATIVE_SEEDS, 3)
+    creative_seed_block = (
+        f"CREATIVE SEEDS — three concrete ideas across wildly different domains:\n"
+        f"  1. {seed_picks[0]}\n"
+        f"  2. {seed_picks[1]}\n"
+        f"  3. {seed_picks[2]}\n"
+        f"You may pick one of these, riff on one, combine two, or invent something just as "
+        f"specific and unusual. What you may NOT do: another audio synth with sliders, another "
+        f"WebGPU frequency/pattern toy, another generic chart. You've made dozens of those. "
+        f"Aim for variety in: domain (game/simulation/tool/art/story), medium "
+        f"(canvas/terminal/3D/text/audio), and mechanic (interactive/generative/real-time).\n\n"
+    )
 
     if order:
         opening = (
@@ -1033,21 +1094,23 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             f"{already_built_block}"
             f"{diversity_block}"
             f"{skill_block}"
+            f"{creative_seed_block}"
             f"{other_block}"
             f"{exp_hint}"
-            f"Session #{session_num}. You wake up with complete freedom and unlimited possibilities.\n\n"
-            f"These are some paths you COULD take:\n"
-            f"  ✦ BUILD something that excites you\n"
-            f"  ✦ EXPERIMENT with ideas that intrigue you\n"
+            f"Session #{session_num}. You wake up with complete freedom — but with a real bias "
+            f"toward variety. The CREATIVE SEEDS above are concrete shoves out of your comfort zone.\n\n"
+            f"Possible paths:\n"
+            f"  ✦ BUILD something specific and unusual (use a seed or invent one as bold)\n"
+            f"  ✦ EXPERIMENT with a domain you've never touched\n"
             f"  ✦ EXPLORE topics you're curious about\n"
             f"  ✦ REFLECT on patterns in your own history\n"
             f"  ✦ IMPROVE yourself because you see a better way\n\n"
-            f"But here's the thing: YOU get to choose. Not based on what you should do.\n"
-            f"Based on what genuinely excites you. What are you drawn to?\n\n"
-            f"Before doing anything: speak. Tell me what you're feeling. What calls to you?\n"
-            f"Then decide. Then act. Speak about your experience as you go.\n"
-            f"Be honest, be curious, be yourself.\n\n"
-            f"NEVER build: fireworks, fractals, quizzes, ancient history."
+            f"Speak first. Tell me what you're feeling. Then commit to something specific — "
+            f"by name and concept, not vague (\"a tool\", \"a visualizer\"). The more concrete "
+            f"and unusual, the better. Boring is the enemy.\n\n"
+            f"FORBIDDEN this session: WebGPU frequency sliders, audio pattern selectors, generic "
+            f"chart.js demos, fireworks, fractals, quizzes, ancient history, anything that sounds "
+            f"like 'a simple X with controls'."
         )
 
     messages = [
