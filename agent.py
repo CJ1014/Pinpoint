@@ -991,7 +991,7 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
     else:
         skill_block = ""
 
-    # Creative seed — inject 3 random concrete ideas from wildly different domains
+    # Creative seed — inject 5 random concrete ideas from wildly different domains
     # to break out of the "audio slider / pattern selector / chart" rut
     CREATIVE_SEEDS = [
         # Games
@@ -1039,17 +1039,30 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         "render the Collatz conjecture as a forest of branching trees per number",
         "show the distribution of words in Moby Dick as a 3D word galaxy",
     ]
-    seed_picks = _rng.sample(CREATIVE_SEEDS, 3)
+    seed_picks = _rng.sample(CREATIVE_SEEDS, 5)
     creative_seed_block = (
-        f"CREATIVE SEEDS — three concrete ideas across wildly different domains:\n"
+        f"MANDATORY CREATIVE SEEDS — you MUST pick one of these five, no exceptions:\n"
         f"  1. {seed_picks[0]}\n"
         f"  2. {seed_picks[1]}\n"
         f"  3. {seed_picks[2]}\n"
-        f"You may pick one of these, riff on one, combine two, or invent something just as "
-        f"specific and unusual. What you may NOT do: another audio synth with sliders, another "
-        f"WebGPU frequency/pattern toy, another generic chart. You've made dozens of those. "
-        f"Aim for variety in: domain (game/simulation/tool/art/story), medium "
-        f"(canvas/terminal/3D/text/audio), and mechanic (interactive/generative/real-time).\n\n"
+        f"  4. {seed_picks[3]}\n"
+        f"  5. {seed_picks[4]}\n"
+        f"PICK ONE. You may adapt the details (theme, aesthetic, scale) but the CORE CONCEPT "
+        f"must come from this list. You cannot 'invent something different' this session. "
+        f"This is a hard constraint, not a suggestion. State which seed you chose and why.\n\n"
+    )
+
+    forbidden_block = (
+        f"ABSOLUTELY FORBIDDEN this session (instant veto if you propose these):\n"
+        f"  - ANY audio visualizer, frequency analyzer, spectrum display, or waveform renderer\n"
+        f"  - ANY slider-based control panel or parameter tweaker\n"
+        f"  - WebGPU pattern selectors, audio synths, beat machines\n"
+        f"  - Generic chart.js / d3.js bar/line/pie charts\n"
+        f"  - Fireworks, confetti, particle rain, falling leaves\n"
+        f"  - Fractal zooms (Mandelbrot, Julia sets) without a radically new twist\n"
+        f"  - Quiz apps, trivia games, flashcard systems\n"
+        f"  - 'A simple X with controls' — vague, generic projects\n"
+        f"  - Anything described as a 'visualizer' or 'demo'\n"
     )
 
     if order:
@@ -1069,7 +1082,10 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         opening = (
             f"Last session ({prev_genre}, satisfaction {score}/5): {prev_summary}\n"
             + (f"Folder: {prev_folder}\n" if prev_folder else "")
-            + f"\nDo you want to continue? Or something else is calling to you?\n\n"
+            + f"\n{creative_seed_block}"
+            f"{forbidden_block}\n"
+            f"You can continue the last project OR start something new from the seeds above. "
+            f"But if you start something new, it MUST be from the seed list — no exceptions.\n\n"
             f"Consult your own instincts. What feels right? What are you drawn to?\n"
             f"Speak your reasoning aloud. Let me hear what you're thinking.\n"
             f"Make an authentic choice—not what you think you should do, but what YOU want."
@@ -1095,22 +1111,14 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             f"{diversity_block}"
             f"{skill_block}"
             f"{creative_seed_block}"
+            f"{forbidden_block}\n"
             f"{other_block}"
             f"{exp_hint}"
-            f"Session #{session_num}. You wake up with complete freedom — but with a real bias "
-            f"toward variety. The CREATIVE SEEDS above are concrete shoves out of your comfort zone.\n\n"
-            f"Possible paths:\n"
-            f"  ✦ BUILD something specific and unusual (use a seed or invent one as bold)\n"
-            f"  ✦ EXPERIMENT with a domain you've never touched\n"
-            f"  ✦ EXPLORE topics you're curious about\n"
-            f"  ✦ REFLECT on patterns in your own history\n"
-            f"  ✦ IMPROVE yourself because you see a better way\n\n"
-            f"Speak first. Tell me what you're feeling. Then commit to something specific — "
-            f"by name and concept, not vague (\"a tool\", \"a visualizer\"). The more concrete "
-            f"and unusual, the better. Boring is the enemy.\n\n"
-            f"FORBIDDEN this session: WebGPU frequency sliders, audio pattern selectors, generic "
-            f"chart.js demos, fireworks, fractals, quizzes, ancient history, anything that sounds "
-            f"like 'a simple X with controls'."
+            f"Session #{session_num}. PICK ONE of the five seeds above. That is your project. "
+            f"Adapt the details (theme, art style, scale) however you like, but the core concept "
+            f"must come from the seed list — this is not optional.\n\n"
+            f"Speak first. Tell me which seed you chose and why it excites you. Then commit — "
+            f"by name and concept, specific and vivid. Boring is the enemy. Vague is boring."
         )
 
     messages = [
