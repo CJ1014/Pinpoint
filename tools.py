@@ -24,6 +24,7 @@ _muted = False
 _playback_proc = None          # currently-running audio subprocess
 _playback_lock = threading.Lock()
 _tts_ended_at: float = 0.0     # time.time() when the last TTS playback finished
+_last_spoken_text: str = ""    # text PinPoint most recently spoke (for echo detection)
 
 
 def _speech_worker() -> None:
@@ -96,6 +97,22 @@ _voice_stop_fn = None   # callable returned by listen_in_background
 _voice_enabled = False
 
 
+def _is_echo(user_text: str, pinpoint_spoke: str, threshold: float = 0.80) -> bool:
+    """Return True if user_text is likely an echo of what PinPoint just said.
+
+    Uses string similarity — if the mic picked up what she just said (80%+ match),
+    it's probably echo, not the user speaking.
+    """
+    if not pinpoint_spoke or not user_text:
+        return False
+    import difflib
+    # Case-insensitive, normalize whitespace
+    a = " ".join(user_text.lower().split())
+    b = " ".join(pinpoint_spoke.lower().split())
+    ratio = difflib.SequenceMatcher(None, a, b).ratio()
+    return ratio > threshold
+
+
 def start_voice_listener(interrupt_queue) -> bool:
     """Start background microphone listening; transcribed speech → interrupt_queue.
     Returns True if the microphone started successfully.
@@ -146,6 +163,11 @@ def start_voice_listener(interrupt_queue) -> bool:
             try:
                 text = recognizer.recognize_google(audio)
                 if text and text.strip():
+                    # Echo detection: discard if 80%+ similar to what PinPoint just said
+                    if _is_echo(text, _last_spoken_text):
+                        sys.stdout.write(f"\n[ECHO DETECTED] Ignored: '{text.strip()}'\n")
+                        sys.stdout.flush()
+                        return
                     sys.stdout.write(f"\n[YOU] {text.strip()}\n")
                     sys.stdout.flush()
                     interrupt_queue.put(text.strip())
@@ -256,6 +278,11 @@ def start_voice_listener(interrupt_queue) -> bool:
                                     audio_data = sr.AudioData(raw, SAMPLE_RATE, 2)
                                     text = recognizer.recognize_google(audio_data)
                                     if text and text.strip():
+                                        # Echo detection: discard if 80%+ similar to what PinPoint just said
+                                        if _is_echo(text, _last_spoken_text):
+                                            sys.stdout.write(f"\n[ECHO DETECTED] Ignored: '{text.strip()}'\n")
+                                            sys.stdout.flush()
+                                            return
                                         sys.stdout.write(f"\n[YOU] {text.strip()}\n")
                                         sys.stdout.flush()
                                         interrupt_queue.put(text.strip())
@@ -2470,10 +2497,13 @@ def speak(text: str, wait: bool = True) -> str:
     All speak() calls go into a single queue processed by one dedicated
     thread, so the voice never talks over itself.
     """
+    global _last_spoken_text
     if not text or not text.strip():
         return "Nothing to speak."
-    short = text[:100] + "..." if len(text) > 100 else text
-    _speech_queue.put(text.strip())
+    clean = text.strip()
+    short = clean[:100] + "..." if len(clean) > 100 else clean
+    _last_spoken_text = clean  # Track for echo detection in voice input
+    _speech_queue.put(clean)
     return f"🎤 Queued: '{short}'"
 
 
