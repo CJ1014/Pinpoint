@@ -271,75 +271,104 @@ def start_voice_listener(interrupt_queue) -> bool:
         recording = False
         buf = b""
         silence_count = 0
-        POST_SPEAK_COOLDOWN = 2.0  # seconds to ignore mic after TTS finishes
+        POST_SPEAK_COOLDOWN = 1.0  # seconds to keep mic off after TTS finishes
+
+        def _drain_audio_q():
+            while True:
+                try:
+                    audio_q.get_nowait()
+                except _iq.Empty:
+                    break
+
+        stream = sd.RawInputStream(
+            samplerate=SAMPLE_RATE,
+            channels=1,
+            dtype="int16",
+            blocksize=CHUNK,
+            callback=_sd_callback,
+        )
+        stream.start()
+        mic_live = True
 
         try:
-            with sd.RawInputStream(
-                samplerate=SAMPLE_RATE,
-                channels=1,
-                dtype="int16",
-                blocksize=CHUNK,
-                callback=_sd_callback,
-            ):
-                while _voice_enabled:
+            while _voice_enabled:
+                # Decide whether the mic should be capturing right now
+                with _playback_lock:
+                    speaking = _playback_proc is not None
+                in_cooldown = (_time.time() - _tts_ended_at) < POST_SPEAK_COOLDOWN
+                should_be_live = not speaking and not in_cooldown
+
+                if should_be_live and not mic_live:
                     try:
-                        data = audio_q.get(timeout=0.2)
-                    except _iq.Empty:
-                        continue
+                        stream.start()
+                    except Exception:
+                        pass
+                    mic_live = True
+                    _drain_audio_q()
+                    buf = b""
+                    recording = False
+                    silence_count = 0
+                elif not should_be_live and mic_live:
+                    try:
+                        stream.stop()
+                    except Exception:
+                        pass
+                    mic_live = False
+                    _drain_audio_q()
+                    buf = b""
+                    recording = False
+                    silence_count = 0
 
-                    # Flush and ignore while PinPoint is actively speaking
-                    with _playback_lock:
-                        currently_speaking = _playback_proc is not None
-                    if currently_speaking:
+                if not mic_live:
+                    _time.sleep(0.05)
+                    continue
+
+                try:
+                    data = audio_q.get(timeout=0.2)
+                except _iq.Empty:
+                    continue
+
+                n = len(data) // 2
+                samples = struct.unpack(f"{n}h", data)
+                rms = (sum(int(s) * int(s) for s in samples) / n) ** 0.5
+
+                if rms > energy_threshold:
+                    recording = True
+                    silence_count = 0
+                    buf += data
+                elif recording:
+                    buf += data
+                    silence_count += 1
+                    if silence_count >= SILENCE_CHUNKS:
+                        captured = buf
                         buf = b""
                         recording = False
                         silence_count = 0
-                        continue
 
-                    # Cooldown uses the global _tts_ended_at stamp set by _play_audio
-                    # — works even if this thread was asleep the entire time TTS played
-                    if _time.time() - _tts_ended_at < POST_SPEAK_COOLDOWN:
-                        buf = b""
-                        recording = False
-                        silence_count = 0
-                        continue
-
-                    n = len(data) // 2
-                    samples = struct.unpack(f"{n}h", data)
-                    rms = (sum(int(s) * int(s) for s in samples) / n) ** 0.5
-
-                    if rms > energy_threshold:
-                        recording = True
-                        silence_count = 0
-                        buf += data
-                    elif recording:
-                        buf += data
-                        silence_count += 1
-                        if silence_count >= SILENCE_CHUNKS:
-                            captured = buf
-                            buf = b""
-                            recording = False
-                            silence_count = 0
-
-                            def _transcribe(raw=captured):
-                                try:
-                                    audio_data = sr.AudioData(raw, SAMPLE_RATE, 2)
-                                    text = recognizer.recognize_google(audio_data)
-                                    if text and text.strip():
-                                        # Echo detection: discard if 80%+ similar to what PinPoint just said
-                                        if _is_echo(text, _last_spoken_text):
-                                            sys.stdout.write(f"\n[ECHO DETECTED] Ignored: '{text.strip()}'\n")
-                                            sys.stdout.flush()
-                                            return
-                                        sys.stdout.write(f"\n[YOU] {text.strip()}\n")
+                        def _transcribe(raw=captured):
+                            try:
+                                audio_data = sr.AudioData(raw, SAMPLE_RATE, 2)
+                                text = recognizer.recognize_google(audio_data)
+                                if text and text.strip():
+                                    if _is_echo(text, _last_spoken_text):
+                                        sys.stdout.write(f"\n[ECHO DETECTED] Ignored: '{text.strip()}'\n")
                                         sys.stdout.flush()
-                                        interrupt_queue.put(text.strip())
-                                except Exception:
-                                    pass
+                                        return
+                                    sys.stdout.write(f"\n[YOU] {text.strip()}\n")
+                                    sys.stdout.flush()
+                                    interrupt_queue.put(text.strip())
+                            except Exception:
+                                pass
 
-                            threading.Thread(target=_transcribe, daemon=True).start()
+                        threading.Thread(target=_transcribe, daemon=True).start()
         except Exception as e:
             print(f"[VOICE] Stream stopped: {e}")
+        finally:
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:
+                pass
 
     t = threading.Thread(target=_sd_thread, daemon=True, name="voice-listener")
     t.start()
