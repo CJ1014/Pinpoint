@@ -155,19 +155,27 @@ async function sendToAI(userText) {
 // Speech Recognition
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recog = null;
-if (SR) {
-  recog = new SR();
-  recog.continuous = false;
-  recog.interimResults = false;
-  recog.lang = 'en-US';
-  recog.onresult = e => {
-    const txt = e.results[0][0].transcript;
-    setOrb(''); setStatus('got it');
-    if (txt.trim()) sendToAI(txt.trim());
-  };
-  recog.onerror = e => { setOrb(''); setStatus('mic error: ' + e.error); };
-  recog.onend = () => { micBtn.classList.remove('active'); if (status.textContent === 'listening…') setStatus('idle'); };
+
+function onResult(e) {
+  const txt = e.results[0][0].transcript;
+  setOrb(''); setStatus('got it');
+  if (txt.trim()) sendToAI(txt.trim());
 }
+function onErr(e) { setOrb(''); setStatus('mic error: ' + e.error); micBtn.classList.remove('active'); }
+function onEnd() { micBtn.classList.remove('active'); if (status.textContent === 'listening…') setStatus('idle'); }
+
+function makeRecog() {
+  if (!SR) return null;
+  const r = new SR();
+  r.continuous = false;
+  r.interimResults = false;
+  r.lang = 'en-US';
+  r.onresult = onResult;
+  r.onerror = onErr;
+  r.onend = onEnd;
+  return r;
+}
+recog = makeRecog();
 
 function initWithKey(key) {
   apiKey = key;
@@ -175,8 +183,10 @@ function initWithKey(key) {
   micBtn.classList.remove('disabled');
   document.getElementById('key-row').style.display = 'none';
   setupEl.style.display = 'none';
-  addMsg('assistant', "You woke me up. On a phone. I'll try not to hold that against you. What do you want?");
-  speak("You woke me up. On a phone. I'll try not to hold that against you. What do you want?");
+  const greeting = "You woke me up. On a phone. I'll try not to hold that against you. What do you want?";
+  addMsg('assistant', greeting);
+  // Delay speak so iOS voices are loaded and user gesture context is fresh
+  setTimeout(() => speak(greeting), 400);
 }
 
 saveKeyBtn.onclick = () => {
@@ -193,19 +203,31 @@ if (apiKey) {
 }
 
 // Mic button — tap to toggle
-micBtn.addEventListener('click', () => {
-  if (!recog || micBtn.classList.contains('disabled')) return;
+micBtn.addEventListener('click', async () => {
+  if (!SR || micBtn.classList.contains('disabled')) return;
   if (speaking) { window.speechSynthesis.cancel(); speaking = false; }
+
   if (micBtn.classList.contains('active')) {
-    recog.stop();
+    try { recog && recog.stop(); } catch(e) {}
     micBtn.classList.remove('active');
     setOrb(''); setStatus('idle');
-  } else {
-    micBtn.classList.add('active');
-    setOrb('listening');
-    setStatus('listening…');
-    recog.start();
+    return;
   }
+
+  // iOS Safari requires getUserMedia first to trigger the permission dialog
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach(t => t.stop());
+  } catch(e) {
+    setStatus('allow mic in Settings → Safari → Microphone');
+    return;
+  }
+
+  micBtn.classList.add('active');
+  setOrb('listening');
+  setStatus('listening…');
+  recog = makeRecog(); // fresh instance — Safari needs this each time
+  try { recog.start(); } catch(e) { setStatus('mic error'); micBtn.classList.remove('active'); }
 });
 
 muteBtn.onclick = () => {
