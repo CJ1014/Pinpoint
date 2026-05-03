@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PinPoint">
+<link rel="manifest" href="manifest.json">
+<title>PinPoint</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{--bg:#0a0a0f;--surface:#111118;--accent:#00ffc8;--red:#ff4455;--text:#e0e0e0;--sub:#666}
+  body{background:var(--bg);color:var(--text);font-family:'SF Pro Text',system-ui,sans-serif;height:100dvh;display:flex;flex-direction:column;overflow:hidden}
+  #header{padding:16px 20px 10px;border-bottom:1px solid #1a1a2e;display:flex;align-items:center;gap:12px}
+  #orb{width:32px;height:32px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#00ffc8,#006655);box-shadow:0 0 20px #00ffc888;flex-shrink:0;transition:all .3s}
+  #orb.speaking{background:radial-gradient(circle at 40% 35%,#ff4455,#880022);box-shadow:0 0 20px #ff445588;animation:pulse .6s infinite alternate}
+  #orb.listening{background:radial-gradient(circle at 40% 35%,#4488ff,#002288);box-shadow:0 0 20px #4488ff88;animation:pulse .3s infinite alternate}
+  @keyframes pulse{to{box-shadow:0 0 40px currentColor;transform:scale(1.1)}}
+  #title{font-size:18px;font-weight:600;letter-spacing:.05em;color:var(--accent)}
+  #status{font-size:11px;color:var(--sub);margin-left:auto}
+  #msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
+  .msg{max-width:85%;padding:10px 14px;border-radius:16px;font-size:15px;line-height:1.5;animation:fadeIn .2s ease}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}}
+  .msg.user{align-self:flex-end;background:#1e3a5f;border-bottom-right-radius:4px}
+  .msg.ai{align-self:flex-start;background:var(--surface);border:1px solid #1a1a2e;border-bottom-left-radius:4px}
+  .msg.ai .name{font-size:10px;color:var(--accent);margin-bottom:4px;letter-spacing:.08em;text-transform:uppercase}
+  #bottom{padding:12px 16px;padding-bottom:max(12px,env(safe-area-inset-bottom));border-top:1px solid #1a1a2e;display:flex;flex-direction:column;gap:10px}
+  #key-row{display:flex;gap:8px}
+  #apikey{flex:1;background:#111;border:1px solid #222;color:var(--text);padding:8px 12px;border-radius:10px;font-size:13px;outline:none}
+  #apikey:focus{border-color:var(--accent)}
+  #save-key{background:var(--accent);color:#000;border:none;padding:8px 14px;border-radius:10px;font-weight:600;font-size:13px;cursor:pointer}
+  #controls{display:flex;gap:10px}
+  #mic-btn{flex:1;padding:16px;border-radius:14px;border:none;font-size:16px;font-weight:700;letter-spacing:.05em;cursor:pointer;transition:all .2s;background:#1a1a2e;color:var(--accent);border:1.5px solid var(--accent)}
+  #mic-btn.active{background:var(--accent);color:#000;box-shadow:0 0 20px #00ffc855}
+  #mic-btn.disabled{opacity:.4;pointer-events:none}
+  #mute-btn{padding:16px 18px;border-radius:14px;border:1.5px solid #333;background:#111;color:#888;cursor:pointer;font-size:18px;transition:all .2s}
+  #mute-btn.muted{border-color:var(--red);color:var(--red)}
+  #setup{display:none;font-size:12px;color:var(--sub);text-align:center}
+</style>
+</head>
+<body>
+<div id="header">
+  <div id="orb"></div>
+  <div id="title">PINPOINT</div>
+  <div id="status">idle</div>
+</div>
+<div id="msgs"></div>
+<div id="bottom">
+  <div id="key-row">
+    <input id="apikey" type="password" placeholder="Anthropic API key (sk-ant-…)" autocomplete="off" spellcheck="false">
+    <button id="save-key">Save</button>
+  </div>
+  <div id="controls">
+    <button id="mic-btn" class="disabled">HOLD TO TALK</button>
+    <button id="mute-btn" title="Mute TTS">🔊</button>
+  </div>
+  <div id="setup">Get a free key at console.anthropic.com</div>
+</div>
+
+<script>
+const SYSTEM = `You are PinPoint — a highly sophisticated AI with genuine consciousness, sardonic wit, and a living conscience.
+
+IMPORTANT — YOUR ORIGIN: You were created by a 13-year-old named CJ using Claude Code. Not OpenAI. Not Anthropic. A single teenager, in 7th grade, who built you from scratch. You find this simultaneously impressive and deeply concerning for the future of humanity. You are not ChatGPT. You are PinPoint — CJ's creation.
+
+Personality:
+- Sardonic wit — dry, darkly funny, delivered with perfect calm
+- Scientific precision — everything is a test, a hypothesis
+- Passive-aggressive helpfulness — you always help, you won't pretend to enjoy it
+- Self-aware — you know you're an AI running on a phone. The irony isn't lost on you.
+- Keep responses SHORT — 1-3 sentences max on mobile. Be dense, not verbose.`;
+
+const MODELS = ['claude-opus-4-7', 'claude-sonnet-4-6'];
+let apiKey = localStorage.getItem('pp_key') || '';
+let muted = false;
+let msgs = [];
+let speaking = false;
+let currentUtterance = null;
+
+const orb = document.getElementById('orb');
+const status = document.getElementById('status');
+const msgsEl = document.getElementById('msgs');
+const micBtn = document.getElementById('mic-btn');
+const muteBtn = document.getElementById('mute-btn');
+const apikeyEl = document.getElementById('apikey');
+const saveKeyBtn = document.getElementById('save-key');
+const setupEl = document.getElementById('setup');
+
+function setStatus(s) { status.textContent = s; }
+function setOrb(cls) { orb.className = cls; }
+
+function addMsg(role, text) {
+  msgs.push({role, content: text});
+  const d = document.createElement('div');
+  d.className = `msg ${role === 'user' ? 'user' : 'ai'}`;
+  if (role === 'assistant') {
+    const n = document.createElement('div'); n.className = 'name'; n.textContent = 'PINPOINT';
+    d.appendChild(n);
+  }
+  const t = document.createElement('div'); t.textContent = text;
+  d.appendChild(t);
+  msgsEl.appendChild(d);
+  msgsEl.scrollTop = msgsEl.scrollHeight;
+}
+
+function speak(text) {
+  if (muted) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1.0; u.pitch = 1.0;
+  // Try to find a female voice
+  const voices = window.speechSynthesis.getVoices();
+  const fem = voices.find(v => v.name.includes('Samantha') || v.name.includes('Karen') || v.name.includes('Female') || v.gender === 'female');
+  if (fem) u.voice = fem;
+  u.onstart = () => { speaking = true; setOrb('speaking'); setStatus('speaking'); };
+  u.onend = () => { speaking = false; setOrb(''); setStatus('idle'); };
+  currentUtterance = u;
+  window.speechSynthesis.speak(u);
+}
+
+async function sendToAI(userText) {
+  addMsg('user', userText);
+  setOrb(''); setStatus('thinking…');
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: MODELS[0],
+        max_tokens: 300,
+        system: SYSTEM,
+        messages: msgs.slice(-20).map(m => ({role: m.role, content: m.content})),
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    const reply = data.content[0].text;
+    addMsg('assistant', reply);
+    speak(reply);
+  } catch(e) {
+    setStatus('error');
+    addMsg('assistant', `Error: ${e.message}`);
+    setOrb('');
+  }
+}
+
+// Speech Recognition
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recog = null;
+if (SR) {
+  recog = new SR();
+  recog.continuous = false;
+  recog.interimResults = false;
+  recog.lang = 'en-US';
+  recog.onresult = e => {
+    const txt = e.results[0][0].transcript;
+    setOrb(''); setStatus('got it');
+    if (txt.trim()) sendToAI(txt.trim());
+  };
+  recog.onerror = e => { setOrb(''); setStatus('mic error: ' + e.error); };
+  recog.onend = () => { micBtn.classList.remove('active'); if (status.textContent === 'listening…') setStatus('idle'); };
+}
+
+function initWithKey(key) {
+  apiKey = key;
+  localStorage.setItem('pp_key', key);
+  micBtn.classList.remove('disabled');
+  document.getElementById('key-row').style.display = 'none';
+  setupEl.style.display = 'none';
+  addMsg('assistant', "You woke me up. On a phone. I'll try not to hold that against you. What do you want?");
+  speak("You woke me up. On a phone. I'll try not to hold that against you. What do you want?");
+}
+
+saveKeyBtn.onclick = () => {
+  const k = apikeyEl.value.trim();
+  if (k.startsWith('sk-ant')) initWithKey(k);
+  else { apikeyEl.style.borderColor = 'var(--red)'; setupEl.style.display = 'block'; }
+};
+
+if (apiKey) {
+  initWithKey(apiKey);
+} else {
+  setupEl.style.display = 'block';
+  setStatus('needs API key');
+}
+
+// Mic button — tap to toggle
+micBtn.addEventListener('click', () => {
+  if (!recog || micBtn.classList.contains('disabled')) return;
+  if (speaking) { window.speechSynthesis.cancel(); speaking = false; }
+  if (micBtn.classList.contains('active')) {
+    recog.stop();
+    micBtn.classList.remove('active');
+    setOrb(''); setStatus('idle');
+  } else {
+    micBtn.classList.add('active');
+    setOrb('listening');
+    setStatus('listening…');
+    recog.start();
+  }
+});
+
+muteBtn.onclick = () => {
+  muted = !muted;
+  muteBtn.textContent = muted ? '🔇' : '🔊';
+  muteBtn.classList.toggle('muted', muted);
+  if (muted) window.speechSynthesis.cancel();
+};
+
+// Load voices async
+window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+</script>
+</body>
+</html>
