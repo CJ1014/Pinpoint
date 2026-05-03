@@ -97,86 +97,167 @@ _voice_enabled = False
 
 def start_voice_listener(interrupt_queue) -> bool:
     """Start background microphone listening; transcribed speech → interrupt_queue.
-    Returns True if the microphone started successfully."""
+    Returns True if the microphone started successfully.
+
+    Two paths:
+      1. PyAudio available → use SpeechRecognition's built-in Microphone class
+      2. sounddevice only → custom VAD loop (works on Python 3.14+ where pyaudio has no wheel)
+    """
     global _voice_stop_fn, _voice_enabled
 
-    _pip_flags = ["-q", "--no-warn-script-location"]
+    _pip = ["-q", "--no-warn-script-location"]
 
-    # Auto-install SpeechRecognition
+    def _pip_install(pkg):
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", pkg] + _pip,
+            capture_output=True,
+        )
+
+    # ── Install SpeechRecognition (needed for Google STT in both paths) ──────
     try:
         import speech_recognition as sr
     except ImportError:
         print("[VOICE] Installing SpeechRecognition...", flush=True)
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "SpeechRecognition"] + _pip_flags,
-            capture_output=True,
-        )
+        _pip_install("SpeechRecognition")
         try:
             import speech_recognition as sr
         except ImportError:
             print("[VOICE] Could not install SpeechRecognition.")
             return False
 
-    # Try sounddevice first (wider wheel support on new Python), then pyaudio
-    mic = None
-    for audio_pkg in ("sounddevice", "pyaudio"):
-        try:
-            __import__(audio_pkg)
-            mic = sr.Microphone()
-            break
-        except Exception:
-            try:
-                subprocess.run(
-                    [sys.executable, "-m", "pip", "install", audio_pkg] + _pip_flags,
-                    capture_output=True,
-                )
-                __import__(audio_pkg)
-                mic = sr.Microphone()
-                break
-            except Exception:
-                continue
-
-    if mic is None:
-        print("[VOICE] No audio input library available (tried sounddevice, pyaudio).")
-        return False
-
     recognizer = sr.Recognizer()
-    recognizer.pause_threshold = 0.9        # seconds of silence = phrase complete
-    recognizer.dynamic_energy_threshold = True
 
-    # Brief ambient noise calibration
+    # ── PATH 1: PyAudio — cleanest, uses SpeechRecognition natively ──────────
     try:
+        import pyaudio  # noqa: F401
+        mic = sr.Microphone()
+        recognizer.pause_threshold = 0.9
+        recognizer.dynamic_energy_threshold = True
         with mic as source:
-            recognizer.adjust_for_ambient_noise(source, duration=0.8)
-    except Exception:
-        pass
+            recognizer.adjust_for_ambient_noise(source, duration=0.6)
 
-    def _on_speech(_, audio):
-        # Don't transcribe while PinPoint is speaking (prevents echo)
-        with _playback_lock:
-            if _playback_proc is not None:
+        def _on_speech_pa(_, audio):
+            with _playback_lock:
+                if _playback_proc is not None:
+                    return
+            if not _voice_enabled:
                 return
-        if not _voice_enabled:
-            return
-        try:
-            import speech_recognition as _sr
-            text = recognizer.recognize_google(audio)
-            if text and text.strip():
-                sys.stdout.write(f"\n[YOU] {text.strip()}\n")
-                sys.stdout.flush()
-                interrupt_queue.put(text.strip())
-        except Exception:
-            pass  # silence / API hiccup
+            try:
+                text = recognizer.recognize_google(audio)
+                if text and text.strip():
+                    sys.stdout.write(f"\n[YOU] {text.strip()}\n")
+                    sys.stdout.flush()
+                    interrupt_queue.put(text.strip())
+            except Exception:
+                pass
 
-    try:
         _voice_stop_fn = recognizer.listen_in_background(
-            mic, _on_speech, phrase_time_limit=20
+            mic, _on_speech_pa, phrase_time_limit=20
         )
         _voice_enabled = True
         return True
-    except Exception as e:
-        print(f"[VOICE] Could not start microphone: {e}")
-        return False
+    except Exception:
+        pass  # PyAudio not available, fall through to sounddevice path
+
+    # ── PATH 2: sounddevice — custom VAD loop, bypasses PyAudio entirely ─────
+    try:
+        import sounddevice as sd
+    except ImportError:
+        _pip_install("sounddevice")
+        try:
+            import sounddevice as sd
+        except ImportError:
+            print("[VOICE] No audio library available (tried pyaudio, sounddevice).")
+            return False
+
+    import struct
+    import queue as _iq
+
+    SAMPLE_RATE = 16000
+    CHUNK = 1024          # frames per callback (~64 ms)
+    SILENCE_CHUNKS = 12   # chunks of silence that end a phrase (~0.75 s)
+
+    # Calibrate energy threshold from 0.5 s of ambient noise
+    try:
+        ambient = sd.rec(
+            int(0.5 * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1, dtype="int16"
+        )
+        sd.wait()
+        flat = [s for row in ambient for s in row]
+        ambient_rms = (sum(s * s for s in flat) / max(len(flat), 1)) ** 0.5
+        energy_threshold = max(ambient_rms * 3.5, 400)
+    except Exception:
+        energy_threshold = 500
+
+    audio_q: _iq.Queue = _iq.Queue()
+
+    def _sd_callback(indata, frames, time_info, status):
+        audio_q.put(bytes(indata))
+
+    def _sd_thread():
+        recording = False
+        buf = b""
+        silence_count = 0
+
+        try:
+            with sd.RawInputStream(
+                samplerate=SAMPLE_RATE,
+                channels=1,
+                dtype="int16",
+                blocksize=CHUNK,
+                callback=_sd_callback,
+            ):
+                while _voice_enabled:
+                    try:
+                        data = audio_q.get(timeout=0.2)
+                    except _iq.Empty:
+                        continue
+
+                    # Don't transcribe while PinPoint is speaking
+                    with _playback_lock:
+                        if _playback_proc is not None:
+                            buf = b""
+                            recording = False
+                            silence_count = 0
+                            continue
+
+                    n = len(data) // 2
+                    samples = struct.unpack(f"{n}h", data)
+                    rms = (sum(s * s for s in samples) / n) ** 0.5
+
+                    if rms > energy_threshold:
+                        recording = True
+                        silence_count = 0
+                        buf += data
+                    elif recording:
+                        buf += data
+                        silence_count += 1
+                        if silence_count >= SILENCE_CHUNKS:
+                            captured = buf
+                            buf = b""
+                            recording = False
+                            silence_count = 0
+
+                            def _transcribe(raw=captured):
+                                try:
+                                    audio_data = sr.AudioData(raw, SAMPLE_RATE, 2)
+                                    text = recognizer.recognize_google(audio_data)
+                                    if text and text.strip():
+                                        sys.stdout.write(f"\n[YOU] {text.strip()}\n")
+                                        sys.stdout.flush()
+                                        interrupt_queue.put(text.strip())
+                                except Exception:
+                                    pass
+
+                            threading.Thread(target=_transcribe, daemon=True).start()
+        except Exception as e:
+            print(f"[VOICE] Stream stopped: {e}")
+
+    t = threading.Thread(target=_sd_thread, daemon=True, name="voice-listener")
+    t.start()
+    _voice_stop_fn = lambda wait_for_stop=True: None  # thread exits via _voice_enabled
+    _voice_enabled = True
+    return True
 
 
 def stop_voice_listener() -> None:
