@@ -99,9 +99,13 @@ _voice_enabled = False
 
 
 def _normalize_for_echo(s: str) -> str:
-    """Lowercase, strip punctuation, collapse whitespace — for fuzzy comparison."""
-    s = s.lower()
-    s = re.sub(r"[^\w\s']", " ", s)
+    """Lowercase, strip apostrophes + punctuation, collapse whitespace.
+
+    Apostrophes are dropped (not replaced with space) so 'what's' and 'whats'
+    both normalize to 'whats' — STT engines disagree on contractions.
+    """
+    s = s.lower().replace("'", "").replace("’", "")
+    s = re.sub(r"[^\w\s]", " ", s)
     return " ".join(s.split())
 
 
@@ -146,23 +150,23 @@ def _is_echo(user_text: str, _unused: str = "") -> bool:
         if user_norm in spoken_norm or spoken_norm in user_norm:
             return True
 
-        # 2. Any 5 consecutive user words appear verbatim in a spoken line.
-        # Most reliable signal — the mic merged PinPoint's voice into the user's
-        # transcription, so a long phrase from her speech sits inside user_text.
-        if len(user_words_list) >= 5:
-            for i in range(len(user_words_list) - 4):
-                window = " ".join(user_words_list[i:i + 5])
+        # 2. Any 4 consecutive user words appear verbatim in a spoken line.
+        # Most reliable signal — the mic merged PinPoint's voice into the
+        # user's transcription, so a phrase from her speech sits inside user_text.
+        if len(user_words_list) >= 4:
+            for i in range(len(user_words_list) - 3):
+                window = " ".join(user_words_list[i:i + 4])
                 if window in spoken_norm:
                     return True
 
         # 3. Word overlap (relative to user, since user_text may be a subset)
         overlap = len(user_set & spoken_set) / len(user_set)
-        if overlap >= 0.45:
+        if overlap >= 0.4:
             return True
 
         # 4. SequenceMatcher fuzzy match
         ratio = difflib.SequenceMatcher(None, user_norm, spoken_norm).ratio()
-        if ratio >= 0.45:
+        if ratio >= 0.4:
             return True
 
     return False
@@ -217,7 +221,7 @@ def start_voice_listener(interrupt_queue) -> bool:
             # Also drop while speech is queued or within post-speak cooldown
             if not _speech_queue.empty():
                 return
-            if (_time.time() - _tts_ended_at) < 0.6:
+            if (_time.time() - _tts_ended_at) < 1.2:
                 return
             if not _voice_enabled:
                 return
@@ -284,7 +288,7 @@ def start_voice_listener(interrupt_queue) -> bool:
         recording = False
         buf = b""
         silence_count = 0
-        POST_SPEAK_COOLDOWN = 0.6  # seconds to keep mic off after TTS finishes
+        POST_SPEAK_COOLDOWN = 1.2  # seconds to keep mic off after TTS finishes
 
         def _drain_audio_q():
             while True:
@@ -2599,10 +2603,18 @@ def speak(text: str, wait: bool = True) -> str:
     import time as _time
     if not text or not text.strip():
         return "Nothing to speak."
-    clean = text.strip()
+
+    # Strip code blocks and inline code — TTS reading <!DOCTYPE html> verbatim
+    # is awful. Replace fenced ``` blocks with a brief mention; drop inline `code`.
+    clean = re.sub(r"```[\s\S]*?```", " (showing code on screen) ", text)
+    clean = re.sub(r"`[^`\n]+`", "", clean)
+    # Collapse whitespace and trim
+    clean = re.sub(r"\s+", " ", clean).strip()
+    if not clean:
+        return "Nothing to speak."
+
     short = clean[:100] + "..." if len(clean) > 100 else clean
     _last_spoken_text = clean
-    # Append to rolling buffer for echo detection; trim entries older than 60s
     now = _time.time()
     _recent_spoken.append((now, clean))
     _recent_spoken[:] = [(t, s) for (t, s) in _recent_spoken if now - t < 60.0]
