@@ -100,21 +100,26 @@ def start_voice_listener(interrupt_queue) -> bool:
     Returns True if the microphone started successfully."""
     global _voice_stop_fn, _voice_enabled
 
+    _pip_flags = ["-q", "--no-warn-script-location"]
+
     # Auto-install SpeechRecognition
     try:
         import speech_recognition as sr
     except ImportError:
         print("[VOICE] Installing SpeechRecognition...", flush=True)
-        subprocess.run([sys.executable, "-m", "pip", "install", "SpeechRecognition", "-q"])
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "SpeechRecognition"] + _pip_flags,
+            capture_output=True,
+        )
         try:
             import speech_recognition as sr
         except ImportError:
             print("[VOICE] Could not install SpeechRecognition.")
             return False
 
-    # Try pyaudio first, then sounddevice
+    # Try sounddevice first (wider wheel support on new Python), then pyaudio
     mic = None
-    for audio_pkg in ("pyaudio", "sounddevice"):
+    for audio_pkg in ("sounddevice", "pyaudio"):
         try:
             __import__(audio_pkg)
             mic = sr.Microphone()
@@ -122,7 +127,7 @@ def start_voice_listener(interrupt_queue) -> bool:
         except Exception:
             try:
                 subprocess.run(
-                    [sys.executable, "-m", "pip", "install", audio_pkg, "-q"],
+                    [sys.executable, "-m", "pip", "install", audio_pkg] + _pip_flags,
                     capture_output=True,
                 )
                 __import__(audio_pkg)
@@ -132,7 +137,7 @@ def start_voice_listener(interrupt_queue) -> bool:
                 continue
 
     if mic is None:
-        print("[VOICE] No audio input library available (tried pyaudio, sounddevice).")
+        print("[VOICE] No audio input library available (tried sounddevice, pyaudio).")
         return False
 
     recognizer = sr.Recognizer()
