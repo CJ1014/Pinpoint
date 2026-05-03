@@ -37,6 +37,8 @@
   #mute-btn{padding:16px 18px;border-radius:14px;border:1.5px solid #333;background:#111;color:#888;cursor:pointer;font-size:18px;transition:all .2s}
   #mute-btn.muted{border-color:var(--red);color:var(--red)}
   #setup{display:none;font-size:12px;color:var(--sub);text-align:center}
+  #reset-key{display:none;font-size:11px;color:var(--sub);background:none;border:none;cursor:pointer;padding:0;margin-left:auto;text-decoration:underline}
+  #reset-key:hover{color:var(--accent)}
 </style>
 </head>
 <body>
@@ -44,6 +46,7 @@
   <div id="orb"></div>
   <div id="title">PINPOINT</div>
   <div id="status">idle</div>
+  <button id="reset-key">change key</button>
 </div>
 <div id="msgs"></div>
 <div id="bottom">
@@ -86,6 +89,7 @@ const muteBtn = document.getElementById('mute-btn');
 const apikeyEl = document.getElementById('apikey');
 const saveKeyBtn = document.getElementById('save-key');
 const setupEl = document.getElementById('setup');
+const resetKeyBtn = document.getElementById('reset-key');
 
 function setStatus(s) { status.textContent = s; }
 function setOrb(cls) { orb.className = cls; }
@@ -197,6 +201,7 @@ function initWithKey(key) {
   micBtn.classList.remove('disabled');
   document.getElementById('key-row').style.display = 'none';
   setupEl.style.display = 'none';
+  resetKeyBtn.style.display = 'block';
   const greeting = "You woke me up. On a phone. I'll try not to hold that against you. What do you want?";
   addMsg('assistant', greeting);
   // Delay speak so iOS voices are loaded and user gesture context is fresh
@@ -252,6 +257,11 @@ muteBtn.onclick = () => {
   muteBtn.textContent = muted ? '🔇' : '🔊';
   muteBtn.classList.toggle('muted', muted);
   if (muted) window.speechSynthesis.cancel();
+};
+
+resetKeyBtn.onclick = () => {
+  localStorage.removeItem('pp_key');
+  location.reload();
 };
 
 // Load voices async
