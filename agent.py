@@ -1154,18 +1154,20 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
 
         for attempt in range(5):
             try:
-                # First TALK_FIRST_TURNS iterations: force pure conversation, no tools
+                # First TALK_FIRST_TURNS iterations: no tools passed at all — forces talking
                 TALK_FIRST_TURNS = 5
-                current_tool_choice = "none" if iteration <= TALK_FIRST_TURNS else "auto"
-
-                stream = client.chat.completions.create(
+                in_warmup = iteration <= TALK_FIRST_TURNS
+                stream_kwargs = dict(
                     model=MODEL,
                     messages=messages,
-                    tools=active_tools,
-                    tool_choice=current_tool_choice,
                     temperature=0.85,
                     stream=True,
                 )
+                if not in_warmup:
+                    stream_kwargs["tools"] = active_tools
+                    stream_kwargs["tool_choice"] = "auto"
+
+                stream = client.chat.completions.create(**stream_kwargs)
                 print("\n[AGENT] ", end="", flush=True)
                 for chunk in stream:
                     # Check for interrupts between every token
