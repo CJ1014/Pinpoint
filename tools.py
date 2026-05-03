@@ -183,7 +183,8 @@ def start_voice_listener(interrupt_queue) -> bool:
             int(0.5 * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1, dtype="int16"
         )
         sd.wait()
-        flat = [s for row in ambient for s in row]
+        # Cast to Python int before squaring to avoid numpy int16 overflow
+        flat = [int(s) for row in ambient for s in row]
         ambient_rms = (sum(s * s for s in flat) / max(len(flat), 1)) ** 0.5
         energy_threshold = max(ambient_rms * 3.5, 400)
     except Exception:
