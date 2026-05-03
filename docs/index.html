@@ -52,7 +52,7 @@
     <button id="save-key">Save</button>
   </div>
   <div id="controls">
-    <button id="mic-btn" class="disabled">HOLD TO TALK</button>
+    <button id="mic-btn" class="disabled">TAP TO TALK</button>
     <button id="mute-btn" title="Mute TTS">🔊</button>
   </div>
   <div id="setup">Get a free key at console.anthropic.com</div>
@@ -156,19 +156,32 @@ async function sendToAI(userText) {
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recog = null;
 
+let transcript = '';
+
 function onResult(e) {
-  const txt = e.results[0][0].transcript;
-  setOrb(''); setStatus('got it');
-  if (txt.trim()) sendToAI(txt.trim());
+  // Collect all results (continuous mode sends partials)
+  let full = '';
+  for (let i = 0; i < e.results.length; i++) full += e.results[i][0].transcript + ' ';
+  transcript = full.trim();
+  setStatus('🎙 ' + (transcript.slice(-40) || '…'));
 }
-function onErr(e) { setOrb(''); setStatus('mic error: ' + e.error); micBtn.classList.remove('active'); }
-function onEnd() { micBtn.classList.remove('active'); if (status.textContent === 'listening…') setStatus('idle'); }
+function onErr(e) { setOrb(''); setStatus('mic error: ' + e.error); micBtn.classList.remove('active'); transcript = ''; }
+function onEnd() {
+  if (micBtn.classList.contains('active')) {
+    // Ended unexpectedly (iOS kills after ~60s) — send what we have
+    micBtn.classList.remove('active');
+    setOrb('');
+    if (transcript.trim()) sendToAI(transcript.trim());
+    else setStatus('idle');
+    transcript = '';
+  }
+}
 
 function makeRecog() {
   if (!SR) return null;
   const r = new SR();
-  r.continuous = false;
-  r.interimResults = false;
+  r.continuous = true;       // keep listening until user taps stop
+  r.interimResults = true;   // show live transcript
   r.lang = 'en-US';
   r.onresult = onResult;
   r.onerror = onErr;
@@ -208,9 +221,12 @@ micBtn.addEventListener('click', async () => {
   if (speaking) { window.speechSynthesis.cancel(); speaking = false; }
 
   if (micBtn.classList.contains('active')) {
+    // Second tap — stop and send
     try { recog && recog.stop(); } catch(e) {}
     micBtn.classList.remove('active');
-    setOrb(''); setStatus('idle');
+    setOrb('');
+    if (transcript.trim()) { sendToAI(transcript.trim()); transcript = ''; }
+    else setStatus('idle');
     return;
   }
 
