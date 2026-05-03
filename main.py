@@ -16,10 +16,10 @@ BANNER = r"""
  |  __/| | | | |  __/ (_) | | | | | |_
  |_|   |_|_| |_|_|   \___/|_|_| |_|\__|
 
- Autonomous AI — running until you stop it
- Ctrl+C to stop  |  /mute, /unmute, /toggle = voice control
- /dev = improve yourself  |  sandbox = upgrade 3D viewer
- research = research coding topics  |  type anything = suggest to PinPoint
+ Autonomous AI with full conversation
+ Ctrl+C to stop  |  /mute /unmute /toggle = voice
+ /dev = self-improvement  |  sandbox = upgrade 3D viewer
+ Press Enter on empty line to start/resume autonomous session
 """
 
 LOCK_DIR = os.path.join(os.path.dirname(__file__), "output")
@@ -246,6 +246,111 @@ def setup_collab(goal: str) -> None:
     print(f"  Run two instances of PinPoint — they will coordinate via collab.json\n")
 
 
+def _chat_mode(interrupt_queue: queue.Queue) -> str:
+    """
+    Full back-and-forth conversation with PinPoint.
+    Runs between (or before) autonomous sessions.
+    Returns the last user message as the session order, or "" for a free session.
+    Press Enter on an empty line to end chat and start a session.
+    """
+    from openai import OpenAI
+    from agent import MODEL, SYSTEM_PROMPT, OLLAMA_BASE_URL
+
+    client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=120.0)
+
+    chat_system = (
+        SYSTEM_PROMPT
+        + "\n\nYou are in a direct one-on-one conversation with the human right now. "
+        "No session is running. Just talk — naturally, freely, like yourself. "
+        "Keep responses human-length: a few sentences to a paragraph. "
+        "Don't start building or coding here; this is pure conversation. "
+        "If the human seems to be asking you to build something, acknowledge it "
+        "and say you'll get to it — but don't actually start."
+    )
+    messages = [{"role": "system", "content": chat_system}]
+    last_msg = ""
+
+    # Drain stale queue items from the previous session
+    while not interrupt_queue.empty():
+        try:
+            interrupt_queue.get_nowait()
+        except queue.Empty:
+            break
+
+    print("\n" + "─" * 60)
+    print("  Chat with PinPoint — blank line to start autonomous session")
+    print("─" * 60)
+    print("\nYou: ", end="", flush=True)
+
+    while True:
+        try:
+            raw = interrupt_queue.get(timeout=600)  # 10-min idle timeout
+        except queue.Empty:
+            print("\n[Idle timeout — starting autonomous session]\n")
+            return last_msg
+
+        msg = raw.strip()
+
+        # Blank line → end chat, pass last message as session context
+        if not msg:
+            print()
+            return last_msg
+
+        # Voice control
+        if msg.lower() in ("/mute", "/unmute", "/toggle"):
+            from tools import mute_voice, unmute_voice, toggle_voice
+            if msg.lower() == "/mute":
+                r = mute_voice()
+            elif msg.lower() == "/unmute":
+                r = unmute_voice()
+            else:
+                r = toggle_voice()
+            print(f"\n{r}")
+            print("\nYou: ", end="", flush=True)
+            continue
+
+        # Pass-through commands (will be handled by main loop)
+        if msg.startswith("/") or msg.lower() in ("sandbox", "research"):
+            return msg
+
+        last_msg = msg
+        messages.append({"role": "user", "content": msg})
+
+        # Get PinPoint's response
+        print("\nPinPoint: ", end="", flush=True)
+        full = ""
+        try:
+            stream = client.chat.completions.create(
+                model=MODEL,
+                messages=messages,
+                temperature=0.85,
+                stream=True,
+            )
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    t = chunk.choices[0].delta.content
+                    print(t, end="", flush=True)
+                    full += t
+            print()
+            messages.append({"role": "assistant", "content": full})
+
+            # Speak the response (non-blocking so user can type right away)
+            if full:
+                try:
+                    from tools import speak
+                    threading.Thread(
+                        target=lambda text=full: speak(text[:600], False),
+                        daemon=True,
+                    ).start()
+                except Exception:
+                    pass
+
+        except Exception as e:
+            print(f"\n[Chat error: {e}]")
+
+        print("\nYou: ", end="", flush=True)
+
+
 def main() -> None:
     check_ollama()
     logger = setup_logging()
@@ -287,12 +392,17 @@ def main() -> None:
 
     print()
 
-    # Command-line order overrides interactive prompt
+    # Start input listener early — needed for chat mode before sessions
+    interrupt_queue: queue.Queue = queue.Queue()
+    input_thread = threading.Thread(target=_input_listener, args=(interrupt_queue,), daemon=True)
+    input_thread.start()
+
+    # Command-line order overrides interactive chat
     order = " ".join(sys.argv[1:]).strip() if len(sys.argv) > 1 else ""
     dev_mode = False
 
     if not order:
-        order = get_user_order()
+        order = _chat_mode(interrupt_queue)
 
     # Handle special commands (/dev, /sandbox, /research, /collab)
     # These are checked AFTER get_user_order() so they work interactively
@@ -360,11 +470,6 @@ def main() -> None:
 
     import agent
     from tools import list_files
-
-    # Start background input listener
-    interrupt_queue: queue.Queue = queue.Queue()
-    input_thread = threading.Thread(target=_input_listener, args=(interrupt_queue,), daemon=True)
-    input_thread.start()
 
     # Session lock file — tells other instances what this one is working on
     pid = os.getpid()
@@ -470,9 +575,8 @@ def main() -> None:
             print("\n--- Session summary ---")
             print(summary)
 
-        print(f"\n[Resting {REST_BETWEEN_SESSIONS}s before next session — press Ctrl+C to stop]")
-        for _ in range(REST_BETWEEN_SESSIONS * 10):
-            time.sleep(0.1)
+        # Drop into chat mode between sessions — user can talk or just press Enter
+        order = _chat_mode(interrupt_queue)
 
 
 if __name__ == "__main__":

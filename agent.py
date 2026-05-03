@@ -1321,12 +1321,11 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 )
             else:
                 inject_text = (
-                    f"[SUGGESTION FROM USER] \"{interrupt_msg}\"\n\n"
-                    f"The human watching you just sent this suggestion. Take it seriously — "
-                    f"they are guiding you. think() about how to incorporate it into what you're doing, "
-                    f"then act on it immediately. If it's a creative direction, follow it. "
-                    f"If it asks you to change course, change course. "
-                    f"If it's a specific instruction (e.g. 'add X', 'make it Y', 'try Z'), do exactly that."
+                    f"[THE HUMAN IS TALKING TO YOU] \"{interrupt_msg}\"\n\n"
+                    f"Respond to them directly and naturally — speak() what you want to say. "
+                    f"If it's a question, answer it. If it's a comment, react to it. "
+                    f"If it's asking you to do something specific, do it. "
+                    f"Be conversational. After responding, continue what you were doing if it still makes sense."
                 )
             print(f"\n[INTERRUPT] {interrupt_msg}\n")
             logger.info("[INTERRUPT] %s", interrupt_msg)
