@@ -263,9 +263,11 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
         + "\n\nYou are in a direct one-on-one conversation with the human right now. "
         "No session is running. Just talk — naturally, freely, like yourself. "
         "Keep responses human-length: a few sentences to a paragraph. "
-        "Don't start building or coding here; this is pure conversation. "
-        "If the human seems to be asking you to build something, acknowledge it "
-        "and say you'll get to it — but don't actually start."
+        "You don't have file/build tools in this chat — but if the human asks "
+        "you to make/build/create/write something, tell them: "
+        "'Press Enter and I'll actually build it.' Then wait. "
+        "Don't pretend you'll do it later — be direct that pressing Enter "
+        "kicks off a session where you'll really do it."
     )
     messages = [{"role": "system", "content": chat_system}]
     last_msg = ""

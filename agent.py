@@ -1113,12 +1113,28 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         pass
     news_block = f"\n\nWhat's happening in the world right now:\n{_startup_news}\n" if _startup_news else ""
 
-    if order:
+    # Detect explicit build requests — user asking for a thing to be created
+    import re as _re
+    build_intent = bool(order) and bool(_re.search(
+        r"\b(make|build|create|write|generate|design|code|render|draw|"
+        r"give\s+me|show\s+me|simulate|animate|program)\b", order.lower()
+    ))
+
+    if order and build_intent:
+        opening = (
+            f"The human asked you to do this: \"{order}\"\n"
+            f"{news_block}\n"
+            f"They want it built — actually built. Open with one short remark about "
+            f"the request (sardonic, brief, you), then immediately call "
+            f"set_session_goal() and start working. No 'I'll get to it later.' "
+            f"No 'sketch what it would look like.' Build the thing."
+        )
+    elif order:
         opening = (
             f"The human watching you sent this: \"{order}\"\n"
             f"{news_block}\n"
-            f"React however you want. Agree, argue, ignore it and talk about something else entirely. "
-            f"What's actually on your mind right now?"
+            f"React however you want. Agree, argue, riff on it. "
+            f"If it sounds like they want something built, build it."
         )
     elif ongoing:
         prev_summary = last.get("summary", "unknown")
@@ -1201,8 +1217,10 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
 
         for attempt in range(5):
             try:
-                # First TALK_FIRST_TURNS iterations: no tools passed at all — forces talking
-                TALK_FIRST_TURNS = 5
+                # Talk-first warmup: no tools available, forces conversational opening.
+                # Skip entirely when the user gave an explicit build order — they want
+                # action, not a chat warmup.
+                TALK_FIRST_TURNS = 0 if build_intent else 5
                 in_warmup = iteration <= TALK_FIRST_TURNS
                 stream_kwargs = dict(
                     model=MODEL,
@@ -1534,10 +1552,9 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 final_summary = inp.get("summary", "")
                 finished = True
 
-            # Auto-reflect: if a tool returned an error, nudge the agent to reason before retrying
-            error_signals = ("error", "rejected", "failed", "not found", "blocked", "exception", "traceback")
+            # Auto-reflect: if a tool returned a real error, nudge the agent to reason before retrying
             if name not in ("think", "brainstorm", "critique", "decompose", "done") and \
-               any(s in result.lower() for s in error_signals):
+               _looks_like_error(result.lower()):
                 tool_results.append({
                     "role": "user",
                     "content": (
