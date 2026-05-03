@@ -256,56 +256,12 @@ def start_voice_listener(interrupt_queue) -> bool:
 
     recognizer = sr.Recognizer()
 
-    # ── PATH 1: PyAudio — cleanest, uses SpeechRecognition natively ──────────
-    try:
-        import pyaudio  # noqa: F401
-        mic = sr.Microphone()
-        recognizer.pause_threshold = 0.9
-        recognizer.dynamic_energy_threshold = True
-        with mic as source:
-            recognizer.adjust_for_ambient_noise(source, duration=0.6)
+    # ── Always use sounddevice — PyAudio's listen_in_background keeps buffering
+    # audio even while TTS is playing with no way to pause it, so it always
+    # captures PinPoint's own voice. Sounddevice lets us call stream.stop()
+    # to physically halt capture during playback. ─────────────────────────────
 
-        def _on_speech_pa(_, audio):
-            import time as _time
-            with _playback_lock:
-                if _playback_proc is not None:
-                    return
-            # Also drop while speech is queued or within post-speak cooldown
-            if not _speech_queue.empty():
-                return
-            if (_time.time() - _tts_ended_at) < 1.2:
-                return
-            if not _voice_enabled:
-                return
-            try:
-                text = recognizer.recognize_google(audio)
-                if text and text.strip():
-                    # Try to strip echoed prefix; keep the user's real words
-                    cleaned, stripped = _strip_echo_prefix(text.strip())
-                    if stripped:
-                        if not cleaned or len(cleaned.split()) < 2:
-                            sys.stdout.write(f"\n[ECHO] Ignored: '{text.strip()}'\n")
-                            sys.stdout.flush()
-                            return
-                        sys.stdout.write(f"\n[ECHO trimmed → user said] {cleaned}\n")
-                        sys.stdout.flush()
-                        interrupt_queue.put(cleaned)
-                        return
-                    sys.stdout.write(f"\n[YOU] {text.strip()}\n")
-                    sys.stdout.flush()
-                    interrupt_queue.put(text.strip())
-            except Exception:
-                pass
-
-        _voice_stop_fn = recognizer.listen_in_background(
-            mic, _on_speech_pa, phrase_time_limit=20
-        )
-        _voice_enabled = True
-        return True
-    except Exception:
-        pass  # PyAudio not available, fall through to sounddevice path
-
-    # ── PATH 2: sounddevice — custom VAD loop, bypasses PyAudio entirely ─────
+    # ── sounddevice — custom VAD loop ─────────────────────────────────────────
     try:
         import sounddevice as sd
     except ImportError:
