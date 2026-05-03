@@ -381,18 +381,43 @@ def main() -> None:
         except FileNotFoundError:
             pass
 
+    def _pid_alive(p: int) -> bool:
+        """Return True if a process with that PID is currently running."""
+        try:
+            os.kill(p, 0)
+            return True
+        except (ProcessLookupError, OSError):
+            return False
+        except PermissionError:
+            return True  # exists but we can't signal it (Windows)
+
     def get_other_goals() -> list:
-        """Read what other PinPoint instances are currently building."""
+        """Read goals of other live PinPoint instances; delete stale lock files."""
         goals = []
         for fname in os.listdir(LOCK_DIR):
-            if fname.startswith("session_") and fname.endswith(".json") and fname != f"session_{pid}.json":
+            if not (fname.startswith("session_") and fname.endswith(".json")):
+                continue
+            if fname == f"session_{pid}.json":
+                continue
+            fpath = os.path.join(LOCK_DIR, fname)
+            try:
+                with open(fpath) as f:
+                    data = json.load(f)
+                other_pid = data.get("pid", 0)
+                goal = data.get("goal", "")
+                if not goal or goal.strip().lower() in ("deciding...", "thinking..."):
+                    os.remove(fpath)
+                    continue
+                if other_pid and not _pid_alive(other_pid):
+                    os.remove(fpath)  # clean up zombie lock file
+                    continue
+                goals.append(goal)
+            except Exception:
                 try:
-                    with open(os.path.join(LOCK_DIR, fname)) as f:
-                        data = json.load(f)
-                    goals.append(data.get("goal", ""))
+                    os.remove(fpath)  # remove corrupt lock file
                 except Exception:
                     pass
-        return [g for g in goals if g]
+        return goals
 
     session = 0
     while True:
