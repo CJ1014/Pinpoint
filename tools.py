@@ -175,7 +175,7 @@ def start_voice_listener(interrupt_queue) -> bool:
 
     SAMPLE_RATE = 16000
     CHUNK = 1024          # frames per callback (~64 ms)
-    SILENCE_CHUNKS = 12   # chunks of silence that end a phrase (~0.75 s)
+    SILENCE_CHUNKS = 5    # chunks of silence that end a phrase (~0.32 s)
 
     # Calibrate energy threshold from 0.5 s of ambient noise
     try:
@@ -196,9 +196,12 @@ def start_voice_listener(interrupt_queue) -> bool:
         audio_q.put(bytes(indata))
 
     def _sd_thread():
+        import time as _time
         recording = False
         buf = b""
         silence_count = 0
+        last_speaking_at = 0.0   # timestamp when TTS playback last stopped
+        POST_SPEAK_COOLDOWN = 1.2  # seconds to ignore mic after PinPoint finishes talking
 
         try:
             with sd.RawInputStream(
@@ -214,17 +217,28 @@ def start_voice_listener(interrupt_queue) -> bool:
                     except _iq.Empty:
                         continue
 
-                    # Don't transcribe while PinPoint is speaking
+                    # Track whether PinPoint is currently speaking
                     with _playback_lock:
-                        if _playback_proc is not None:
-                            buf = b""
-                            recording = False
-                            silence_count = 0
-                            continue
+                        currently_speaking = _playback_proc is not None
+
+                    if currently_speaking:
+                        # Flush buffer — don't record PinPoint's own voice
+                        buf = b""
+                        recording = False
+                        silence_count = 0
+                        last_speaking_at = _time.time()
+                        continue
+
+                    # Cooldown after TTS ends — room echo takes a moment to die
+                    if _time.time() - last_speaking_at < POST_SPEAK_COOLDOWN:
+                        buf = b""
+                        recording = False
+                        silence_count = 0
+                        continue
 
                     n = len(data) // 2
                     samples = struct.unpack(f"{n}h", data)
-                    rms = (sum(s * s for s in samples) / n) ** 0.5
+                    rms = (sum(int(s) * int(s) for s in samples) / n) ** 0.5
 
                     if rms > energy_threshold:
                         recording = True
