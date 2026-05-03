@@ -791,11 +791,13 @@ def done(summary: str, satisfaction: int = 3, files: str = "",
             f"Do NOT finish yet. Read your main file, identify what's wrong, fix it, and try again. "
             f"Only call done when satisfaction >= 3. What specific problem needs fixing?"
         )
-    if creativity <= 1:
+    if creativity <= 1 and not summary.lower().startswith("user requested"):
         return (
             f"BLOCKED: Creativity score of 1/5 means you copied an existing idea. "
             f"Add a genuinely novel twist — an unexpected mechanic, a surprising combination, "
-            f"something no one would expect. Improve it and call done with creativity >= 2."
+            f"something no one would expect. Improve it and call done with creativity >= 2. "
+            f"(If the user explicitly asked for something intentionally simple, start your "
+            f"summary with 'User requested' to bypass this check.)"
         )
     save_memory("projects", summary, satisfaction)
 
