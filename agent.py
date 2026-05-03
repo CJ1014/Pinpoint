@@ -1262,6 +1262,11 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                     result = toggle_voice()
                 print(f"\n{result}\n")
                 logger.info("[VOICE] %s", result)
+            elif interrupt_msg.lower() == "/voice":
+                from tools import toggle_voice_input
+                result = toggle_voice_input()
+                print(f"\n{result}\n")
+                logger.info("[VOICE INPUT] %s", result)
                 continue  # Resume the session, don't inject anything
             elif interrupt_msg.lower() == "/next":
                 print(f"\n[SKIP] Forcing move to new project.\n")

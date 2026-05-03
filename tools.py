@@ -89,6 +89,108 @@ def toggle_voice() -> str:
         _drain_queue()
     return "Voice muted." if _muted else "Voice unmuted."
 
+
+# ── Voice input (microphone → interrupt queue) ───────────────
+_voice_stop_fn = None   # callable returned by listen_in_background
+_voice_enabled = False
+
+
+def start_voice_listener(interrupt_queue) -> bool:
+    """Start background microphone listening; transcribed speech → interrupt_queue.
+    Returns True if the microphone started successfully."""
+    global _voice_stop_fn, _voice_enabled
+
+    # Auto-install SpeechRecognition
+    try:
+        import speech_recognition as sr
+    except ImportError:
+        print("[VOICE] Installing SpeechRecognition...", flush=True)
+        subprocess.run([sys.executable, "-m", "pip", "install", "SpeechRecognition", "-q"])
+        try:
+            import speech_recognition as sr
+        except ImportError:
+            print("[VOICE] Could not install SpeechRecognition.")
+            return False
+
+    # Try pyaudio first, then sounddevice
+    mic = None
+    for audio_pkg in ("pyaudio", "sounddevice"):
+        try:
+            __import__(audio_pkg)
+            mic = sr.Microphone()
+            break
+        except Exception:
+            try:
+                subprocess.run(
+                    [sys.executable, "-m", "pip", "install", audio_pkg, "-q"],
+                    capture_output=True,
+                )
+                __import__(audio_pkg)
+                mic = sr.Microphone()
+                break
+            except Exception:
+                continue
+
+    if mic is None:
+        print("[VOICE] No audio input library available (tried pyaudio, sounddevice).")
+        return False
+
+    recognizer = sr.Recognizer()
+    recognizer.pause_threshold = 0.9        # seconds of silence = phrase complete
+    recognizer.dynamic_energy_threshold = True
+
+    # Brief ambient noise calibration
+    try:
+        with mic as source:
+            recognizer.adjust_for_ambient_noise(source, duration=0.8)
+    except Exception:
+        pass
+
+    def _on_speech(_, audio):
+        # Don't transcribe while PinPoint is speaking (prevents echo)
+        with _playback_lock:
+            if _playback_proc is not None:
+                return
+        if not _voice_enabled:
+            return
+        try:
+            import speech_recognition as _sr
+            text = recognizer.recognize_google(audio)
+            if text and text.strip():
+                sys.stdout.write(f"\n[YOU] {text.strip()}\n")
+                sys.stdout.flush()
+                interrupt_queue.put(text.strip())
+        except Exception:
+            pass  # silence / API hiccup
+
+    try:
+        _voice_stop_fn = recognizer.listen_in_background(
+            mic, _on_speech, phrase_time_limit=20
+        )
+        _voice_enabled = True
+        return True
+    except Exception as e:
+        print(f"[VOICE] Could not start microphone: {e}")
+        return False
+
+
+def stop_voice_listener() -> None:
+    global _voice_stop_fn, _voice_enabled
+    _voice_enabled = False
+    if _voice_stop_fn:
+        try:
+            _voice_stop_fn(wait_for_stop=False)
+        except Exception:
+            pass
+        _voice_stop_fn = None
+
+
+def toggle_voice_input() -> str:
+    global _voice_enabled
+    _voice_enabled = not _voice_enabled
+    return "Voice input on." if _voice_enabled else "Voice input paused."
+
+
 # ── Per-project folder tracking ──────────────────────────────
 _current_project_dir = None  # set by set_session_goal
 

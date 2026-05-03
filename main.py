@@ -16,10 +16,10 @@ BANNER = r"""
  |  __/| | | | |  __/ (_) | | | | | |_
  |_|   |_|_| |_|_|   \___/|_|_| |_|\__|
 
- Autonomous AI with full conversation
- Ctrl+C to stop  |  /mute /unmute /toggle = voice
+ Autonomous AI — talk to her, she talks back
+ Just speak  |  /mute /unmute = TTS  |  /voice = mic toggle
  /dev = self-improvement  |  sandbox = upgrade 3D viewer
- Press Enter on empty line to start/resume autonomous session
+ Blank Enter = start/resume autonomous session
 """
 
 LOCK_DIR = os.path.join(os.path.dirname(__file__), "output")
@@ -278,7 +278,8 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
             break
 
     print("\n" + "─" * 60)
-    print("  Chat with PinPoint — blank line to start autonomous session")
+    print("  Talk to PinPoint — speak or type")
+    print("  Blank Enter = start autonomous session")
     print("─" * 60)
     print("\nYou: ", end="", flush=True)
 
@@ -296,7 +297,7 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
             print()
             return last_msg
 
-        # Voice control
+        # Voice / TTS control
         if msg.lower() in ("/mute", "/unmute", "/toggle"):
             from tools import mute_voice, unmute_voice, toggle_voice
             if msg.lower() == "/mute":
@@ -306,6 +307,11 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
             else:
                 r = toggle_voice()
             print(f"\n{r}")
+            print("\nYou: ", end="", flush=True)
+            continue
+        if msg.lower() == "/voice":
+            from tools import toggle_voice_input
+            print(f"\n{toggle_voice_input()}")
             print("\nYou: ", end="", flush=True)
             continue
 
@@ -396,6 +402,14 @@ def main() -> None:
     interrupt_queue: queue.Queue = queue.Queue()
     input_thread = threading.Thread(target=_input_listener, args=(interrupt_queue,), daemon=True)
     input_thread.start()
+
+    # Start microphone voice listener
+    from tools import start_voice_listener
+    voice_ok = start_voice_listener(interrupt_queue)
+    if voice_ok:
+        print("  Voice input      : active — just speak")
+    else:
+        print("  Voice input      : unavailable (type instead)")
 
     # Command-line order overrides interactive chat
     order = " ".join(sys.argv[1:]).strip() if len(sys.argv) > 1 else ""
