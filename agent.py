@@ -71,6 +71,22 @@ def _free_thought() -> str:
     except Exception:
         return ""
 
+def _looks_like_error(result_lower: str) -> bool:
+    """Detect actual error returns from a tool, not strings that merely
+    contain the word 'error' (e.g. 'no errors', 'fixed errors', 'error-free').
+    """
+    if not result_lower:
+        return False
+    markers = ("error:", "errors:", "traceback", "failed:", "blocked:",
+              "rejected:", "exception:", "syntax error", "validation error",
+              "permission denied", "not found:", "could not")
+    if any(m in result_lower for m in markers):
+        return True
+    if result_lower.startswith(("error", "rejected", "failed", "blocked", "traceback")):
+        return True
+    return False
+
+
 def _build_voice_line(name: str, inp: dict, result: str) -> str:
     """Build a natural spoken line from tool context — no extra LLM call needed.
 
@@ -79,7 +95,7 @@ def _build_voice_line(name: str, inp: dict, result: str) -> str:
     Returns "" to skip speaking.
     """
     r = result.lower()
-    is_error = ("error" in r or "traceback" in r or "failed" in r or "rejected" in r)
+    is_error = _looks_like_error(r)
 
     if name == "set_session_goal" and not is_error:
         goal = inp.get("goal", "something")
@@ -1499,7 +1515,7 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 _label = inp.get("summary", "session done")[:80]
             else:
                 _label = name
-            if "error" in result.lower() or "failed" in result.lower() or "rejected" in result.lower():
+            if _looks_like_error(result.lower()):
                 _ev_type = "error"
                 _ws_status = "error"
             emit_world_event(session_num, _current_goal, _ws_status, iteration, _ev_type, _label)

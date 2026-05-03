@@ -108,16 +108,12 @@ def _normalize_for_echo(s: str) -> str:
 def _is_echo(user_text: str, _unused: str = "") -> bool:
     """Return True if user_text is likely an echo of recent PinPoint speech.
 
-    Checks against a rolling 30-second buffer of everything PinPoint has said.
-    Multiple strategies — any one matching = echo:
-      1. Substring match (user_text appears inside a spoken line)
-      2. Reverse substring (a spoken line appears inside user_text)
-      3. Word-overlap ratio >= 0.6 (most of the user's words are in spoken text)
-      4. SequenceMatcher ratio >= 0.55 (loose char-level similarity)
-
-    Very-short transcriptions (<= 2 words) are blocked unless those words
-    appear in recent speech, since "yeah", "okay", "hello" are easy false
-    positives but also easy echoes.
+    Aggressive multi-strategy check against the 30-second spoken buffer:
+      1. Substring match either direction
+      2. Any 5 consecutive user words appear in a spoken line — catches cases
+         where the mic captured PinPoint's voice + user's response merged
+      3. Word-overlap ratio >= 0.45 (~half the words match)
+      4. SequenceMatcher ratio >= 0.45 (loose char-level similarity)
     """
     import time as _time
     import difflib
@@ -128,12 +124,13 @@ def _is_echo(user_text: str, _unused: str = "") -> bool:
     user_norm = _normalize_for_echo(user_text)
     if not user_norm:
         return False
-    user_words = set(user_norm.split())
+    user_words_list = user_norm.split()
+    if not user_words_list:
+        return False
+    user_set = set(user_words_list)
 
     now = _time.time()
-    # Filter buffer to last 30s
     recent = [(t, txt) for (t, txt) in _recent_spoken if now - t < 30.0]
-
     if not recent:
         return False
 
@@ -141,21 +138,31 @@ def _is_echo(user_text: str, _unused: str = "") -> bool:
         spoken_norm = _normalize_for_echo(spoken)
         if not spoken_norm:
             continue
+        spoken_set = set(spoken_norm.split())
+        if not spoken_set:
+            continue
 
         # 1. Substring either way
         if user_norm in spoken_norm or spoken_norm in user_norm:
             return True
 
-        # 2. Word overlap
-        spoken_words = set(spoken_norm.split())
-        if user_words and spoken_words:
-            overlap = len(user_words & spoken_words) / len(user_words)
-            if overlap >= 0.6:
-                return True
+        # 2. Any 5 consecutive user words appear verbatim in a spoken line.
+        # Most reliable signal — the mic merged PinPoint's voice into the user's
+        # transcription, so a long phrase from her speech sits inside user_text.
+        if len(user_words_list) >= 5:
+            for i in range(len(user_words_list) - 4):
+                window = " ".join(user_words_list[i:i + 5])
+                if window in spoken_norm:
+                    return True
 
-        # 3. SequenceMatcher fuzzy match
+        # 3. Word overlap (relative to user, since user_text may be a subset)
+        overlap = len(user_set & spoken_set) / len(user_set)
+        if overlap >= 0.45:
+            return True
+
+        # 4. SequenceMatcher fuzzy match
         ratio = difflib.SequenceMatcher(None, user_norm, spoken_norm).ratio()
-        if ratio >= 0.55:
+        if ratio >= 0.45:
             return True
 
     return False
