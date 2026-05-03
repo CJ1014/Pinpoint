@@ -109,6 +109,58 @@ def _normalize_for_echo(s: str) -> str:
     return " ".join(s.split())
 
 
+def _strip_echo_prefix(user_text: str) -> tuple:
+    """Strip a leading run of words that match recent PinPoint speech.
+
+    Mic often captures the tail of PinPoint's voice merged with the user's
+    real input, e.g. 'what would you like to discuss can you make me an html'.
+    The first part is echo; the rest is the user's actual request.
+
+    Returns (cleaned_text, was_stripped). cleaned_text may be empty if the
+    entire transcription was echo. Words are stripped from the original
+    (case-preserving) text using the normalized comparison.
+    """
+    import time as _time
+
+    if not user_text:
+        return ("", False)
+
+    user_norm = _normalize_for_echo(user_text)
+    user_norm_words = user_norm.split()
+    if not user_norm_words:
+        return ("", False)
+
+    now = _time.time()
+    recent = [(t, txt) for (t, txt) in _recent_spoken if now - t < 30.0]
+    if not recent:
+        return (user_text, False)
+
+    # Build a single normalized blob of all recent spoken text — much easier
+    # to ask 'does this phrase appear anywhere PinPoint just said?'
+    spoken_blob = " ".join(_normalize_for_echo(s) for _t, s in recent)
+
+    # Find the longest prefix of user_norm_words that appears in spoken_blob.
+    # Walk from longest possible prefix down to length 3.
+    longest_match = 0
+    for prefix_len in range(len(user_norm_words), 2, -1):
+        prefix = " ".join(user_norm_words[:prefix_len])
+        if prefix in spoken_blob:
+            longest_match = prefix_len
+            break
+
+    if longest_match == 0:
+        return (user_text, False)
+
+    # Map normalized-word index back to original-text words. The original
+    # may have punctuation/case, but word count after split() should match
+    # roughly. Use a simple split-on-whitespace.
+    orig_words = user_text.split()
+    if longest_match >= len(orig_words):
+        return ("", True)  # entire thing was echo
+    cleaned = " ".join(orig_words[longest_match:]).strip()
+    return (cleaned, True)
+
+
 def _is_echo(user_text: str, _unused: str = "") -> bool:
     """Return True if user_text is likely an echo of recent PinPoint speech.
 
@@ -228,10 +280,16 @@ def start_voice_listener(interrupt_queue) -> bool:
             try:
                 text = recognizer.recognize_google(audio)
                 if text and text.strip():
-                    # Echo detection: discard if 80%+ similar to what PinPoint just said
-                    if _is_echo(text, _last_spoken_text):
-                        sys.stdout.write(f"\n[ECHO DETECTED] Ignored: '{text.strip()}'\n")
+                    # Try to strip echoed prefix; keep the user's real words
+                    cleaned, stripped = _strip_echo_prefix(text.strip())
+                    if stripped:
+                        if not cleaned or len(cleaned.split()) < 2:
+                            sys.stdout.write(f"\n[ECHO] Ignored: '{text.strip()}'\n")
+                            sys.stdout.flush()
+                            return
+                        sys.stdout.write(f"\n[ECHO trimmed → user said] {cleaned}\n")
                         sys.stdout.flush()
+                        interrupt_queue.put(cleaned)
                         return
                     sys.stdout.write(f"\n[YOU] {text.strip()}\n")
                     sys.stdout.flush()
@@ -372,9 +430,15 @@ def start_voice_listener(interrupt_queue) -> bool:
                                 audio_data = sr.AudioData(raw, SAMPLE_RATE, 2)
                                 text = recognizer.recognize_google(audio_data)
                                 if text and text.strip():
-                                    if _is_echo(text, _last_spoken_text):
-                                        sys.stdout.write(f"\n[ECHO DETECTED] Ignored: '{text.strip()}'\n")
+                                    cleaned, stripped = _strip_echo_prefix(text.strip())
+                                    if stripped:
+                                        if not cleaned or len(cleaned.split()) < 2:
+                                            sys.stdout.write(f"\n[ECHO] Ignored: '{text.strip()}'\n")
+                                            sys.stdout.flush()
+                                            return
+                                        sys.stdout.write(f"\n[ECHO trimmed → user said] {cleaned}\n")
                                         sys.stdout.flush()
+                                        interrupt_queue.put(cleaned)
                                         return
                                     sys.stdout.write(f"\n[YOU] {text.strip()}\n")
                                     sys.stdout.flush()
