@@ -83,10 +83,24 @@ def _input_listener(interrupt_queue: queue.Queue) -> None:
                     if ch in ("\r", "\n"):
                         line = buf.strip()
                         buf = ""
+                        sys.stdout.write("\n")
+                        sys.stdout.flush()
                         if line:
-                            sys.stdout.write(f"\n[INPUT] {line}\n")
+                            sys.stdout.write(f"[INPUT] {line}\n")
                             sys.stdout.flush()
                             interrupt_queue.put(line)
+                        else:
+                            # Blank Enter — start/exit-chat signal.
+                            # Drain pending voice items so the signal isn't
+                            # queued behind ambient mic noise.
+                            try:
+                                while True:
+                                    interrupt_queue.get_nowait()
+                            except queue.Empty:
+                                pass
+                            interrupt_queue.put("")
+                            sys.stdout.write("[ENTER pressed — starting session]\n")
+                            sys.stdout.flush()
                     elif ch == "\x08":  # Backspace
                         if buf:
                             buf = buf[:-1]
