@@ -25,6 +25,7 @@ _playback_proc = None          # currently-running audio subprocess
 _playback_lock = threading.Lock()
 _tts_ended_at: float = 0.0     # time.time() when the last TTS playback finished
 _last_spoken_text: str = ""    # text PinPoint most recently spoke (for echo detection)
+_recent_spoken: list = []      # rolling buffer of (timestamp, text) for echo detection
 
 
 def _speech_worker() -> None:
@@ -97,20 +98,67 @@ _voice_stop_fn = None   # callable returned by listen_in_background
 _voice_enabled = False
 
 
-def _is_echo(user_text: str, pinpoint_spoke: str, threshold: float = 0.80) -> bool:
-    """Return True if user_text is likely an echo of what PinPoint just said.
+def _normalize_for_echo(s: str) -> str:
+    """Lowercase, strip punctuation, collapse whitespace — for fuzzy comparison."""
+    s = s.lower()
+    s = re.sub(r"[^\w\s']", " ", s)
+    return " ".join(s.split())
 
-    Uses string similarity — if the mic picked up what she just said (80%+ match),
-    it's probably echo, not the user speaking.
+
+def _is_echo(user_text: str, _unused: str = "") -> bool:
+    """Return True if user_text is likely an echo of recent PinPoint speech.
+
+    Checks against a rolling 30-second buffer of everything PinPoint has said.
+    Multiple strategies — any one matching = echo:
+      1. Substring match (user_text appears inside a spoken line)
+      2. Reverse substring (a spoken line appears inside user_text)
+      3. Word-overlap ratio >= 0.6 (most of the user's words are in spoken text)
+      4. SequenceMatcher ratio >= 0.55 (loose char-level similarity)
+
+    Very-short transcriptions (<= 2 words) are blocked unless those words
+    appear in recent speech, since "yeah", "okay", "hello" are easy false
+    positives but also easy echoes.
     """
-    if not pinpoint_spoke or not user_text:
-        return False
+    import time as _time
     import difflib
-    # Case-insensitive, normalize whitespace
-    a = " ".join(user_text.lower().split())
-    b = " ".join(pinpoint_spoke.lower().split())
-    ratio = difflib.SequenceMatcher(None, a, b).ratio()
-    return ratio > threshold
+
+    if not user_text:
+        return False
+
+    user_norm = _normalize_for_echo(user_text)
+    if not user_norm:
+        return False
+    user_words = set(user_norm.split())
+
+    now = _time.time()
+    # Filter buffer to last 30s
+    recent = [(t, txt) for (t, txt) in _recent_spoken if now - t < 30.0]
+
+    if not recent:
+        return False
+
+    for _ts, spoken in recent:
+        spoken_norm = _normalize_for_echo(spoken)
+        if not spoken_norm:
+            continue
+
+        # 1. Substring either way
+        if user_norm in spoken_norm or spoken_norm in user_norm:
+            return True
+
+        # 2. Word overlap
+        spoken_words = set(spoken_norm.split())
+        if user_words and spoken_words:
+            overlap = len(user_words & spoken_words) / len(user_words)
+            if overlap >= 0.6:
+                return True
+
+        # 3. SequenceMatcher fuzzy match
+        ratio = difflib.SequenceMatcher(None, user_norm, spoken_norm).ratio()
+        if ratio >= 0.55:
+            return True
+
+    return False
 
 
 def start_voice_listener(interrupt_queue) -> bool:
@@ -2501,11 +2549,16 @@ def speak(text: str, wait: bool = True) -> str:
     thread, so the voice never talks over itself.
     """
     global _last_spoken_text
+    import time as _time
     if not text or not text.strip():
         return "Nothing to speak."
     clean = text.strip()
     short = clean[:100] + "..." if len(clean) > 100 else clean
-    _last_spoken_text = clean  # Track for echo detection in voice input
+    _last_spoken_text = clean
+    # Append to rolling buffer for echo detection; trim entries older than 60s
+    now = _time.time()
+    _recent_spoken.append((now, clean))
+    _recent_spoken[:] = [(t, s) for (t, s) in _recent_spoken if now - t < 60.0]
     _speech_queue.put(clean)
     return f"🎤 Queued: '{short}'"
 
