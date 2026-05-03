@@ -2338,7 +2338,10 @@ def _play_audio(path: str) -> None:
     import time as _time
 
     def _run(cmd, **kwargs):
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
+        if platform.system() == "Windows" and "creationflags" not in kwargs:
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                stdin=subprocess.DEVNULL, **kwargs)
         with _playback_lock:
             _playback_proc = proc
         try:
