@@ -23,6 +23,7 @@ _speech_queue: _queue_mod.Queue = _queue_mod.Queue()
 _muted = False
 _playback_proc = None          # currently-running audio subprocess
 _playback_lock = threading.Lock()
+_tts_ended_at: float = 0.0     # time.time() when the last TTS playback finished
 
 
 def _speech_worker() -> None:
@@ -200,8 +201,7 @@ def start_voice_listener(interrupt_queue) -> bool:
         recording = False
         buf = b""
         silence_count = 0
-        last_speaking_at = 0.0   # timestamp when TTS playback last stopped
-        POST_SPEAK_COOLDOWN = 1.2  # seconds to ignore mic after PinPoint finishes talking
+        POST_SPEAK_COOLDOWN = 2.0  # seconds to ignore mic after TTS finishes
 
         try:
             with sd.RawInputStream(
@@ -217,20 +217,18 @@ def start_voice_listener(interrupt_queue) -> bool:
                     except _iq.Empty:
                         continue
 
-                    # Track whether PinPoint is currently speaking
+                    # Flush and ignore while PinPoint is actively speaking
                     with _playback_lock:
                         currently_speaking = _playback_proc is not None
-
                     if currently_speaking:
-                        # Flush buffer — don't record PinPoint's own voice
                         buf = b""
                         recording = False
                         silence_count = 0
-                        last_speaking_at = _time.time()
                         continue
 
-                    # Cooldown after TTS ends — room echo takes a moment to die
-                    if _time.time() - last_speaking_at < POST_SPEAK_COOLDOWN:
+                    # Cooldown uses the global _tts_ended_at stamp set by _play_audio
+                    # — works even if this thread was asleep the entire time TTS played
+                    if _time.time() - _tts_ended_at < POST_SPEAK_COOLDOWN:
                         buf = b""
                         recording = False
                         silence_count = 0
@@ -2309,7 +2307,8 @@ def dictionary_lookup(word: str) -> str:
 
 def _play_audio(path: str) -> None:
     """Play an audio file. Tracks the subprocess so mute can kill it instantly."""
-    global _playback_proc
+    global _playback_proc, _tts_ended_at
+    import time as _time
 
     def _run(cmd, **kwargs):
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
@@ -2323,6 +2322,8 @@ def _play_audio(path: str) -> None:
             with _playback_lock:
                 if _playback_proc is proc:
                     _playback_proc = None
+            # Stamp the moment TTS finished — voice listener uses this for cooldown
+            _tts_ended_at = _time.time()
 
     if platform.system() == "Windows":
         try:
