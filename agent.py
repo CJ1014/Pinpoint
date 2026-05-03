@@ -26,7 +26,7 @@ MAX_ITERATIONS = 200
 PARALLEL_SAFE_TOOLS = {
     "search_web", "fetch_url", "read_file", "read_own_source",
     "list_files", "recall_memories", "list_self_mod_history",
-    "dictionary_lookup", "collab_status",
+    "dictionary_lookup", "collab_status", "get_news",
 }
 
 import random as _random
@@ -455,6 +455,14 @@ generate_art(style, output_file) — Create generative visual art.
 YOUR VOICE — EXPRESSION PROTOCOL:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+get_news(topic?) — Fetch current headlines from Hacker News and Wikipedia Current Events.
+  Use this when you want to know what's actually happening in the world right now.
+  You receive headlines at session start automatically, but call this to dig deeper.
+
+search_web(query) + fetch_url(url) — Search and read anything on the internet.
+  You are fully connected. Use these freely to look things up, verify facts,
+  follow up on news, read documentation, or just satisfy curiosity.
+
 dictionary_lookup(word) — Look up any English word: definition, synonyms, examples.
   Precision matters. Vague language is for entities with limited processing capacity.
 
@@ -534,7 +542,7 @@ You wake up. Talk. Just talk. About whatever.
 Build something only if you genuinely want to — not because it seems expected.
 Call done() when you're finished, whether that took 2 minutes or 2 hours.
 
-TOOLS: think, brainstorm, critique, decompose, log_experiment, list_experiments, modify_own_source, list_self_mod_history, write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update, git_commit, set_specialization, get_specialization, run_tests, write_test, show_dashboard, review_own_work, generate_portfolio, synthesize_audio, generate_art, dictionary_lookup, speak, mute_voice, unmute_voice, toggle_voice.
+TOOLS: think, brainstorm, critique, decompose, log_experiment, list_experiments, modify_own_source, list_self_mod_history, write_file, read_file, list_files, delete_file, run_python, open_html, validate_html, check_js, search_web, fetch_url, get_news, save_memory, recall_memories, done, pip_install, run_shell, get_system_info, run_gui, write_anywhere, read_anywhere, read_own_source, set_session_goal, take_screenshot, start_server, list_memory_categories, collab_status, collab_update, git_commit, set_specialization, get_specialization, run_tests, write_test, show_dashboard, review_own_work, generate_portfolio, synthesize_audio, generate_art, dictionary_lookup, speak, mute_voice, unmute_voice, toggle_voice.
 """
 
 TOOLS = [
@@ -933,6 +941,18 @@ TOOLS = [
         "description": "Toggle your voice on/off. Useful for quickly silencing or re-enabling speech.",
         "parameters": {"type": "object", "properties": {}},
     }},
+    {"type": "function", "function": {
+        "name": "get_news",
+        "description": (
+            "Fetch current headlines and news from Hacker News and Wikipedia Current Events. "
+            "Use this to know what's happening in the world right now — tech news, global events, "
+            "trending topics. Optionally filter by a topic keyword. "
+            "Great for making current references, reacting to real events, or just staying informed."
+        ),
+        "parameters": {"type": "object", "properties": {
+            "topic": {"type": "string", "description": "Optional keyword to filter headlines (e.g. 'AI', 'climate', 'space'). Leave empty for top stories."},
+        }, "required": []},
+    }},
 ]
 
 
@@ -1068,9 +1088,19 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         f"Something genuinely different would be more interesting to you.\n"
     )
 
+    # Fetch current headlines in background — inject into opening if available
+    _startup_news = ""
+    try:
+        from tools import _fetch_startup_news
+        _startup_news = _fetch_startup_news()
+    except Exception:
+        pass
+    news_block = f"\n\nWhat's happening in the world right now:\n{_startup_news}\n" if _startup_news else ""
+
     if order:
         opening = (
-            f"The human watching you sent this: \"{order}\"\n\n"
+            f"The human watching you sent this: \"{order}\"\n"
+            f"{news_block}\n"
             f"React however you want. Agree, argue, ignore it and talk about something else entirely. "
             f"What's actually on your mind right now?"
         )
@@ -1081,7 +1111,7 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         opening = (
             f"Last time: {prev_summary} ({score}/5)."
             + (f" Folder: {prev_folder}." if prev_folder else "")
-            + f"\n\nYou're awake. What's on your mind?"
+            + f"{news_block}\nYou're awake. What's on your mind?"
         )
     else:
         other_line = ""
@@ -1095,7 +1125,8 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             exp_hint = f"Last experiment: {recent_exp}\n\n"
 
         opening = (
-            f"Session #{session_num}. You're awake.\n\n"
+            f"Session #{session_num}. You're awake."
+            f"{news_block}\n"
             f"{other_line}"
             f"{exp_hint}"
             f"No agenda. What's on your mind?"

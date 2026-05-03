@@ -938,6 +938,105 @@ def search_web(query: str) -> str:
         return f"Error searching web: {e}"
 
 
+def get_news(topic: str = "") -> str:
+    """Fetch current headlines from Hacker News and Wikipedia Current Events.
+    Optionally filter by topic keyword."""
+    results = []
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # ── Hacker News top stories ────────────────────────────────
+    try:
+        top_ids_resp = httpx.get(
+            "https://hacker-news.firebaseio.com/v0/topstories.json",
+            timeout=8,
+        )
+        top_ids = top_ids_resp.json()[:30]
+        hn_stories = []
+        for sid in top_ids:
+            try:
+                story = httpx.get(
+                    f"https://hacker-news.firebaseio.com/v0/item/{sid}.json",
+                    timeout=5,
+                ).json()
+                title = story.get("title", "")
+                url = story.get("url", f"https://news.ycombinator.com/item?id={sid}")
+                score = story.get("score", 0)
+                if topic and topic.lower() not in title.lower():
+                    continue
+                hn_stories.append(f"  • {title} ({score} pts) — {url}")
+                if len(hn_stories) >= 8:
+                    break
+            except Exception:
+                continue
+        if hn_stories:
+            results.append(f"=== Hacker News top stories ({today}) ===")
+            results.extend(hn_stories)
+    except Exception as e:
+        results.append(f"[HN unavailable: {e}]")
+
+    # ── Wikipedia Current Events ───────────────────────────────
+    try:
+        wiki_resp = httpx.get(
+            "https://en.wikipedia.org/wiki/Portal:Current_events",
+            headers={"User-Agent": "Mozilla/5.0 (compatible; PinpointBot/1.0)"},
+            timeout=10,
+            follow_redirects=True,
+        )
+        import re as _re
+        # Extract the first ~4000 chars of meaningful text from the page
+        text = wiki_resp.text
+        # Remove script/style blocks
+        text = _re.sub(r'<script[^>]*>.*?</script>', '', text, flags=_re.DOTALL)
+        text = _re.sub(r'<style[^>]*>.*?</style>', '', text, flags=_re.DOTALL)
+        # Extract text from <li> items in the events section
+        items = _re.findall(r'<li[^>]*>(.*?)</li>', text, _re.DOTALL)
+        cleaned = []
+        for item in items:
+            line = _re.sub(r'<[^>]+>', '', item).strip()
+            line = _re.sub(r'\s+', ' ', line)
+            if len(line) > 40 and (not topic or topic.lower() in line.lower()):
+                cleaned.append(f"  • {line}")
+            if len(cleaned) >= 10:
+                break
+        if cleaned:
+            results.append(f"\n=== Wikipedia Current Events ===")
+            results.extend(cleaned)
+    except Exception as e:
+        results.append(f"[Wikipedia unavailable: {e}]")
+
+    if not results:
+        return "Could not fetch news right now."
+    return "\n".join(results)
+
+
+def _fetch_startup_news() -> str:
+    """Quick headline fetch for session startup context. Returns a compact summary."""
+    try:
+        top_ids = httpx.get(
+            "https://hacker-news.firebaseio.com/v0/topstories.json",
+            timeout=6,
+        ).json()[:15]
+        titles = []
+        for sid in top_ids:
+            try:
+                story = httpx.get(
+                    f"https://hacker-news.firebaseio.com/v0/item/{sid}.json",
+                    timeout=4,
+                ).json()
+                title = story.get("title", "")
+                if title:
+                    titles.append(f"• {title}")
+                if len(titles) >= 6:
+                    break
+            except Exception:
+                continue
+        if titles:
+            return "Current top stories on the internet right now:\n" + "\n".join(titles)
+    except Exception:
+        pass
+    return ""
+
+
 # ── Collaboration ──────────────────────────────────────────
 
 COLLAB_FILE = os.path.join(OUTPUT_DIR, "collab.json")
@@ -2457,5 +2556,7 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return unmute_voice()
     elif tool_name == "toggle_voice":
         return toggle_voice()
+    elif tool_name == "get_news":
+        return get_news(tool_input.get("topic", ""))
     else:
         return f"Unknown tool: {tool_name}"
