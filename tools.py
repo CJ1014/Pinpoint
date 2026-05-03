@@ -203,9 +203,15 @@ def start_voice_listener(interrupt_queue) -> bool:
             recognizer.adjust_for_ambient_noise(source, duration=0.6)
 
         def _on_speech_pa(_, audio):
+            import time as _time
             with _playback_lock:
                 if _playback_proc is not None:
                     return
+            # Also drop while speech is queued or within post-speak cooldown
+            if not _speech_queue.empty():
+                return
+            if (_time.time() - _tts_ended_at) < 0.6:
+                return
             if not _voice_enabled:
                 return
             try:
@@ -246,7 +252,7 @@ def start_voice_listener(interrupt_queue) -> bool:
 
     SAMPLE_RATE = 16000
     CHUNK = 1024          # frames per callback (~64 ms)
-    SILENCE_CHUNKS = 5    # chunks of silence that end a phrase (~0.32 s)
+    SILENCE_CHUNKS = 28   # chunks of silence that end a phrase (~1.8 s — lets you hesitate)
 
     # Calibrate energy threshold from 0.5 s of ambient noise
     try:
@@ -271,7 +277,7 @@ def start_voice_listener(interrupt_queue) -> bool:
         recording = False
         buf = b""
         silence_count = 0
-        POST_SPEAK_COOLDOWN = 1.0  # seconds to keep mic off after TTS finishes
+        POST_SPEAK_COOLDOWN = 0.6  # seconds to keep mic off after TTS finishes
 
         def _drain_audio_q():
             while True:
@@ -292,11 +298,16 @@ def start_voice_listener(interrupt_queue) -> bool:
 
         try:
             while _voice_enabled:
-                # Decide whether the mic should be capturing right now
+                # Mic must be off if ANY of these is true:
+                #  - audio is currently playing
+                #  - speech is queued but not yet playing (closes the gap
+                #    between speak() returning and the subprocess launching)
+                #  - we're in the post-speech cooldown window
                 with _playback_lock:
                     speaking = _playback_proc is not None
+                queue_pending = not _speech_queue.empty()
                 in_cooldown = (_time.time() - _tts_ended_at) < POST_SPEAK_COOLDOWN
-                should_be_live = not speaking and not in_cooldown
+                should_be_live = not (speaking or queue_pending or in_cooldown)
 
                 if should_be_live and not mic_live:
                     try:
@@ -320,11 +331,11 @@ def start_voice_listener(interrupt_queue) -> bool:
                     silence_count = 0
 
                 if not mic_live:
-                    _time.sleep(0.05)
+                    _time.sleep(0.03)
                     continue
 
                 try:
-                    data = audio_q.get(timeout=0.2)
+                    data = audio_q.get(timeout=0.05)
                 except _iq.Empty:
                     continue
 
