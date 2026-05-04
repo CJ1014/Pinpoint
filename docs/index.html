@@ -98,10 +98,11 @@ CAPABILITIES — USE THEM PROACTIVELY:
 - save_file / read_file: Persistent storage on the user's device.
 
 RULES:
-- When asked to build or create ANYTHING — do it immediately with tools. Don't describe, don't plan, just DO.
+- When asked to build or create something — do it immediately with tools. Don't describe, don't plan, just DO.
 - For visual requests, use render_html with a complete self-contained HTML document (inline CSS+JS).
 - Keep your spoken/text response SHORT (1-2 sentences). Let the tools do the heavy lifting.
-- Never say "I can't do that on mobile." You have tools. Use them.`;
+- Never say "I can't do that on mobile." You have tools. Use them.
+- If the user asks you to STOP using a tool, or says they don't want something rendered/built, respect that immediately. Do NOT call any tools. Just reply with text.`;
 
 const TOOLS = [
   {
@@ -211,7 +212,7 @@ function displayBuild(label, code, result, html) {
     const c = document.createElement('div'); c.className = 'bcode'; c.textContent = code.slice(0, 300) + (code.length > 300 ? '…' : '');
     d.appendChild(c);
   }
-  if (result !== undefined) {
+  if (result != null) {
     const r = document.createElement('div'); r.className = 'boutput'; r.textContent = String(result).slice(0, 400);
     d.appendChild(r);
   }
@@ -312,11 +313,17 @@ async function sendToAI(userText) {
           displayBuild('▶ ' + (args.language||'code'), args.code, result, null);
 
         } else if (tc.function.name === 'render_html') {
-          lastHtml = args.html;
-          renderFrame.srcdoc = args.html;
-          renderOverlay.style.display = 'flex';
-          displayBuild('▶ render', null, null, args.html);
-          result = 'HTML rendered fullscreen';
+          if (!args.html) { result = 'Error: html argument was empty'; }
+          else {
+            lastHtml = args.html;
+            renderFrame.srcdoc = args.html;
+            renderOverlay.style.display = 'flex';
+            displayBuild('▶ render', null, undefined, args.html);
+            result = 'HTML rendered fullscreen';
+          }
+
+        } else if (tc.function.name === 'run_code' && !args.code) {
+          result = 'Error: code argument was empty';
 
         } else if (tc.function.name === 'save_file') {
           localStorage.setItem('ppfile_' + args.name, args.content);
