@@ -1,2 +1,4 @@
 openai
 httpx
+sounddevice
+numpy
