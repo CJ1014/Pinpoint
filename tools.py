@@ -280,17 +280,29 @@ def start_voice_listener(interrupt_queue) -> bool:
     SILENCE_CHUNKS = 28   # chunks of silence that end a phrase (~1.8 s — lets you hesitate)
 
     # Calibrate energy threshold from 0.5 s of ambient noise
-    try:
-        ambient = sd.rec(
-            int(0.5 * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1, dtype="int16"
-        )
-        sd.wait()
-        # Cast to Python int before squaring to avoid numpy int16 overflow
-        flat = [int(s) for row in ambient for s in row]
-        ambient_rms = (sum(s * s for s in flat) / max(len(flat), 1)) ** 0.5
-        energy_threshold = max(ambient_rms * 3.5, 400)
-    except Exception:
-        energy_threshold = 500
+    energy_threshold = 500  # fallback default
+    _calib_result = [None]  # list so closure can mutate it
+
+    def _calibrate():
+        try:
+            ambient = sd.rec(
+                int(0.5 * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1, dtype="int16"
+            )
+            sd.wait()
+            # Cast to Python int before squaring to avoid numpy int16 overflow
+            flat = [int(s) for row in ambient for s in row]
+            ambient_rms = (sum(s * s for s in flat) / max(len(flat), 1)) ** 0.5
+            _calib_result[0] = max(ambient_rms * 3.5, 400)
+        except Exception:
+            pass
+
+    # Calibrate with 3-second timeout (if PortAudio DLL is missing, sd.rec hangs)
+    calib_thread = threading.Thread(target=_calibrate, daemon=True)
+    calib_thread.start()
+    calib_thread.join(timeout=3.0)
+
+    if _calib_result[0] is not None:
+        energy_threshold = _calib_result[0]
 
     audio_q: _iq.Queue = _iq.Queue()
 
@@ -311,14 +323,19 @@ def start_voice_listener(interrupt_queue) -> bool:
                 except _iq.Empty:
                     break
 
-        stream = sd.RawInputStream(
-            samplerate=SAMPLE_RATE,
-            channels=1,
-            dtype="int16",
-            blocksize=CHUNK,
-            callback=_sd_callback,
-        )
-        stream.start()
+        try:
+            stream = sd.RawInputStream(
+                samplerate=SAMPLE_RATE,
+                channels=1,
+                dtype="int16",
+                blocksize=CHUNK,
+                callback=_sd_callback,
+            )
+            stream.start()
+        except Exception:
+            # PortAudio DLL missing or audio device initialization failed
+            return
+
         mic_live = True
 
         try:
