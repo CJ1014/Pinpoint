@@ -83,6 +83,12 @@ def _input_listener(interrupt_queue: queue.Queue) -> None:
     """
     if sys.platform == "win32":
         import msvcrt
+        # Frozen exe: wait for console to fully init before reading input
+        if getattr(sys, 'frozen', False):
+            time.sleep(1.0)
+            # Drain any stray bytes the bootloader left in the console buffer
+            while msvcrt.kbhit():
+                msvcrt.getwch()
         buf = ""
         while True:
             try:

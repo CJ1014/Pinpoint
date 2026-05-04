@@ -1,21 +1,26 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+
+sd_datas = collect_data_files('sounddevice')
+sd_bins  = collect_dynamic_libs('sounddevice')
 
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[],
+    binaries=sd_bins,
     datas=[
         ('viewer.html', '.'),
         ('spec.html', '.'),
+        *sd_datas,
     ],
     hiddenimports=[
         'sounddevice',
+        '_sounddevice_data',
         'numpy',
         'numpy.core._methods',
         'numpy.lib.format',
         'openai',
         'httpx',
-        '_sounddevice_data',
     ],
     hookspath=[],
     hooksconfig={},
@@ -45,5 +50,4 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
 )
