@@ -7,7 +7,15 @@ import random
 import threading
 import logging
 
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
+# Frozen exe (PyInstaller) path resolution
+if getattr(sys, 'frozen', False):
+    _EXE_DIR = os.path.dirname(sys.executable)          # next to the .exe (persistent)
+    _BUNDLE_DIR = getattr(sys, '_MEIPASS', _EXE_DIR)    # bundled read-only files
+else:
+    _EXE_DIR = os.path.dirname(os.path.abspath(__file__))
+    _BUNDLE_DIR = _EXE_DIR
+
+OUTPUT_DIR = os.path.join(_EXE_DIR, "output")
 
 BANNER = r"""
   ____  _       ____       _       _
@@ -22,7 +30,7 @@ BANNER = r"""
  Blank Enter = start/resume autonomous session
 """
 
-LOCK_DIR = os.path.join(os.path.dirname(__file__), "output")
+LOCK_DIR = os.path.join(_EXE_DIR, "output")
 
 REST_BETWEEN_SESSIONS = 5  # seconds to pause between sessions
 
@@ -207,7 +215,7 @@ def inject_bug() -> str:
 def _deploy_viewer() -> None:
     """Copy viewer.html from the Pinpoint root into output/ so the web server can serve it."""
     import shutil
-    src = os.path.join(os.path.dirname(__file__), "viewer.html")
+    src = os.path.join(_BUNDLE_DIR, "viewer.html")
     dst = os.path.join(OUTPUT_DIR, "viewer.html")
     if os.path.exists(src):
         try:

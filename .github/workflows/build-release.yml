@@ -1,0 +1,66 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller
+          pip install -r requirements.txt
+
+      - name: Build exe
+        run: pyinstaller pinpoint.spec
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: PinPoint ${{ github.ref_name }}
+          files: dist/PinPoint.exe
+          body: |
+            ## PinPoint ${{ github.ref_name }} — Windows Desktop
+
+            ### Requirements
+            - [Ollama](https://ollama.com) (local AI engine)
+
+            ### Setup
+            1. Install Ollama from https://ollama.com and let it start
+            2. Pull a model (run this in terminal):
+               ```
+               ollama pull llama3.3
+               ```
+            3. Download **PinPoint.exe** below and double-click it
+            4. Speak to her — she talks back
+
+            ### Controls
+            | Key | Action |
+            |-----|--------|
+            | Space | Toggle mic |
+            | /mute /unmute | Toggle TTS |
+            | Enter | Start autonomous build session |
+            | /dev | Self-improvement mode |
+            | /sandbox | Upgrade the 3D viewer |
+
+            ---
+
+            ### Mobile (iOS / Android)
+            Visit **https://cj1014.github.io/Pinpoint**
+            Tap Share → Add to Home Screen
+            Get a free API key at [console.groq.com](https://console.groq.com)
