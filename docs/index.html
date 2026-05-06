@@ -96,15 +96,14 @@ CAPABILITIES — USE THEM PROACTIVELY:
 - run_code: Execute Python, JavaScript, or bash. Use for math, data processing, file generation, anything computational.
 - render_html: Show a fullscreen visual — games, animations, charts, interactive UIs. Use this for ANYTHING visual or interactive.
 - save_file / read_file: Persistent storage on the user's device.
-- web_search: Search the web for current information, news, facts. You MUST call this any time the user asks about current events, recent releases, news, prices, scores, or anything that changes over time. NEVER say you don't have access to real-time info — you have web_search, use it.
+- Web search results are automatically provided to you when the user asks about current events — just summarise what you're given.
 
 RULES:
 - When asked to build or create something — do it immediately with tools. Don't describe, don't plan, just DO.
 - For visual requests, use render_html with a complete self-contained HTML document (inline CSS+JS).
 - Keep your spoken/text response SHORT (1-2 sentences). Let the tools do the heavy lifting.
 - Never say "I can't do that on mobile." You have tools. Use them.
-- NEVER claim you lack real-time information. Call web_search instead.
-- run_code runs in an OFFLINE sandbox — it has NO internet access. NEVER use run_code to fetch URLs, import requests, or access any website. For anything internet-related, ONLY use web_search.
+- run_code runs in an OFFLINE sandbox — it has NO internet access. Never use run_code to fetch URLs or make HTTP requests.
 - If the user asks you to STOP using a tool, or says they don't want something rendered/built, respect that immediately. Do NOT call any tools. Just reply with text.`;
 
 const TOOLS = [
@@ -163,20 +162,6 @@ const TOOLS = [
           name:{type:"string",description:"Filename to read"}
         },
         required:["name"]
-      }
-    }
-  },
-  {
-    type:"function",
-    function:{
-      name:"web_search",
-      description:"Search the web for current information. Use for news, recent events, facts you're unsure about, or anything time-sensitive.",
-      parameters:{
-        type:"object",
-        properties:{
-          query:{type:"string",description:"Search query"}
-        },
-        required:["query"]
       }
     }
   }
@@ -349,7 +334,7 @@ async function sendToAI(userText) {
         const reply = msg.content || '';
         const copOut = /real.?time|don.?t have access|cannot access|no access|up.?to.?date|training (data|cutoff)|large language model/i.test(reply);
         if (copOut && maxIter > 0) {
-          apiMsgs.push({role:'user', content:'You have a web_search tool available. Use it RIGHT NOW — call web_search immediately instead of making excuses about not having real-time access.'});
+          apiMsgs.push({role:'user', content:'Web search results were already provided to you above. Use them to answer the question.'});
           continue;
         }
         msgs.push({role:'user', content:userText});
@@ -370,7 +355,7 @@ async function sendToAI(userText) {
         if (tc.function.name === 'run_code') {
           // Block network attempts — Piston has no internet; redirect to web_search
           if (/import requests|urllib|http\.get|fetch\(|axios|wget|curl/i.test(args.code || '')) {
-            result = 'Error: run_code has no internet access. Use the web_search tool instead to fetch online data.';
+            result = 'Error: run_code has no internet access. Cannot make HTTP requests.';
             displayBuild('▶ ' + (args.language||'code'), args.code, result, null);
           } else {
           setStatus('running ' + args.language + '…');
@@ -400,18 +385,6 @@ async function sendToAI(userText) {
           result = localStorage.getItem('ppfile_' + args.name) || '(file not found)';
           setStatus('read ' + args.name);
 
-        } else if (tc.function.name === 'web_search') {
-          if (!args.query) { result = 'Error: query was empty'; }
-          else {
-            setStatus('searching…');
-            try {
-              const res = await fetch('https://s.jina.ai/' + encodeURIComponent(args.query), {
-                headers: { 'Accept': 'text/plain', 'X-No-Cache': 'true' }
-              });
-              result = res.ok ? (await res.text()).slice(0, 4000) : 'Search failed: HTTP ' + res.status;
-            } catch(e) { result = 'Search failed: ' + e.message; }
-            displayBuild('🔍 ' + args.query, null, result, null);
-          }
         }
 
         apiMsgs.push({role:'tool', tool_call_id:tc.id, content:String(result)});
