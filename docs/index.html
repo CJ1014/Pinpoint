@@ -273,13 +273,29 @@ function speak(text) {
 }
 
 async function autoSearch(query) {
+  // HN Algolia — free, CORS-enabled, no key needed
   try {
-    const res = await fetch('https://s.jina.ai/' + encodeURIComponent(query), {
-      headers: {'Accept':'text/plain','X-No-Cache':'true'}
-    });
-    if (!res.ok) return null;
-    return (await res.text()).slice(0, 3000);
-  } catch(e) { return null; }
+    const hn = await fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=8`);
+    if (hn.ok) {
+      const d = await hn.json();
+      if (d.hits && d.hits.length) {
+        return d.hits.map(h => `• ${h.title}\n  ${h.url||''}\n  Points: ${h.points} | Comments: ${h.num_comments}`).join('\n\n');
+      }
+    }
+  } catch(e) {}
+  // DuckDuckGo Instant Answers fallback — free, CORS-enabled
+  try {
+    const ddg = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`);
+    if (ddg.ok) {
+      const d = await ddg.json();
+      const parts = [];
+      if (d.AbstractText) parts.push(d.AbstractText);
+      if (d.Answer) parts.push(d.Answer);
+      (d.RelatedTopics||[]).slice(0,5).forEach(t => t.Text && parts.push('• ' + t.Text));
+      if (parts.length) return parts.join('\n\n');
+    }
+  } catch(e) {}
+  return null;
 }
 
 const SEARCH_TRIGGERS = /news|latest|newest|current|today|yesterday|recent|update|price|score|weather|release|stock|headline/i;
@@ -289,38 +305,34 @@ async function sendToAI(userText) {
   setOrb(''); setStatus('thinking…');
 
   // Auto-fetch web results for current-events queries and inject into context
-  let contextMsg = null;
+  let searchResults = null;
   if (SEARCH_TRIGGERS.test(userText)) {
     setStatus('searching…');
-    const results = await autoSearch(userText);
-    if (results) {
-      contextMsg = {role:'user', content:`[Web search results for "${userText}"]:\n${results}\n\n[Now answer the user's question using the above results. Do not search again.]`};
-      displayBuild('🔍 ' + userText, null, results, null);
-    }
+    searchResults = await autoSearch(userText);
+    if (searchResults) displayBuild('🔍 ' + userText, null, searchResults, null);
   }
 
-  // Build API message history — merge search context into user message to avoid consecutive user msgs
-  const finalUserContent = contextMsg
-    ? contextMsg.content + '\n\nMy question: ' + userText
+  // Build API message history
+  const finalUserContent = searchResults
+    ? `Here are live web results for my question:\n\n${searchResults}\n\nMy question: ${userText}\n\nPlease answer using the above results. Do not call any tools.`
     : userText;
   const apiMsgs = [
     ...msgs.slice(-16).map(m => ({role:m.role, content:m.content})),
     {role:'user', content:finalUserContent}
   ];
+  // When we have search results, disable tools so model just summarises
+  const activeTools = searchResults ? [] : TOOLS;
+  const toolChoice = searchResults ? undefined : 'auto';
 
   try {
     let maxIter = 10;
     while (maxIter-- > 0) {
+      const body = {model:MODELS[0], max_tokens:2000, messages:[{role:'system',content:SYSTEM}, ...apiMsgs]};
+      if (activeTools.length) { body.tools = activeTools; body.tool_choice = toolChoice; }
       const res = await fetch(API_URL, {
         method:'POST',
         headers:{'Authorization':'Bearer '+apiKey,'Content-Type':'application/json'},
-        body:JSON.stringify({
-          model:MODELS[0],
-          max_tokens:2000,
-          tools:TOOLS,
-          tool_choice:'auto',
-          messages:[{role:'system',content:SYSTEM}, ...apiMsgs]
-        })
+        body:JSON.stringify(body)
       });
 
       if (!res.ok) {
