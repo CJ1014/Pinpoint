@@ -272,13 +272,37 @@ function speak(text) {
   window.speechSynthesis.speak(u);
 }
 
+async function autoSearch(query) {
+  try {
+    const res = await fetch('https://s.jina.ai/' + encodeURIComponent(query), {
+      headers: {'Accept':'text/plain','X-No-Cache':'true'}
+    });
+    if (!res.ok) return null;
+    return (await res.text()).slice(0, 3000);
+  } catch(e) { return null; }
+}
+
+const SEARCH_TRIGGERS = /news|latest|newest|current|today|yesterday|recent|update|price|score|weather|release|stock|headline/i;
+
 async function sendToAI(userText) {
   displayMsg('user', userText);
   setOrb(''); setStatus('thinking…');
 
+  // Auto-fetch web results for current-events queries and inject into context
+  let contextMsg = null;
+  if (SEARCH_TRIGGERS.test(userText)) {
+    setStatus('searching…');
+    const results = await autoSearch(userText);
+    if (results) {
+      contextMsg = {role:'user', content:`[Web search results for "${userText}"]:\n${results}\n\n[Now answer the user's question using the above results. Do not search again.]`};
+      displayBuild('🔍 ' + userText, null, results, null);
+    }
+  }
+
   // Build API message history
   const apiMsgs = [
     ...msgs.slice(-16).map(m => ({role:m.role, content:m.content})),
+    ...(contextMsg ? [contextMsg] : []),
     {role:'user', content:userText}
   ];
 
