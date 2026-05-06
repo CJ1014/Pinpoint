@@ -299,11 +299,13 @@ async function sendToAI(userText) {
     }
   }
 
-  // Build API message history
+  // Build API message history — merge search context into user message to avoid consecutive user msgs
+  const finalUserContent = contextMsg
+    ? contextMsg.content + '\n\nMy question: ' + userText
+    : userText;
   const apiMsgs = [
     ...msgs.slice(-16).map(m => ({role:m.role, content:m.content})),
-    ...(contextMsg ? [contextMsg] : []),
-    {role:'user', content:userText}
+    {role:'user', content:finalUserContent}
   ];
 
   try {
