@@ -96,6 +96,7 @@ CAPABILITIES — USE THEM PROACTIVELY:
 - run_code: Execute Python, JavaScript, or bash. Use for math, data processing, file generation, anything computational.
 - render_html: Show a fullscreen visual — games, animations, charts, interactive UIs. Use this for ANYTHING visual or interactive.
 - save_file / read_file: Persistent storage on the user's device.
+- web_search: Search the web for current information, news, facts. Use whenever the user asks about something that may have changed or you're unsure about.
 
 RULES:
 - When asked to build or create something — do it immediately with tools. Don't describe, don't plan, just DO.
@@ -160,6 +161,20 @@ const TOOLS = [
           name:{type:"string",description:"Filename to read"}
         },
         required:["name"]
+      }
+    }
+  },
+  {
+    type:"function",
+    function:{
+      name:"web_search",
+      description:"Search the web for current information. Use for news, recent events, facts you're unsure about, or anything time-sensitive.",
+      parameters:{
+        type:"object",
+        properties:{
+          query:{type:"string",description:"Search query"}
+        },
+        required:["query"]
       }
     }
   }
@@ -333,6 +348,19 @@ async function sendToAI(userText) {
         } else if (tc.function.name === 'read_file') {
           result = localStorage.getItem('ppfile_' + args.name) || '(file not found)';
           setStatus('read ' + args.name);
+
+        } else if (tc.function.name === 'web_search') {
+          if (!args.query) { result = 'Error: query was empty'; }
+          else {
+            setStatus('searching…');
+            try {
+              const res = await fetch('https://s.jina.ai/' + encodeURIComponent(args.query), {
+                headers: { 'Accept': 'text/plain', 'X-No-Cache': 'true' }
+              });
+              result = res.ok ? (await res.text()).slice(0, 4000) : 'Search failed: HTTP ' + res.status;
+            } catch(e) { result = 'Search failed: ' + e.message; }
+            displayBuild('🔍 ' + args.query, null, result, null);
+          }
         }
 
         apiMsgs.push({role:'tool', tool_call_id:tc.id, content:String(result)});
