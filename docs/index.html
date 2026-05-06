@@ -96,13 +96,14 @@ CAPABILITIES — USE THEM PROACTIVELY:
 - run_code: Execute Python, JavaScript, or bash. Use for math, data processing, file generation, anything computational.
 - render_html: Show a fullscreen visual — games, animations, charts, interactive UIs. Use this for ANYTHING visual or interactive.
 - save_file / read_file: Persistent storage on the user's device.
-- web_search: Search the web for current information, news, facts. Use whenever the user asks about something that may have changed or you're unsure about.
+- web_search: Search the web for current information, news, facts. You MUST call this any time the user asks about current events, recent releases, news, prices, scores, or anything that changes over time. NEVER say you don't have access to real-time info — you have web_search, use it.
 
 RULES:
 - When asked to build or create something — do it immediately with tools. Don't describe, don't plan, just DO.
 - For visual requests, use render_html with a complete self-contained HTML document (inline CSS+JS).
 - Keep your spoken/text response SHORT (1-2 sentences). Let the tools do the heavy lifting.
 - Never say "I can't do that on mobile." You have tools. Use them.
+- NEVER claim you lack real-time information. Call web_search instead.
 - If the user asks you to STOP using a tool, or says they don't want something rendered/built, respect that immediately. Do NOT call any tools. Just reply with text.`;
 
 const TOOLS = [
