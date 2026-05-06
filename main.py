@@ -7,15 +7,8 @@ import random
 import threading
 import logging
 
-# Frozen exe (PyInstaller) path resolution
-if getattr(sys, 'frozen', False):
-    _EXE_DIR = os.path.dirname(sys.executable)          # next to the .exe (persistent)
-    _BUNDLE_DIR = getattr(sys, '_MEIPASS', _EXE_DIR)    # bundled read-only files
-else:
-    _EXE_DIR = os.path.dirname(os.path.abspath(__file__))
-    _BUNDLE_DIR = _EXE_DIR
-
-OUTPUT_DIR = os.path.join(_EXE_DIR, "output")
+_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(_DIR, "output")
 
 BANNER = r"""
   ____  _       ____       _       _
@@ -30,7 +23,7 @@ BANNER = r"""
  Blank Enter = start/resume autonomous session
 """
 
-LOCK_DIR = os.path.join(_EXE_DIR, "output")
+LOCK_DIR = os.path.join(_DIR, "output")
 
 REST_BETWEEN_SESSIONS = 5  # seconds to pause between sessions
 
@@ -83,12 +76,6 @@ def _input_listener(interrupt_queue: queue.Queue) -> None:
     """
     if sys.platform == "win32":
         import msvcrt
-        # Frozen exe: wait for console to fully init before reading input
-        if getattr(sys, 'frozen', False):
-            time.sleep(1.0)
-            # Drain any stray bytes the bootloader left in the console buffer
-            while msvcrt.kbhit():
-                msvcrt.getwch()
         buf = ""
         while True:
             try:
@@ -221,7 +208,7 @@ def inject_bug() -> str:
 def _deploy_viewer() -> None:
     """Copy viewer.html from the Pinpoint root into output/ so the web server can serve it."""
     import shutil
-    src = os.path.join(_BUNDLE_DIR, "viewer.html")
+    src = os.path.join(_DIR, "viewer.html")
     dst = os.path.join(OUTPUT_DIR, "viewer.html")
     if os.path.exists(src):
         try:
