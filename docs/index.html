@@ -333,10 +333,13 @@ async function sendToAI(userText) {
   const finalUserContent = searchResults
     ? `[Live results fetched just now]\n${searchResults}\n\n[End of results]\n\n${userText}`
     : userText;
-  const apiMsgs = [
-    ...msgs.slice(-16).map(m => ({role:m.role, content:m.content})),
-    {role:'user', content:finalUserContent}
-  ];
+  // Trim history: keep last 6 turns and cap each message to 1500 chars to avoid request bloat
+  const histLimit = isCompoundModel ? 4 : 8;
+  const trimmed = msgs.slice(-histLimit).map(m => ({
+    role: m.role,
+    content: (m.content || '').slice(0, 1500)
+  }));
+  const apiMsgs = [...trimmed, {role:'user', content:finalUserContent}];
   // When we have search results, disable tools so model just summarises
   const activeTools = searchResults ? [] : TOOLS;
   const toolChoice = searchResults ? undefined : 'auto';
