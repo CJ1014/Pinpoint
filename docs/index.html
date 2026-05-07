@@ -347,9 +347,11 @@ async function sendToAI(userText) {
   try {
     let maxIter = 10;
     while (maxIter-- > 0) {
-      const body = {model:MODELS[0], max_tokens:2000, messages:[{role:'system',content:SYSTEM}, ...apiMsgs]};
-      // compound-beta has built-in search/code exec; doesn't support custom tools
       const isCompound = MODELS[0].startsWith('compound');
+      const sysPrompt = isCompound
+        ? `You are PinPoint, a friendly helpful assistant. Today is ${new Date().toDateString()}. Keep responses short.`
+        : SYSTEM;
+      const body = {model:MODELS[0], max_tokens:1024, messages:[{role:'system',content:sysPrompt}, ...apiMsgs]};
       if (!isCompound) {
         body.tools = TOOLS;
         body.tool_choice = searchResults ? 'none' : 'auto';
