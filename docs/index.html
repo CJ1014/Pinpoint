@@ -306,6 +306,24 @@ async function autoSearch(query) {
     } catch(e) {}
   }
 
+  // Wikipedia — great for factual/who-is queries
+  try {
+    const wikiSearch = await fetch(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&origin=*&srlimit=1`);
+    if (wikiSearch.ok) {
+      const ws = await wikiSearch.json();
+      const title = ws?.query?.search?.[0]?.title;
+      if (title) {
+        const extract = await fetch(`https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exintro=true&explaintext=true&titles=${encodeURIComponent(title)}&format=json&origin=*`);
+        if (extract.ok) {
+          const ed = await extract.json();
+          const pages = ed?.query?.pages;
+          const text = pages?.[Object.keys(pages)[0]]?.extract;
+          if (text) return `## Wikipedia: ${title}\n\n${text.slice(0, 2000)}`;
+        }
+      }
+    }
+  } catch(e) {}
+
   // Topic-specific search → HN Algolia
   try {
     const hn = await fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=8&numericFilters=created_at_i>${Math.floor(Date.now()/1000)-86400*30}`);
