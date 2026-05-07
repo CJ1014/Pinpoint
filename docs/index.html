@@ -333,11 +333,10 @@ async function sendToAI(userText) {
   const finalUserContent = searchResults
     ? `[Live results fetched just now]\n${searchResults}\n\n[End of results]\n\n${userText}`
     : userText;
-  // Trim history: keep last 6 turns and cap each message to 1500 chars to avoid request bloat
-  const histLimit = isCompoundModel ? 4 : 8;
-  const trimmed = msgs.slice(-histLimit).map(m => ({
+  // Trim history: keep last 12 turns and cap each message to 3000 chars
+  const trimmed = msgs.slice(-12).map(m => ({
     role: m.role,
-    content: (m.content || '').slice(0, 1500)
+    content: (m.content || '').slice(0, 3000)
   }));
   const apiMsgs = [...trimmed, {role:'user', content:finalUserContent}];
   // When we have search results, disable tools so model just summarises
@@ -351,7 +350,7 @@ async function sendToAI(userText) {
       const sysPrompt = isCompound
         ? `You are PinPoint, a friendly helpful assistant. Today is ${new Date().toDateString()}. Keep responses short.`
         : SYSTEM;
-      const body = {model:MODELS[0], max_tokens:1024, messages:[{role:'system',content:sysPrompt}, ...apiMsgs]};
+      const body = {model:MODELS[0], max_tokens:4000, messages:[{role:'system',content:sysPrompt}, ...apiMsgs]};
       if (!isCompound) {
         body.tools = TOOLS;
         body.tool_choice = searchResults ? 'none' : 'auto';
