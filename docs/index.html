@@ -320,8 +320,10 @@ async function sendToAI(userText) {
   setOrb(''); setStatus('thinking…');
 
   // Auto-fetch web results for current-events queries and inject into context
+  // (skip when using compound-beta — it has built-in search)
+  const isCompoundModel = MODELS[0].startsWith('compound');
   let searchResults = null;
-  if (SEARCH_TRIGGERS.test(userText)) {
+  if (!isCompoundModel && SEARCH_TRIGGERS.test(userText)) {
     setStatus('searching…');
     searchResults = await autoSearch(userText);
     if (searchResults) displayBuild('🔍 ' + userText, null, searchResults, null);
