@@ -75,7 +75,7 @@
 <div id="msgs"></div>
 <div id="bottom">
   <div id="key-row">
-    <input id="apikey" type="password" placeholder="Groq API key (gsk_…)" autocomplete="off" spellcheck="false">
+    <input id="apikey" type="password" placeholder="Google AI Studio key (AIza…)" autocomplete="off" spellcheck="false">
     <button id="save-key">Save</button>
   </div>
   <div id="type-row">
@@ -86,7 +86,7 @@
     <button id="mic-btn" class="disabled">TAP TO TALK</button>
     <button id="mute-btn" title="Mute TTS">🔊</button>
   </div>
-  <div id="setup">Get a free key at console.groq.com</div>
+  <div id="setup">Get a free key at aistudio.google.com</div>
 </div>
 
 <script>
@@ -178,8 +178,8 @@ const TOOLS = [
   }
 ];
 
-const MODELS = ['meta-llama/llama-4-maverick-17b-128e-instruct'];
-const API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const MODELS = ['gemini-2.0-flash'];
+const API_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
 let apiKey = localStorage.getItem('pp_key') || '';
 let muted = false;
 let msgs = []; // {role, content} — conversation history
@@ -302,27 +302,9 @@ async function autoSearch(query) {
     if (out) return out;
   }
 
-  // Wikipedia — great for factual/who-is queries
+  // Topic-specific → HN Algolia (last 30 days)
   try {
-    const wikiSearch = await fetch(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&origin=*&srlimit=1`);
-    if (wikiSearch.ok) {
-      const ws = await wikiSearch.json();
-      const title = ws?.query?.search?.[0]?.title;
-      if (title) {
-        const extract = await fetch(`https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exintro=true&explaintext=true&titles=${encodeURIComponent(title)}&format=json&origin=*`);
-        if (extract.ok) {
-          const ed = await extract.json();
-          const pages = ed?.query?.pages;
-          const text = pages?.[Object.keys(pages)[0]]?.extract;
-          if (text) return `## Wikipedia: ${title}\n\n${text.slice(0, 2000)}`;
-        }
-      }
-    }
-  } catch(e) {}
-
-  // Topic-specific search → HN Algolia
-  try {
-    const hn = await fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=8&numericFilters=created_at_i>${Math.floor(Date.now()/1000)-86400*30}`);
+    const hn = await fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=6&numericFilters=created_at_i>${Math.floor(Date.now()/1000)-86400*30}`);
     if (hn.ok) {
       const d = await hn.json();
       if (d.hits?.length) return d.hits.map(h=>`• ${h.title}\n  ${h.url||''}`).join('\n\n');
@@ -506,7 +488,7 @@ function initWithKey(key) {
 
 saveKeyBtn.onclick = () => {
   const k = apikeyEl.value.trim();
-  if (k.startsWith('gsk_') || k.length > 20) initWithKey(k);
+  if (k.startsWith('AIza') || k.length > 20) initWithKey(k);
   else { apikeyEl.style.borderColor = 'var(--red)'; setupEl.style.display = 'block'; }
 };
 
