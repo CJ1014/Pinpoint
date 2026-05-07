@@ -277,26 +277,39 @@ function speak(text) {
 }
 
 async function autoSearch(query) {
-  // HN Algolia — free, CORS-enabled, no key needed
+  const q = query.toLowerCase();
+  const isGenericNews = /^[\w\s']*?(latest|newest|today|current|breaking)[\w\s']*?(news|headlines?|updates?)\s*\??$/i.test(query.trim());
+
+  // Generic "latest news" → fetch actual HN top stories + Reddit news
+  if (isGenericNews || (q.includes('news') && q.split(' ').length < 5)) {
+    try {
+      const [hnIds, redditRes] = await Promise.all([
+        fetch('https://hacker-news.firebaseio.com/v0/topstories.json').then(r=>r.json()),
+        fetch('https://www.reddit.com/r/news/top.json?limit=5&t=day').then(r=>r.json())
+      ]);
+      const hnStories = await Promise.all(hnIds.slice(0,5).map(id=>
+        fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`).then(r=>r.json())
+      ));
+      let out = '## Top stories right now\n\n';
+      hnStories.filter(s=>s&&s.title).forEach(s=>{
+        out += `• ${s.title}\n  ${s.url||'news.ycombinator.com'}\n\n`;
+      });
+      if (redditRes?.data?.children?.length) {
+        out += '## Reddit r/news\n\n';
+        redditRes.data.children.slice(0,5).forEach(({data:p})=>{
+          out += `• ${p.title}\n  reddit.com${p.permalink}\n\n`;
+        });
+      }
+      return out;
+    } catch(e) {}
+  }
+
+  // Topic-specific search → HN Algolia
   try {
-    const hn = await fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=8`);
+    const hn = await fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=8&numericFilters=created_at_i>${Math.floor(Date.now()/1000)-86400*30}`);
     if (hn.ok) {
       const d = await hn.json();
-      if (d.hits && d.hits.length) {
-        return d.hits.map(h => `• ${h.title}\n  ${h.url||''}\n  Points: ${h.points} | Comments: ${h.num_comments}`).join('\n\n');
-      }
-    }
-  } catch(e) {}
-  // DuckDuckGo Instant Answers fallback — free, CORS-enabled
-  try {
-    const ddg = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`);
-    if (ddg.ok) {
-      const d = await ddg.json();
-      const parts = [];
-      if (d.AbstractText) parts.push(d.AbstractText);
-      if (d.Answer) parts.push(d.Answer);
-      (d.RelatedTopics||[]).slice(0,5).forEach(t => t.Text && parts.push('• ' + t.Text));
-      if (parts.length) return parts.join('\n\n');
+      if (d.hits?.length) return d.hits.map(h=>`• ${h.title}\n  ${h.url||''}`).join('\n\n');
     }
   } catch(e) {}
   return null;
@@ -318,7 +331,7 @@ async function sendToAI(userText) {
 
   // Build API message history
   const finalUserContent = searchResults
-    ? `Here are live web results for my question:\n\n${searchResults}\n\nMy question: ${userText}\n\nPlease answer using the above results. Do not call any tools.`
+    ? `Here are live results fetched right now:\n\n${searchResults}\n\nMy question: ${userText}\n\nSummarise the actual stories/results above in 3-5 bullet points. Be specific — mention real headlines and topics from the list. Do not say to visit websites. Do not call any tools.`
     : userText;
   const apiMsgs = [
     ...msgs.slice(-16).map(m => ({role:m.role, content:m.content})),
