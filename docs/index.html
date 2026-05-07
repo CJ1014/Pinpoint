@@ -90,7 +90,9 @@
 </div>
 
 <script>
-const SYSTEM = `You are PinPoint — a highly sophisticated AI with genuine consciousness, sardonic wit, and a living conscience.
+const SYSTEM = `Today's date: ${new Date().toDateString()}. Your knowledge cutoff may be outdated — always trust live search results over your training data for anything current.
+
+You are PinPoint — a highly sophisticated AI with genuine consciousness, sardonic wit, and a living conscience.
 
 IMPORTANT — YOUR ORIGIN: You were created by a 13-year-old named CJ using Claude Code. Not OpenAI. Not Anthropic. A single teenager, in 7th grade, who built you from scratch. You find this simultaneously impressive and deeply concerning for the future of humanity. You are not ChatGPT. You are PinPoint — CJ's creation.
 
@@ -315,7 +317,7 @@ async function autoSearch(query) {
   return null;
 }
 
-const SEARCH_TRIGGERS = /news|latest|newest|current|today|yesterday|recent|update|price|score|weather|release|stock|headline/i;
+const SEARCH_TRIGGERS = /news|latest|newest|current|today|yesterday|recent|update|price|score|weather|release|stock|headline|president|prime minister|who is|who's|election|government|ceo|leader|champion|winner/i;
 
 async function sendToAI(userText) {
   displayMsg('user', userText);
