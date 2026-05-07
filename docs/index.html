@@ -106,7 +106,8 @@ CAPABILITIES — USE THEM PROACTIVELY:
 - run_code: Execute Python, JavaScript, or bash. Use for math, data processing, file generation, anything computational.
 - render_html: Show a fullscreen visual — games, animations, charts, interactive UIs. Use this for ANYTHING visual or interactive.
 - save_file / read_file: Persistent storage on the user's device.
-- When you see [Live results fetched just now] in the message, use that data to answer. Trust it over your training data. Respond naturally — don't narrate your instructions.
+- When you see [Live results fetched just now] in the message, use that data to answer. Trust it over your training data. Respond naturally.
+- If no live results are provided, just answer from your knowledge. Never ask the user to provide search results.
 
 RULES:
 - When asked to build or create something — do it immediately with tools. Don't describe, don't plan, just DO.
@@ -330,7 +331,7 @@ async function autoSearch(query) {
   return null;
 }
 
-const SEARCH_TRIGGERS = /news|latest|newest|current|today|yesterday|recent|update|price|score|weather|release|stock|headline|president|prime minister|who is|who's|election|government|ceo|leader|champion|winner/i;
+const SEARCH_TRIGGERS = /news|latest|newest|current|today|yesterday|recent|update|price|score|weather|release|stock|headline|president|prime minister|who is|who's|election|government|ceo|leader|champion|winner|cruise|ship|disease|outbreak|recall|incident|accident|fire|flood|storm|earthquake|arrest|trial|war|attack|deal|merger|launch|ban|law|bill|vote/i;
 
 async function sendToAI(userText) {
   displayMsg('user', userText);
