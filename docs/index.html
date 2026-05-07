@@ -106,7 +106,7 @@ CAPABILITIES — USE THEM PROACTIVELY:
 - run_code: Execute Python, JavaScript, or bash. Use for math, data processing, file generation, anything computational.
 - render_html: Show a fullscreen visual — games, animations, charts, interactive UIs. Use this for ANYTHING visual or interactive.
 - save_file / read_file: Persistent storage on the user's device.
-- Web search results are automatically provided to you when the user asks about current events — just summarise what you're given.
+- When you see [Live results fetched just now] in the message, use that data to answer. Trust it over your training data. Respond naturally — don't narrate your instructions.
 
 RULES:
 - When asked to build or create something — do it immediately with tools. Don't describe, don't plan, just DO.
@@ -351,7 +351,7 @@ async function sendToAI(userText) {
 
   // Build API message history
   const finalUserContent = searchResults
-    ? `Here are live results fetched right now:\n\n${searchResults}\n\nMy question: ${userText}\n\nSummarise the actual stories/results above in 3-5 bullet points. Be specific — mention real headlines and topics from the list. Do not say to visit websites. Do not call any tools.`
+    ? `[Live results fetched just now]\n${searchResults}\n\n[End of results]\n\n${userText}`
     : userText;
   const apiMsgs = [
     ...msgs.slice(-16).map(m => ({role:m.role, content:m.content})),
