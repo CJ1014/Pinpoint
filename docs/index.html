@@ -282,28 +282,23 @@ async function autoSearch(query) {
   const q = query.toLowerCase();
   const isGenericNews = /^[\w\s']*?(latest|newest|today|current|breaking)[\w\s']*?(news|headlines?|updates?)\s*\??$/i.test(query.trim());
 
-  // Generic "latest news" → fetch actual HN top stories + Reddit news
+  // Generic "latest news" → fetch HN top stories + Reddit top posts independently
   if (isGenericNews || (q.includes('news') && q.split(' ').length < 5)) {
+    let out = '';
     try {
-      const [hnIds, redditRes] = await Promise.all([
-        fetch('https://hacker-news.firebaseio.com/v0/topstories.json').then(r=>r.json()),
-        fetch('https://www.reddit.com/r/news/top.json?limit=5&t=day').then(r=>r.json())
-      ]);
-      const hnStories = await Promise.all(hnIds.slice(0,5).map(id=>
-        fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`).then(r=>r.json())
+      const hnIds = await fetch('https://hacker-news.firebaseio.com/v0/topstories.json').then(r=>r.json());
+      const hnStories = await Promise.all(hnIds.slice(0,6).map(id=>
+        fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`).then(r=>r.json()).catch(()=>null)
       ));
-      let out = '## Top stories right now\n\n';
-      hnStories.filter(s=>s&&s.title).forEach(s=>{
-        out += `• ${s.title}\n  ${s.url||'news.ycombinator.com'}\n\n`;
-      });
-      if (redditRes?.data?.children?.length) {
-        out += '## Reddit r/news\n\n';
-        redditRes.data.children.slice(0,5).forEach(({data:p})=>{
-          out += `• ${p.title}\n  reddit.com${p.permalink}\n\n`;
-        });
-      }
-      return out;
+      const valid = hnStories.filter(s=>s&&s.title&&s.url);
+      if (valid.length) out += '## Hacker News top stories\n' + valid.map(s=>`• ${s.title}`).join('\n') + '\n\n';
     } catch(e) {}
+    try {
+      const rd = await fetch('https://www.reddit.com/r/news/top.json?limit=5&t=day').then(r=>r.json());
+      if (rd?.data?.children?.length)
+        out += '## Reddit r/news\n' + rd.data.children.map(({data:p})=>`• ${p.title}`).join('\n');
+    } catch(e) {}
+    if (out) return out;
   }
 
   // Wikipedia — great for factual/who-is queries
