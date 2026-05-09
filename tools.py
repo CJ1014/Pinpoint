@@ -31,6 +31,25 @@ _recent_spoken: list = []      # rolling buffer of (timestamp, text) for echo de
 _ps_sapi_proc = None
 _ps_sapi_lock = threading.Lock()
 
+# Grab the console window handle once at startup so we can restore it after TTS
+_console_hwnd = None
+if platform.system() == "Windows":
+    try:
+        import ctypes as _ctypes
+        _console_hwnd = _ctypes.windll.kernel32.GetConsoleWindow()
+    except Exception:
+        pass
+
+def _restore_console():
+    """Bring the console window back if TTS stole focus or minimized it."""
+    if _console_hwnd:
+        try:
+            import ctypes as _ctypes
+            _ctypes.windll.user32.ShowWindow(_console_hwnd, 9)   # SW_RESTORE
+            _ctypes.windll.user32.SetForegroundWindow(_console_hwnd)
+        except Exception:
+            pass
+
 def _get_ps_sapi():
     """Return a running PowerShell SAPI process, starting one if needed."""
     global _ps_sapi_proc
@@ -47,9 +66,10 @@ def _get_ps_sapi():
                 "Add-Type -AssemblyName System.Speech\r\n"
                 "$global:s = New-Object System.Speech.Synthesis.SpeechSynthesizer\r\n"
                 "$global:s.Rate = 2\r\n"
-                "try { $zira = $global:s.GetInstalledVoices() | "
-                "Where-Object { $_.VoiceInfo.Name -like '*Zira*' } | Select-Object -First 1; "
-                "if ($zira) { $global:s.SelectVoice($zira.VoiceInfo.Name) } } catch {}\r\n"
+                # Select female voice by gender, not by name — works on any Windows install
+                "try { $female = $global:s.GetInstalledVoices() | "
+                "Where-Object { $_.VoiceInfo.Gender -eq 'Female' } | Select-Object -First 1; "
+                "if ($female) { $global:s.SelectVoice($female.VoiceInfo.Name) } } catch {}\r\n"
                 "Write-Host 'READY'\r\n"
             )
             _ps_sapi_proc.stdin.write(init.encode("utf-8"))
@@ -2614,7 +2634,7 @@ def _speak_now(text: str) -> None:
     if not text:
         return
 
-    # Windows: persistent PowerShell SAPI process (Zira, no focus steal, fast)
+    # Windows: persistent PowerShell SAPI process (female voice, no new window)
     if platform.system() == "Windows":
         import time as _time
         try:
@@ -2637,12 +2657,14 @@ def _speak_now(text: str) -> None:
                     _playback_proc = None
                 global _tts_ended_at
                 _tts_ended_at = _time.time()
+                _restore_console()  # undo any focus/minimize caused by SAPI
             return
         except Exception:
             with _playback_lock:
                 _playback_proc = None
             global _ps_sapi_proc
             _ps_sapi_proc = None  # force restart on next call
+            _restore_console()
 
     if platform.system() == "Linux":
         for cmd in ["espeak-ng", "espeak"]:
