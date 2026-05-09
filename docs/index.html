@@ -464,7 +464,7 @@ function onResult(e) {
   let full = '';
   for (let i = 0; i < e.results.length; i++) full += e.results[i][0].transcript + ' ';
   transcript = full.trim();
-  setStatus('🎙 ' + (transcript.slice(-40) || '…'));
+  setStatus('🎤 ' + (transcript.slice(-40) || '…'));
 }
 function onErr(e) { setOrb(''); setStatus('mic error: ' + e.error); micBtn.classList.remove('active'); transcript = ''; }
 function onEnd() {
