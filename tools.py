@@ -277,7 +277,7 @@ def start_voice_listener(interrupt_queue) -> bool:
 
     SAMPLE_RATE = 16000
     CHUNK = 1024          # frames per callback (~64 ms)
-    SILENCE_CHUNKS = 28   # chunks of silence that end a phrase (~1.8 s — lets you hesitate)
+    SILENCE_CHUNKS = 16   # chunks of silence that end a phrase (~1.0 s)
 
     # Calibrate energy threshold from 0.5 s of ambient noise
     energy_threshold = 500  # fallback default
@@ -2501,10 +2501,10 @@ def _play_audio(path: str) -> None:
                 "$mp = New-Object System.Windows.Media.MediaPlayer; "
                 f"$mp.Open([Uri]'{safe}'); "
                 "$mp.Play(); "
-                "Start-Sleep -Milliseconds 800; "
+                "Start-Sleep -Milliseconds 300; "
                 "while ($mp.NaturalDuration -eq [System.Windows.Duration]::Automatic) "
-                "{ Start-Sleep -Milliseconds 100 }; "
-                "$ms = [int]($mp.NaturalDuration.TimeSpan.TotalMilliseconds) + 300; "
+                "{ Start-Sleep -Milliseconds 50 }; "
+                "$ms = [int]($mp.NaturalDuration.TimeSpan.TotalMilliseconds) + 100; "
                 "Start-Sleep -Milliseconds $ms; "
                 "$mp.Close()"
             )
@@ -2552,8 +2552,8 @@ def _try_edge_tts(text: str) -> bool:
         communicate = edge_tts.Communicate(
             text,
             voice="en-US-JennyNeural",
-            rate="-8%",
-            pitch="-8Hz",
+            rate="+20%",
+            pitch="-5Hz",
         )
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             tmp = f.name
@@ -2611,7 +2611,7 @@ def _speak_now(text: str) -> None:
             ps = (
                 "Add-Type -AssemblyName System.Speech; "
                 "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-                "$s.Rate = -2; "
+                "$s.Rate = 3; "
                 f"$s.Speak('{safe}')"
             )
             subprocess.run(["powershell", "-WindowStyle", "Hidden", "-Command", ps],
