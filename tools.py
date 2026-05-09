@@ -27,6 +27,41 @@ _tts_ended_at: float = 0.0     # time.time() when the last TTS playback finished
 _last_spoken_text: str = ""    # text PinPoint most recently spoke (for echo detection)
 _recent_spoken: list = []      # rolling buffer of (timestamp, text) for echo detection
 
+# ── Persistent PowerShell SAPI process (Windows only) ───────────────────────
+_ps_sapi_proc = None
+_ps_sapi_lock = threading.Lock()
+
+def _get_ps_sapi():
+    """Return a running PowerShell SAPI process, starting one if needed."""
+    global _ps_sapi_proc
+    with _ps_sapi_lock:
+        if _ps_sapi_proc is None or _ps_sapi_proc.poll() is not None:
+            _ps_sapi_proc = subprocess.Popen(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", "-"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            init = (
+                "Add-Type -AssemblyName System.Speech\r\n"
+                "$global:s = New-Object System.Speech.Synthesis.SpeechSynthesizer\r\n"
+                "$global:s.Rate = 2\r\n"
+                "try { $zira = $global:s.GetInstalledVoices() | "
+                "Where-Object { $_.VoiceInfo.Name -like '*Zira*' } | Select-Object -First 1; "
+                "if ($zira) { $global:s.SelectVoice($zira.VoiceInfo.Name) } } catch {}\r\n"
+                "Write-Host 'READY'\r\n"
+            )
+            _ps_sapi_proc.stdin.write(init.encode("utf-8"))
+            _ps_sapi_proc.stdin.flush()
+            import time as _t
+            deadline = _t.time() + 10
+            while _t.time() < deadline:
+                line = _ps_sapi_proc.stdout.readline().decode("utf-8", errors="replace").strip()
+                if line == "READY":
+                    break
+    return _ps_sapi_proc
+
 
 def _speech_worker() -> None:
     while True:
@@ -2579,63 +2614,35 @@ def _speak_now(text: str) -> None:
     if not text:
         return
 
-    # Windows: pyttsx3 (direct SAPI COM — zero network, zero file I/O, <100ms start)
+    # Windows: persistent PowerShell SAPI process (Zira, no focus steal, fast)
     if platform.system() == "Windows":
-        import ctypes
-        # Save the current foreground window so we can restore it after TTS
-        _user32 = ctypes.windll.user32
-        hwnd_before = _user32.GetForegroundWindow()
+        import time as _time
         try:
-            import pyttsx3
-            engine = pyttsx3.init()
-            engine.setProperty("rate", 175)
-            voices = engine.getProperty("voices")
-            # Find Microsoft Zira (female en-US) by ID substring or description
-            female = next(
-                (v for v in voices if "zira" in (v.id + v.name).lower()),
-                next((v for v in voices if "female" in v.name.lower()), None)
-            )
-            if female:
-                engine.setProperty("voice", female.id)
-            # Mark as speaking so echo suppression blocks the mic
+            proc = _get_ps_sapi()
+            safe = text.replace("'", "''").replace("\n", " ").replace("\r", "")
+            cmd = f"$global:s.Speak('{safe}')\r\nWrite-Host 'DONE'\r\n"
             with _playback_lock:
                 global _playback_proc
-                _playback_proc = True  # sentinel — not a real proc but truthy
+                _playback_proc = True
             try:
-                engine.say(text)
-                engine.runAndWait()
+                proc.stdin.write(cmd.encode("utf-8"))
+                proc.stdin.flush()
+                deadline = _time.time() + 60
+                while _time.time() < deadline:
+                    line = proc.stdout.readline().decode("utf-8", errors="replace").strip()
+                    if line == "DONE":
+                        break
             finally:
                 with _playback_lock:
                     _playback_proc = None
                 global _tts_ended_at
-                import time as _time
                 _tts_ended_at = _time.time()
-                # Restore the console window focus pyttsx3 may have stolen
-                if hwnd_before:
-                    _user32.SetForegroundWindow(hwnd_before)
             return
         except Exception:
             with _playback_lock:
                 _playback_proc = None
-            if hwnd_before:
-                try:
-                    _user32.SetForegroundWindow(hwnd_before)
-                except Exception:
-                    pass
-        # Windows fallback: PowerShell SAPI (slower but reliable)
-        try:
-            safe = text.replace("'", "''")
-            ps = (
-                "Add-Type -AssemblyName System.Speech; "
-                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-                "$s.Rate = 3; "
-                f"$s.Speak('{safe}')"
-            )
-            subprocess.run(["powershell", "-WindowStyle", "Hidden", "-Command", ps],
-                           capture_output=True, timeout=30)
-            return
-        except Exception:
-            pass
+            global _ps_sapi_proc
+            _ps_sapi_proc = None  # force restart on next call
 
     if platform.system() == "Linux":
         for cmd in ["espeak-ng", "espeak"]:
