@@ -2581,20 +2581,47 @@ def _speak_now(text: str) -> None:
 
     # Windows: pyttsx3 (direct SAPI COM — zero network, zero file I/O, <100ms start)
     if platform.system() == "Windows":
+        import ctypes
+        # Save the current foreground window so we can restore it after TTS
+        _user32 = ctypes.windll.user32
+        hwnd_before = _user32.GetForegroundWindow()
         try:
             import pyttsx3
             engine = pyttsx3.init()
             engine.setProperty("rate", 175)
             voices = engine.getProperty("voices")
-            # Prefer a female voice if available
-            female = next((v for v in voices if "zira" in v.name.lower() or "female" in v.name.lower()), None)
+            # Find Microsoft Zira (female en-US) by ID substring or description
+            female = next(
+                (v for v in voices if "zira" in (v.id + v.name).lower()),
+                next((v for v in voices if "female" in v.name.lower()), None)
+            )
             if female:
                 engine.setProperty("voice", female.id)
-            engine.say(text)
-            engine.runAndWait()
+            # Mark as speaking so echo suppression blocks the mic
+            with _playback_lock:
+                global _playback_proc
+                _playback_proc = True  # sentinel — not a real proc but truthy
+            try:
+                engine.say(text)
+                engine.runAndWait()
+            finally:
+                with _playback_lock:
+                    _playback_proc = None
+                global _tts_ended_at
+                import time as _time
+                _tts_ended_at = _time.time()
+                # Restore the console window focus pyttsx3 may have stolen
+                if hwnd_before:
+                    _user32.SetForegroundWindow(hwnd_before)
             return
         except Exception:
-            pass
+            with _playback_lock:
+                _playback_proc = None
+            if hwnd_before:
+                try:
+                    _user32.SetForegroundWindow(hwnd_before)
+                except Exception:
+                    pass
         # Windows fallback: PowerShell SAPI (slower but reliable)
         try:
             safe = text.replace("'", "''")
