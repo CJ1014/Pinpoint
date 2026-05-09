@@ -497,7 +497,7 @@ function initWithKey(key) {
   document.getElementById('key-row').style.display = 'none';
   setupEl.style.display = 'none';
   resetKeyBtn.style.display = 'block';
-  const greeting = "Hey, I'm PinPoint. What do you need?";
+  const greeting = `Test #${SESSION_NUM} initialized. State your query. Try to be interesting.`;
   msgs.push({role:'assistant', content:greeting});
   displayMsg('assistant', greeting);
   setTimeout(() => speak(greeting), 400);
