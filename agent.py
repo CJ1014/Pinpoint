@@ -1415,9 +1415,9 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 )
                 for t in streamed_tool_calls
             ]
-            message = ChatCompletionMessage(role="assistant", content=full_content or None, tool_calls=tc_objects)
+            message = ChatCompletionMessage(role="assistant", content=full_content or "", tool_calls=tc_objects)
         else:
-            message = ChatCompletionMessage(role="assistant", content=full_content or None, tool_calls=None)
+            message = ChatCompletionMessage(role="assistant", content=full_content or "", tool_calls=None)
 
         messages.append(message)
 
