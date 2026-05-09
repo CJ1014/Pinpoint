@@ -357,9 +357,12 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
                     print(t, end="", flush=True)
                     full += t
             print()
+            if not full:
+                full = "."  # model returned empty — skip silently
+                print("(no response)")
             messages.append({"role": "assistant", "content": full})
-            # Speak full response as one call — pyttsx3 starts in <100ms
-            if full:
+            # Speak full response as one call
+            if full.strip() and full != ".":
                 try:
                     from tools import speak
                     threading.Thread(
