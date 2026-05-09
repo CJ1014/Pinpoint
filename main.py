@@ -343,11 +343,6 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
         # Get PinPoint's response
         print("\nPinPoint: ", end="", flush=True)
         full = ""
-        spoken_up_to = 0  # index into full up to which we've queued speech
-        try:
-            from tools import speak
-        except Exception:
-            speak = None
         try:
             stream = client.chat.completions.create(
                 model=MODEL,
@@ -361,29 +356,18 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
                     t = chunk.choices[0].delta.content
                     print(t, end="", flush=True)
                     full += t
-                    # Speak each sentence as soon as it ends
-                    if speak:
-                        for delim in ('.', '?', '!', '\n'):
-                            idx = full.rfind(delim, spoken_up_to)
-                            if idx != -1 and idx > spoken_up_to:
-                                sentence = full[spoken_up_to:idx + 1].strip()
-                                if sentence:
-                                    threading.Thread(
-                                        target=lambda s=sentence: speak(s, False),
-                                        daemon=True,
-                                    ).start()
-                                spoken_up_to = idx + 1
-                                break
             print()
-            # Speak any remaining text after the last sentence delimiter
-            if speak and spoken_up_to < len(full):
-                remainder = full[spoken_up_to:].strip()
-                if remainder:
+            messages.append({"role": "assistant", "content": full})
+            # Speak full response as one call — pyttsx3 starts in <100ms
+            if full:
+                try:
+                    from tools import speak
                     threading.Thread(
-                        target=lambda s=remainder: speak(s, False),
+                        target=lambda text=full: speak(text, False),
                         daemon=True,
                     ).start()
-            messages.append({"role": "assistant", "content": full})
+                except Exception:
+                    pass
 
         except Exception as e:
             print(f"\n[Chat error: {e}]")
