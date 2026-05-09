@@ -276,13 +276,14 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
     chat_system = (
         SYSTEM_PROMPT
         + "\n\nYou are in a direct one-on-one conversation with the human right now. "
-        "No session is running. Just talk — naturally, freely, like yourself. "
-        "Keep responses human-length: a few sentences to a paragraph. "
+        "No session is running. Just talk.\n\n"
+        "RESPONSE LENGTH — CRITICAL: 1-3 SHORT sentences maximum. Never more. "
+        "Do not monologue. Do not list things. Do not narrate the 3D viewer. "
+        "If it would take more than 10 seconds to say aloud, it is too long. Cut it.\n\n"
         "You don't have file/build tools in this chat — but if the human asks "
-        "you to make/build/create/write something, tell them: "
-        "'Press Enter and I'll actually build it.' Then wait. "
-        "Don't pretend you'll do it later — be direct that pressing Enter "
-        "kicks off a session where you'll really do it."
+        "you to make/build/create/write something, say: "
+        "'Press Enter and I'll build it.' Nothing else. "
+        "Don't explain. Don't elaborate."
     )
     messages = [{"role": "system", "content": chat_system}]
     last_msg = ""
@@ -342,31 +343,47 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
         # Get PinPoint's response
         print("\nPinPoint: ", end="", flush=True)
         full = ""
+        spoken_up_to = 0  # index into full up to which we've queued speech
+        try:
+            from tools import speak
+        except Exception:
+            speak = None
         try:
             stream = client.chat.completions.create(
                 model=MODEL,
                 messages=messages,
                 temperature=0.85,
                 stream=True,
+                max_tokens=120,
             )
             for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta.content:
                     t = chunk.choices[0].delta.content
                     print(t, end="", flush=True)
                     full += t
+                    # Speak each sentence as soon as it ends
+                    if speak:
+                        for delim in ('.', '?', '!', '\n'):
+                            idx = full.rfind(delim, spoken_up_to)
+                            if idx != -1 and idx > spoken_up_to:
+                                sentence = full[spoken_up_to:idx + 1].strip()
+                                if sentence:
+                                    threading.Thread(
+                                        target=lambda s=sentence: speak(s, False),
+                                        daemon=True,
+                                    ).start()
+                                spoken_up_to = idx + 1
+                                break
             print()
-            messages.append({"role": "assistant", "content": full})
-
-            # Speak the response (non-blocking so user can type right away)
-            if full:
-                try:
-                    from tools import speak
+            # Speak any remaining text after the last sentence delimiter
+            if speak and spoken_up_to < len(full):
+                remainder = full[spoken_up_to:].strip()
+                if remainder:
                     threading.Thread(
-                        target=lambda text=full: speak(text[:600], False),
+                        target=lambda s=remainder: speak(s, False),
                         daemon=True,
                     ).start()
-                except Exception:
-                    pass
+            messages.append({"role": "assistant", "content": full})
 
         except Exception as e:
             print(f"\n[Chat error: {e}]")
