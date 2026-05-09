@@ -2579,11 +2579,37 @@ def _speak_now(text: str) -> None:
     if not text:
         return
 
-    # Try high-quality neural voice first
-    if _try_edge_tts(text):
-        return
+    # Windows: pyttsx3 (direct SAPI COM — zero network, zero file I/O, <100ms start)
+    if platform.system() == "Windows":
+        try:
+            import pyttsx3
+            engine = pyttsx3.init()
+            engine.setProperty("rate", 175)
+            voices = engine.getProperty("voices")
+            # Prefer a female voice if available
+            female = next((v for v in voices if "zira" in v.name.lower() or "female" in v.name.lower()), None)
+            if female:
+                engine.setProperty("voice", female.id)
+            engine.say(text)
+            engine.runAndWait()
+            return
+        except Exception:
+            pass
+        # Windows fallback: PowerShell SAPI (slower but reliable)
+        try:
+            safe = text.replace("'", "''")
+            ps = (
+                "Add-Type -AssemblyName System.Speech; "
+                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                "$s.Rate = 3; "
+                f"$s.Speak('{safe}')"
+            )
+            subprocess.run(["powershell", "-WindowStyle", "Hidden", "-Command", ps],
+                           capture_output=True, timeout=30)
+            return
+        except Exception:
+            pass
 
-    # Native platform fallbacks
     if platform.system() == "Linux":
         for cmd in ["espeak-ng", "espeak"]:
             try:
@@ -2605,29 +2631,9 @@ def _speak_now(text: str) -> None:
         except Exception:
             pass
 
-    if platform.system() == "Windows":
-        try:
-            safe = text.replace("'", "''")
-            ps = (
-                "Add-Type -AssemblyName System.Speech; "
-                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-                "$s.Rate = 3; "
-                f"$s.Speak('{safe}')"
-            )
-            subprocess.run(["powershell", "-WindowStyle", "Hidden", "-Command", ps],
-                           capture_output=True, timeout=30)
-            return
-        except Exception:
-            pass
-
-    try:
-        import pyttsx3
-        engine = pyttsx3.init()
-        engine.setProperty("rate", 120)
-        engine.say(text)
-        engine.runAndWait()
-    except Exception:
-        pass
+    # Last resort: edge_tts (network, file I/O — slowest)
+    if _try_edge_tts(text):
+        return
 
     print(f"\n[SPEAKING] {text}\n", flush=True)
 
