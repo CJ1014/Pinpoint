@@ -19,7 +19,7 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 #   qwen3-coder:480b-cloud    - 480B params (best for coding tasks)
 #   deepseek-v3.1:671b-cloud  - 671B params (very strong general reasoning)
 #   kimi-k2:1t-cloud          - 1 trillion params (most capable, slowest)
-MODEL = os.environ.get("OLLAMA_MODEL", "gpt-oss:120b-cloud")
+MODEL = os.environ.get("OLLAMA_MODEL", "deepseek-v3.1:671b-cloud")
 MAX_ITERATIONS = 200
 
 # Tools that are safe to run concurrently — read-only / no shared state
