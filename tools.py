@@ -369,7 +369,7 @@ def start_voice_listener(interrupt_queue) -> bool:
         recording = False
         buf = b""
         silence_count = 0
-        POST_SPEAK_COOLDOWN = 1.2  # seconds to keep mic off after TTS finishes
+        POST_SPEAK_COOLDOWN = 0.4  # seconds to keep mic off after TTS finishes
 
         def _drain_audio_q():
             while True:
