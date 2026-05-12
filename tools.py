@@ -280,6 +280,7 @@ def start_voice_listener(interrupt_queue) -> bool:
     SAMPLE_RATE = 16000
     CHUNK = 1024          # frames per callback (~64 ms)
     SILENCE_CHUNKS = 28   # chunks of silence that end a phrase (~1.8 s)
+    PRE_ROLL_CHUNKS = 8   # ~0.5 s of audio kept before VAD triggers
 
     # Calibrate energy threshold from 0.5 s of ambient noise
     energy_threshold = 500  # fallback default
@@ -316,6 +317,7 @@ def start_voice_listener(interrupt_queue) -> bool:
         recording = False
         buf = b""
         silence_count = 0
+        pre_roll: list = []  # circular buffer of recent chunks before VAD triggers
         POST_SPEAK_COOLDOWN = 1.2  # seconds to keep mic off after TTS finishes
 
         def _drain_audio_q():
@@ -388,9 +390,14 @@ def start_voice_listener(interrupt_queue) -> bool:
                 rms = (sum(int(s) * int(s) for s in samples) / n) ** 0.5
 
                 if rms > energy_threshold:
+                    if not recording:
+                        # Prepend pre-roll so the first syllable isn't clipped
+                        buf = b"".join(pre_roll) + data
+                        pre_roll.clear()
+                    else:
+                        buf += data
                     recording = True
                     silence_count = 0
-                    buf += data
                 elif recording:
                     buf += data
                     silence_count += 1
@@ -399,6 +406,11 @@ def start_voice_listener(interrupt_queue) -> bool:
                         buf = b""
                         recording = False
                         silence_count = 0
+                else:
+                    # Not recording — keep a rolling pre-roll buffer
+                    pre_roll.append(data)
+                    if len(pre_roll) > PRE_ROLL_CHUNKS:
+                        pre_roll.pop(0)
 
                         def _transcribe(raw=captured):
                             try:
