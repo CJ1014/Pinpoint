@@ -402,17 +402,12 @@ def start_voice_listener(interrupt_queue) -> bool:
                     buf += data
                     silence_count += 1
                     if silence_count >= SILENCE_CHUNKS:
-                        captured = buf
+                        _captured = bytes(buf)
                         buf = b""
                         recording = False
                         silence_count = 0
-                else:
-                    # Not recording — keep a rolling pre-roll buffer
-                    pre_roll.append(data)
-                    if len(pre_roll) > PRE_ROLL_CHUNKS:
-                        pre_roll.pop(0)
 
-                        def _transcribe(raw=captured):
+                        def _transcribe(raw=_captured):
                             try:
                                 audio_data = sr.AudioData(raw, SAMPLE_RATE, 2)
                                 text = recognizer.recognize_google(audio_data)
@@ -434,6 +429,11 @@ def start_voice_listener(interrupt_queue) -> bool:
                                 pass
 
                         threading.Thread(target=_transcribe, daemon=True).start()
+                else:
+                    # Not recording — keep a rolling pre-roll buffer
+                    pre_roll.append(data)
+                    if len(pre_roll) > PRE_ROLL_CHUNKS:
+                        pre_roll.pop(0)
         except Exception as e:
             print(f"[VOICE] Stream stopped: {e}")
         finally:
