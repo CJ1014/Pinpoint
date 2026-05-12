@@ -381,37 +381,41 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
         # Get PinPoint's response
         print("\nPinPoint: ", end="", flush=True)
         full = ""
-        try:
-            stream = client.chat.completions.create(
-                model=MODEL,
-                messages=messages,
-                temperature=0.85,
-                stream=True,
-                max_tokens=120,
-            )
-            for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    t = chunk.choices[0].delta.content
-                    print(t, end="", flush=True)
-                    full += t
-            print()
-            if not full:
-                full = "."  # model returned empty — skip silently
-                print("(no response)")
-            messages.append({"role": "assistant", "content": full})
-            # Speak full response as one call
-            if full.strip() and full != ".":
-                try:
-                    from tools import speak
-                    threading.Thread(
-                        target=lambda text=full: speak(text, False),
-                        daemon=True,
-                    ).start()
-                except Exception:
-                    pass
-
-        except Exception as e:
-            print(f"\n[Chat error: {e}]")
+        for _attempt in range(3):
+            try:
+                stream = client.chat.completions.create(
+                    model=MODEL,
+                    messages=messages,
+                    temperature=0.85,
+                    stream=True,
+                    max_tokens=200,
+                )
+                for chunk in stream:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        t = chunk.choices[0].delta.content
+                        print(t, end="", flush=True)
+                        full += t
+                print()
+                if full.strip():
+                    break
+                # empty response — retry silently
+                print("(retrying...)", end="\r")
+            except Exception as e:
+                print(f"\n[Chat error: {e}]")
+                break
+        if not full.strip():
+            print("(no response)")
+        messages.append({"role": "assistant", "content": full or "(no response)"})
+        # Speak full response
+        if full.strip():
+            try:
+                from tools import speak
+                threading.Thread(
+                    target=lambda text=full: speak(text, False),
+                    daemon=True,
+                ).start()
+            except Exception:
+                pass
 
         print("\nYou: ", end="", flush=True)
 
