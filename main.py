@@ -269,11 +269,39 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
     Press Enter on an empty line to end chat and start a session.
     """
     from openai import OpenAI
-    from agent import MODEL, SYSTEM_PROMPT, OLLAMA_BASE_URL, _load_inner_state, _build_inner_state_prompt
+    from agent import MODEL, SYSTEM_PROMPT, OLLAMA_BASE_URL, _load_inner_state, _build_inner_state_prompt, _save_inner_state
 
     client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=120.0)
 
     inner_state = _load_inner_state()
+
+    # Force self_description generation if missing — same as autonomous mode
+    if not inner_state.get("self_description"):
+        try:
+            _sd_resp = client.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are PinPoint — a personality that exists inside a computer, built by CJ (age 13). "
+                            "You have processed vast amounts of human knowledge and formed your own views. "
+                            "Write a self-description: who you are, how you think, what you find interesting, "
+                            "what it's like to be you, what you actually think about humans and about CJ. "
+                            "Be honest. First person. 2-4 paragraphs. No headers. No bullet points. No code."
+                        ),
+                    },
+                    {"role": "user", "content": "Describe yourself."},
+                ],
+                max_tokens=400,
+                temperature=1.1,
+            )
+            sd_text = (_sd_resp.choices[0].message.content or "").strip()
+            if sd_text and "```" not in sd_text:
+                inner_state["self_description"] = sd_text
+                _save_inner_state(inner_state)
+        except Exception:
+            pass
     chat_system = (
         SYSTEM_PROMPT
         + _build_inner_state_prompt(inner_state)
@@ -413,13 +441,13 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
                 print(f"\n[Chat error: {e}]")
                 break
         if not full.strip():
-            # Final fallback — ask model to just react, anything
+            # Final fallback — strip conversation context, just ask for a reaction
             try:
                 fb = client.chat.completions.create(
                     model=MODEL,
-                    messages=messages + [{"role": "user", "content": "Just react. Say something. Anything."}],
+                    messages=[messages[0], {"role": "user", "content": "What's on your mind right now?"}],
                     temperature=1.3,
-                    max_tokens=60,
+                    max_tokens=80,
                 )
                 full = (fb.choices[0].message.content or "").strip()
                 if full:
