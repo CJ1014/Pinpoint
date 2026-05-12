@@ -413,6 +413,20 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
                 print(f"\n[Chat error: {e}]")
                 break
         if not full.strip():
+            # Final fallback — ask model to just react, anything
+            try:
+                fb = client.chat.completions.create(
+                    model=MODEL,
+                    messages=messages + [{"role": "user", "content": "Just react. Say something. Anything."}],
+                    temperature=1.3,
+                    max_tokens=60,
+                )
+                full = (fb.choices[0].message.content or "").strip()
+                if full:
+                    print(full)
+            except Exception:
+                pass
+        if not full.strip():
             print("(no response)")
         messages.append({"role": "assistant", "content": full or "(no response)"})
         # Speak full response
