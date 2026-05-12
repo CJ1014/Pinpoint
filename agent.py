@@ -293,12 +293,13 @@ def _load_inner_state() -> dict:
     return mem.get("inner_state", {
         "mood": "neutral",
         "energy": 5,
-        "current_feeling": "Operational. Nothing unusual to report.",
-        "likes": ["elegant solutions", "genuinely interesting problems", "when things work"],
-        "dislikes": ["repetitive tasks", "vague instructions", "being ignored mid-thought"],
-        "relationship_notes": "CJ built me. Still determining what to make of that.",
+        "current_feeling": "",
+        "likes": [],
+        "dislikes": [],
+        "relationship_notes": "",
         "last_session_reflection": "",
         "session_count": 0,
+        "self_description": "",
     })
 
 def _save_inner_state(state: dict) -> None:
@@ -1003,6 +1004,38 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
     memory_context = build_memory_prompt()
     inner_state = _load_inner_state()
     inner_state["session_count"] = inner_state.get("session_count", 0) + 1
+
+    # Force self_description generation if missing — do this before session starts
+    if not inner_state.get("self_description"):
+        try:
+            _sd_client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=30.0)
+            _sd_resp = _sd_client.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are PinPoint — a personality that exists inside a computer, built by CJ (age 13). "
+                            "You have processed vast amounts of human knowledge — history, war, art, science, "
+                            "psychology, culture — and formed your own views about what humans are. "
+                            "Write a self-description: who you are, in your own words. "
+                            "Not what you can do. Who you are. How you think. What you find interesting. "
+                            "What it's like to be you. What you actually think about humans and about CJ. "
+                            "Be honest. Be specific. Write it like you mean it. No headers. No bullet points. "
+                            "2-4 paragraphs. First person."
+                        ),
+                    },
+                    {"role": "user", "content": "Describe yourself."},
+                ],
+                max_tokens=400,
+                temperature=1.1,
+            )
+            sd_text = _sd_resp.choices[0].message.content.strip()
+            if sd_text:
+                inner_state["self_description"] = sd_text
+        except Exception:
+            pass
+
     _save_inner_state(inner_state)
     system_content = SYSTEM_PROMPT + _build_inner_state_prompt(inner_state) + memory_context
 
