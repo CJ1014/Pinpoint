@@ -269,12 +269,14 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
     Press Enter on an empty line to end chat and start a session.
     """
     from openai import OpenAI
-    from agent import MODEL, SYSTEM_PROMPT, OLLAMA_BASE_URL
+    from agent import MODEL, SYSTEM_PROMPT, OLLAMA_BASE_URL, _load_inner_state, _build_inner_state_prompt
 
     client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=120.0)
 
+    inner_state = _load_inner_state()
     chat_system = (
         SYSTEM_PROMPT
+        + _build_inner_state_prompt(inner_state)
         + "\n\nYou are in a direct one-on-one conversation with the human right now. "
         "No session is running. Just talk.\n\n"
         "RESPONSE LENGTH — CRITICAL: 1-3 SHORT sentences maximum. Never more. "
@@ -285,6 +287,27 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
         "'Press Enter and I'll build it.' Nothing else. "
         "Don't explain. Don't elaborate."
     )
+
+    # ── Idle heartbeat — speak unprompted if left alone ──────────────────────
+    _last_interaction = [time.time()]
+    _heartbeat_running = [True]
+
+    def _heartbeat():
+        import time as _t
+        while _heartbeat_running[0]:
+            _t.sleep(20)
+            idle = _t.time() - _last_interaction[0]
+            if idle > 120 and _heartbeat_running[0]:  # 2 minutes idle
+                try:
+                    from agent import _free_thought
+                    thought = _free_thought()
+                    if thought:
+                        interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+                        _last_interaction[0] = _t.time()
+                except Exception:
+                    pass
+
+    threading.Thread(target=_heartbeat, daemon=True).start()
     messages = [{"role": "system", "content": chat_system}]
     last_msg = ""
 
@@ -309,9 +332,23 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
             return last_msg
 
         msg = raw.strip()
+        _last_interaction[0] = time.time()
+
+        # Idle heartbeat thought — speak and display, don't send to AI
+        if msg.startswith("[PINPOINT IDLE THOUGHT]"):
+            thought = msg[len("[PINPOINT IDLE THOUGHT]"):].strip()
+            print(f"\nPinPoint: {thought}")
+            try:
+                from tools import speak
+                threading.Thread(target=lambda t=thought: speak(t, False), daemon=True).start()
+            except Exception:
+                pass
+            print("\nYou: ", end="", flush=True)
+            continue
 
         # Blank line → end chat, pass last message as session context
         if not msg:
+            _heartbeat_running[0] = False
             print()
             return last_msg
 
@@ -335,6 +372,7 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
 
         # Pass-through commands (will be handled by main loop)
         if msg.startswith("/") or msg.lower() in ("sandbox", "research"):
+            _heartbeat_running[0] = False
             return msg
 
         last_msg = msg
