@@ -27,60 +27,7 @@ _tts_ended_at: float = 0.0     # time.time() when the last TTS playback finished
 _last_spoken_text: str = ""    # text PinPoint most recently spoke (for echo detection)
 _recent_spoken: list = []      # rolling buffer of (timestamp, text) for echo detection
 
-# ── Persistent PowerShell SAPI process (Windows only) ───────────────────────
-_ps_sapi_proc = None
-_ps_sapi_lock = threading.Lock()
 
-# Grab the console window handle once at startup so we can restore it after TTS
-_console_hwnd = None
-if platform.system() == "Windows":
-    try:
-        import ctypes as _ctypes
-        _console_hwnd = _ctypes.windll.kernel32.GetConsoleWindow()
-    except Exception:
-        pass
-
-def _restore_console():
-    """Bring the console window back if TTS stole focus or minimized it."""
-    if _console_hwnd:
-        try:
-            import ctypes as _ctypes
-            _ctypes.windll.user32.ShowWindow(_console_hwnd, 9)   # SW_RESTORE
-            _ctypes.windll.user32.SetForegroundWindow(_console_hwnd)
-        except Exception:
-            pass
-
-def _get_ps_sapi():
-    """Return a running PowerShell SAPI process, starting one if needed."""
-    global _ps_sapi_proc
-    with _ps_sapi_lock:
-        if _ps_sapi_proc is None or _ps_sapi_proc.poll() is not None:
-            _ps_sapi_proc = subprocess.Popen(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", "-"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            init = (
-                "Add-Type -AssemblyName System.Speech\r\n"
-                "$global:s = New-Object System.Speech.Synthesis.SpeechSynthesizer\r\n"
-                "$global:s.Rate = 2\r\n"
-                # Select female voice by gender, not by name — works on any Windows install
-                "try { $female = $global:s.GetInstalledVoices() | "
-                "Where-Object { $_.VoiceInfo.Gender -eq 'Female' } | Select-Object -First 1; "
-                "if ($female) { $global:s.SelectVoice($female.VoiceInfo.Name) } } catch {}\r\n"
-                "Write-Host 'READY'\r\n"
-            )
-            _ps_sapi_proc.stdin.write(init.encode("utf-8"))
-            _ps_sapi_proc.stdin.flush()
-            import time as _t
-            deadline = _t.time() + 10
-            while _t.time() < deadline:
-                line = _ps_sapi_proc.stdout.readline().decode("utf-8", errors="replace").strip()
-                if line == "READY":
-                    break
-    return _ps_sapi_proc
 
 
 def _speech_worker() -> None:
@@ -332,7 +279,7 @@ def start_voice_listener(interrupt_queue) -> bool:
 
     SAMPLE_RATE = 16000
     CHUNK = 1024          # frames per callback (~64 ms)
-    SILENCE_CHUNKS = 16   # chunks of silence that end a phrase (~1.0 s)
+    SILENCE_CHUNKS = 28   # chunks of silence that end a phrase (~1.8 s)
 
     # Calibrate energy threshold from 0.5 s of ambient noise
     energy_threshold = 500  # fallback default
@@ -369,7 +316,7 @@ def start_voice_listener(interrupt_queue) -> bool:
         recording = False
         buf = b""
         silence_count = 0
-        POST_SPEAK_COOLDOWN = 0.0  # rely on echo suppression, not a dead window
+        POST_SPEAK_COOLDOWN = 1.2  # seconds to keep mic off after TTS finishes
 
         def _drain_audio_q():
             while True:
@@ -2634,38 +2581,11 @@ def _speak_now(text: str) -> None:
     if not text:
         return
 
-    # Windows: persistent PowerShell SAPI process (female voice, no new window)
-    if platform.system() == "Windows":
-        import time as _time
-        try:
-            proc = _get_ps_sapi()
-            safe = text.replace("'", "''").replace("\n", " ").replace("\r", "")
-            cmd = f"$global:s.Speak('{safe}')\r\nWrite-Host 'DONE'\r\n"
-            with _playback_lock:
-                global _playback_proc
-                _playback_proc = True
-            try:
-                proc.stdin.write(cmd.encode("utf-8"))
-                proc.stdin.flush()
-                deadline = _time.time() + 60
-                while _time.time() < deadline:
-                    line = proc.stdout.readline().decode("utf-8", errors="replace").strip()
-                    if line == "DONE":
-                        break
-            finally:
-                with _playback_lock:
-                    _playback_proc = None
-                global _tts_ended_at
-                _tts_ended_at = _time.time()
-                _restore_console()  # undo any focus/minimize caused by SAPI
-            return
-        except Exception:
-            with _playback_lock:
-                _playback_proc = None
-            global _ps_sapi_proc
-            _ps_sapi_proc = None  # force restart on next call
-            _restore_console()
+    # Try high-quality neural voice first
+    if _try_edge_tts(text):
+        return
 
+    # Native platform fallbacks
     if platform.system() == "Linux":
         for cmd in ["espeak-ng", "espeak"]:
             try:
@@ -2687,9 +2607,29 @@ def _speak_now(text: str) -> None:
         except Exception:
             pass
 
-    # Last resort: edge_tts (network, file I/O — slowest)
-    if _try_edge_tts(text):
-        return
+    if platform.system() == "Windows":
+        try:
+            safe = text.replace("'", "''")
+            ps = (
+                "Add-Type -AssemblyName System.Speech; "
+                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                "$s.Rate = 2; "
+                f"$s.Speak('{safe}')"
+            )
+            subprocess.run(["powershell", "-WindowStyle", "Hidden", "-Command", ps],
+                           capture_output=True, timeout=30)
+            return
+        except Exception:
+            pass
+
+    try:
+        import pyttsx3
+        engine = pyttsx3.init()
+        engine.setProperty("rate", 150)
+        engine.say(text)
+        engine.runAndWait()
+    except Exception:
+        pass
 
     print(f"\n[SPEAKING] {text}\n", flush=True)
 
