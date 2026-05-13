@@ -1488,7 +1488,7 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
     emit_world_event(session_num, _current_goal, "starting", 0, "tool_call", "PinPoint starting up")
 
     print("\n" + "=" * 60)
-    print("  AUTONOMOUS AI AGENT — starting up")
+    print("  AUTONOMOUS AI AGENT — starting up  [hot-reload test ✓]")
     print(f"  Model: {MODEL} (local Ollama)")
     print(f"  Session: #{session_num}")
     print("  Memory: " + ("loaded from previous sessions" if memory_context else "fresh start"))
