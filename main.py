@@ -20,7 +20,6 @@ BANNER = r"""
  Autonomous AI — talk to her, she talks back
  Just speak  |  /mute /unmute = TTS  |  /voice = mic toggle
  /dev = self-improvement  |  sandbox = upgrade 3D viewer
- Blank Enter = start/resume autonomous session
 """
 
 LOCK_DIR = os.path.join(_DIR, "output")
@@ -525,12 +524,9 @@ def main() -> None:
     else:
         print("  Voice input      : unavailable (type instead)")
 
-    # Command-line order overrides interactive chat
+    # Command-line order overrides auto-start
     order = " ".join(sys.argv[1:]).strip() if len(sys.argv) > 1 else ""
     dev_mode = False
-
-    if not order:
-        order = _chat_mode(interrupt_queue)
 
     # Handle special commands (/dev, /sandbox, /research, /collab)
     # These are checked AFTER get_user_order() so they work interactively
