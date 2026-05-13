@@ -1643,6 +1643,24 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                     "Go deep — follow interesting links, read actual documentation and tutorials, "
                     "not just summaries. The goal is to genuinely expand what you know and can do."
                 )
+            elif interrupt_msg.startswith("/error "):
+                error_content = interrupt_msg[len("/error "):].strip()
+                inject_text = (
+                    f"[CJ PASTED AN ERROR — STOP AND FIX IT]\n\n"
+                    f"{error_content}\n\n"
+                    f"Read this error carefully. speak() a one-sentence summary of what's wrong. "
+                    f"Then fix it — don't ask questions, just diagnose and fix. "
+                    f"Stop whatever you were doing before."
+                )
+            elif interrupt_msg.startswith("/paste "):
+                paste_content = interrupt_msg[len("/paste "):].strip()
+                inject_text = (
+                    f"[CJ PASTED SOMETHING FOR YOU]\n\n"
+                    f"{paste_content}\n\n"
+                    f"Read this. Respond naturally — if it's code, review it; "
+                    f"if it's text, react to it; if it's instructions, follow them. "
+                    f"speak() your response."
+                )
             else:
                 inject_text = (
                     f"[THE HUMAN IS TALKING TO YOU] \"{interrupt_msg}\"\n\n"

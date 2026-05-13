@@ -67,6 +67,26 @@ def get_user_order() -> str:
     return order
 
 
+def _collect_paste(prompt_label: str) -> str:
+    """Collect multiline paste from stdin. Ends on a blank line.
+    Works on all platforms via sys.stdin (safe to call from input thread)."""
+    sys.stdout.write(f"\n[{prompt_label}] Paste below — blank line when done:\n")
+    sys.stdout.flush()
+    lines = []
+    while True:
+        try:
+            line = sys.stdin.readline()
+            if line is None:
+                break
+            stripped = line.rstrip("\n")
+            if stripped == "":
+                break
+            lines.append(stripped)
+        except Exception:
+            break
+    return "\n".join(lines)
+
+
 def _input_listener(interrupt_queue: queue.Queue) -> None:
     """Background thread: reads lines from the keyboard and puts them in the queue.
 
@@ -85,7 +105,16 @@ def _input_listener(interrupt_queue: queue.Queue) -> None:
                         buf = ""
                         sys.stdout.write("\n")
                         sys.stdout.flush()
-                        if line:
+                        if line.lower() in ("/error", "/paste"):
+                            # Switch to multiline paste collection
+                            label = "ERROR" if line.lower() == "/error" else "PASTE"
+                            content = _collect_paste(label)
+                            if content.strip():
+                                tag = "/error" if label == "ERROR" else "/paste"
+                                interrupt_queue.put(f"{tag} {content}")
+                                sys.stdout.write(f"[{label} sent to PinPoint]\n")
+                                sys.stdout.flush()
+                        elif line:
                             sys.stdout.write(f"[INPUT] {line}\n")
                             sys.stdout.flush()
                             interrupt_queue.put(line)
@@ -119,7 +148,15 @@ def _input_listener(interrupt_queue: queue.Queue) -> None:
             try:
                 line = sys.stdin.readline()
                 if line:
-                    interrupt_queue.put(line.strip())
+                    stripped = line.strip()
+                    if stripped.lower() in ("/error", "/paste"):
+                        label = "ERROR" if stripped.lower() == "/error" else "PASTE"
+                        content = _collect_paste(label)
+                        if content.strip():
+                            tag = "/error" if label == "ERROR" else "/paste"
+                            interrupt_queue.put(f"{tag} {content}")
+                    else:
+                        interrupt_queue.put(stripped)
                 else:
                     break
             except EOFError:
@@ -469,6 +506,13 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             print("\nYou: ", end="", flush=True)
             continue
 
+        # /error and /paste — treat as direct chat questions in chat mode
+        if msg.startswith("/error "):
+            error_body = msg[len("/error "):].strip()
+            msg = f"I got this error:\n\n{error_body}\n\nWhat's wrong and how do I fix it?"
+        elif msg.startswith("/paste "):
+            msg = msg[len("/paste "):].strip()
+
         # Pass-through commands (will be handled by main loop)
         if msg.startswith("/") or msg.lower() in ("sandbox", "research"):
             _heartbeat_running[0] = False
@@ -674,7 +718,28 @@ def main() -> None:
         )
 
     import agent
+    import importlib
     from tools import list_files
+
+    # Track agent.py mod time for hot-reload detection
+    _agent_py = os.path.join(_DIR, "agent.py")
+    _tools_py = os.path.join(_DIR, "tools.py")
+    try:
+        _last_agent_mtime = os.path.getmtime(_agent_py)
+    except Exception:
+        _last_agent_mtime = 0.0
+
+    def _reload_if_changed() -> None:
+        """Reload agent.py if it changed on disk (e.g. after git pull)."""
+        nonlocal _last_agent_mtime
+        try:
+            mtime = os.path.getmtime(_agent_py)
+            if mtime > _last_agent_mtime:
+                importlib.reload(agent)
+                _last_agent_mtime = mtime
+                print("\n[agent.py reloaded — new code active for next session]")
+        except Exception as e:
+            print(f"\n[agent.py reload failed: {e}]")
 
     # Session lock file — tells other instances what this one is working on
     pid = os.getpid()
@@ -786,6 +851,9 @@ def main() -> None:
         if summary:
             print("\n--- Session summary ---")
             print(summary)
+
+        # Hot-reload agent.py if it changed (e.g. after git pull)
+        _reload_if_changed()
 
         # Drop into chat mode between sessions — PinPoint opens with "here's what I built"
         order = _chat_mode(interrupt_queue, previous_summary=summary)
