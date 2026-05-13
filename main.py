@@ -506,8 +506,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             print("\nYou: ", end="", flush=True)
             continue
 
-        # /update — git pull then hot-reload agent.py, all from within chat
-        if msg.lower() == "/update":
+        # Natural update trigger — "update", "update yourself", "pull updates", etc.
+        _update_phrases = ("update", "update yourself", "pull updates", "check for updates", "pull latest")
+        if msg.lower().strip() in _update_phrases or msg.lower().strip() == "/update":
             print("\n[Pulling latest code...]")
             try:
                 import subprocess as _sp
