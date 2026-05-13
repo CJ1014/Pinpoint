@@ -550,11 +550,30 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             r"\b(make|build|create|write|generate|design|code|render|draw|"
             r"give\s+me|show\s+me|simulate|animate|program|"
             r"fix|update|change|modify|add|remove|get\s+rid\s+of|delete|"
-            r"replace|edit|improve|upgrade|refactor|rewrite|redo)\b"
+            r"replace|edit|improve|upgrade|refactor|rewrite|redo|do\s+it)\b"
         )
-        if _re.search(_action_words, msg.lower()):
+        # Confirmation phrases — "yeah", "yes", "go ahead", "just do it", etc.
+        _confirmations = {
+            "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "go ahead",
+            "go for it", "just do it", "do it", "do that", "sounds good",
+            "let's do it", "lets do it", "just go", "go", "alright", "do it then",
+        }
+        _is_action = bool(_re.search(_action_words, msg.lower()))
+        _is_confirm = msg.lower().strip() in _confirmations
+
+        if _is_action or _is_confirm:
             _heartbeat_running[0] = False
-            return msg  # hand off directly to autonomous session
+            # If message is vague/short, prepend recent conversation context
+            # so the autonomous session knows what it's actually supposed to do
+            if _is_confirm or len(msg.split()) <= 4:
+                _ctx_turns = []
+                for _m in messages[-6:]:
+                    if isinstance(_m, dict) and _m.get("role") in ("user", "assistant"):
+                        _role = "CJ" if _m["role"] == "user" else "PinPoint"
+                        _ctx_turns.append(f"{_role}: {_m['content'][:200]}")
+                if _ctx_turns:
+                    return f"[Conversation context:\n" + "\n".join(_ctx_turns) + f"]\n\nCJ's last message: {msg}"
+            return msg
 
         last_msg = msg
         messages.append({"role": "user", "content": msg})
