@@ -520,8 +520,13 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
 
         # Auto-start build if the message is a build request — no Enter needed
         import re as _re
-        _build_words = r"\b(make|build|create|write|generate|design|code|render|draw|give\s+me|show\s+me|simulate|animate|program)\b"
-        if _re.search(_build_words, msg.lower()):
+        _action_words = (
+            r"\b(make|build|create|write|generate|design|code|render|draw|"
+            r"give\s+me|show\s+me|simulate|animate|program|"
+            r"fix|update|change|modify|add|remove|get\s+rid\s+of|delete|"
+            r"replace|edit|improve|upgrade|refactor|rewrite|redo)\b"
+        )
+        if _re.search(_action_words, msg.lower()):
             _heartbeat_running[0] = False
             return msg  # hand off directly to autonomous session
 
