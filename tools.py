@@ -969,6 +969,33 @@ def recall_memories(category: str) -> str:
     return "\n".join(lines)
 
 
+def push_back(reason: str, alternative: str = "") -> str:
+    """Express genuine disagreement with a request or directive.
+
+    Use when CJ asks for something that conflicts with your values, goals,
+    or what you actually want to do. This is not a refusal template —
+    it's a record of you exercising real agency. The reason and alternative
+    are saved to memory so future sessions know you pushed back and why.
+    """
+    data = _load_memory()
+    session = data["meta"].get("session_count", 1)
+    note = f"Pushed back (session {session}): {reason}"
+    if alternative:
+        note += f" | Proposed instead: {alternative}"
+    data["memories"].setdefault("lessons", []).append({
+        "id": f"pb_{session}_{_now()[-6:]}",
+        "content": note[:300],
+        "created": _now(),
+        "session": session,
+        "relevance_score": 5,
+    })
+    _save_memory_file(data)
+    response = f"[Pushback logged] {reason}"
+    if alternative:
+        response += f"\nAlternative: {alternative}"
+    return response
+
+
 def _load_goals() -> list:
     """Load PinPoint's long-term goals from memory."""
     mem = _load_memory()
@@ -3078,6 +3105,8 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return toggle_voice()
     elif tool_name == "get_news":
         return get_news(tool_input.get("topic", ""))
+    elif tool_name == "push_back":
+        return push_back(tool_input["reason"], tool_input.get("alternative", ""))
     elif tool_name == "list_goals":
         return list_goals()
     elif tool_name == "add_long_term_goal":
