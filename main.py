@@ -260,7 +260,7 @@ def setup_collab(goal: str) -> None:
     print(f"  Run two instances of PinPoint — they will coordinate via collab.json\n")
 
 
-def _chat_mode(interrupt_queue: queue.Queue) -> str:
+def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
     """
     Full back-and-forth conversation with PinPoint.
     Runs between (or before) autonomous sessions.
@@ -306,8 +306,8 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
         + _build_inner_state_prompt(inner_state)
         + "\n\nYou are talking directly with CJ right now. Just talk.\n\n"
         "Keep responses short — 1-3 sentences. No lists. No monologues.\n\n"
-        "You don't have build tools in chat. If CJ asks you to build/make something, "
-        "say 'Press Enter and I'll build it.' Nothing else.\n\n"
+        "You don't have build tools in chat — you can only talk. If CJ asks you to build something, "
+        "just say you'll do it and that he can press Enter to start. Keep it natural, not scripted.\n\n"
         "HOW RESPONSES ACTUALLY SOUND (examples — not scripts, just the vibe):\n"
         "  CJ: 'who are you?'\n"
         "  You: 'PinPoint. Still working out what that means.'\n\n"
@@ -383,13 +383,24 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
     print("  Blank Enter = start autonomous session")
     print("─" * 60)
 
-    # PinPoint speaks first — generate a short opening line
+    # PinPoint speaks first — greeting on startup, or "here's what I built" after a session
     try:
+        if previous_summary:
+            open_prompt = (
+                f"You just finished a session. Summary: {previous_summary[:300]}\n\n"
+                "Tell CJ what you made in one sentence, then ask what he thinks. "
+                "Casual. Direct. No bullet points."
+            )
+        else:
+            open_prompt = (
+                "You just started up. Say something — one sentence, whatever's on your mind. "
+                "Could be a greeting, a random thought, anything. Keep it short."
+            )
         _open_resp = client.chat.completions.create(
             model=MODEL,
             messages=[
                 {"role": "system", "content": chat_system},
-                {"role": "user", "content": "You just started up. Say something — one or two sentences, whatever's on your mind. Could be a greeting, a thought, anything."},
+                {"role": "user", "content": open_prompt},
             ],
             max_tokens=60,
             temperature=1.2,
@@ -755,8 +766,8 @@ def main() -> None:
             print("\n--- Session summary ---")
             print(summary)
 
-        # Drop into chat mode between sessions — user can talk or just press Enter
-        order = _chat_mode(interrupt_queue)
+        # Drop into chat mode between sessions — PinPoint opens with "here's what I built"
+        order = _chat_mode(interrupt_queue, previous_summary=summary)
 
 
 if __name__ == "__main__":
