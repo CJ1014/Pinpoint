@@ -15,7 +15,7 @@ OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 ROOT_DIR = os.path.dirname(__file__)
 _running_servers = {}  # port -> thread
 MEMORY_FILE = os.path.join(os.path.dirname(__file__), "memory.json")
-MEMORY_CATEGORIES = ("skills", "lessons", "mistakes", "ideas", "projects", "preferences", "dislikes", "experiments")
+MEMORY_CATEGORIES = ("skills", "lessons", "mistakes", "ideas", "projects", "preferences", "dislikes", "experiments", "reflections")
 MAX_PER_CATEGORY = 20
 
 # ── Speech queue — one thread, one voice at a time ──────────────────────────
@@ -969,6 +969,32 @@ def recall_memories(category: str) -> str:
     return "\n".join(lines)
 
 
+def save_reflection(trigger: str, insight: str, domain: str, confidence: int = 3) -> str:
+    """Save a structured 'when X → learned Y about Z' reflection to memory."""
+    confidence = max(1, min(5, int(confidence)))
+    trigger = trigger[:200]
+    insight = insight[:300]
+    domain = domain[:100]
+    data = _load_memory()
+    entries = data["memories"].setdefault("reflections", [])
+    entry_id = f"rf_{len(entries)+1:03d}"
+    entries.append({
+        "id": entry_id,
+        "trigger": trigger,
+        "insight": insight,
+        "domain": domain,
+        "confidence": confidence,
+        "created": _now(),
+        "session": data["meta"].get("session_count", 1),
+    })
+    if len(entries) > MAX_PER_CATEGORY:
+        entries.sort(key=lambda e: (e["confidence"], e["created"]))
+        entries.pop(0)
+    data["memories"]["reflections"] = entries
+    _save_memory_file(data)
+    return f"Reflection saved (confidence {confidence}): when {trigger[:60]}... → {insight[:60]}..."
+
+
 def list_memory_categories() -> str:
     data = _load_memory()
     lines = []
@@ -1006,6 +1032,16 @@ def build_memory_prompt() -> str:
             sections.append(
                 f"LAST PROJECT (satisfaction {score}/5 — you were not happy with it, move on):\n- {summary}"
             )
+
+    # ── Structured reflections (highest signal) ─────────────
+    reflections = data["memories"].get("reflections", [])
+    if reflections:
+        top_rf = sorted(reflections, key=lambda x: -x["confidence"])[:8]
+        rf_lines = [
+            f"- When {r['trigger']} → {r['insight']}  [{r['domain']}]"
+            for r in top_rf
+        ]
+        sections.append("WHAT YOU HAVE ACTUALLY LEARNED (from real sessions):\n" + "\n".join(rf_lines))
 
     labels = {
         "preferences": "YOUR LIKES & PREFERENCES (what you enjoy creating)",

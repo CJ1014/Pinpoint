@@ -83,6 +83,86 @@ def _looks_like_error(result_lower: str) -> bool:
     return False
 
 
+def _run_session_reflection(messages: list, summary: str, client) -> None:
+    """After a session ends, extract structured lessons and save them to memory.
+
+    Compresses tool call history into a digest, then asks the LLM to identify
+    concrete 'when X → learned Y about Z' patterns from what actually happened.
+    """
+    from tools import save_reflection
+    try:
+        # Build a compressed digest of what happened — tool calls and key results only
+        events = []
+        for msg in messages:
+            if msg.get("role") == "assistant":
+                for tc in (msg.get("tool_calls") or []):
+                    fn = tc.get("function", {})
+                    name = fn.get("name", "")
+                    if name in ("think", "brainstorm"):
+                        continue  # skip internal reasoning — too verbose
+                    try:
+                        import json as _j
+                        args = _j.loads(fn.get("arguments", "{}"))
+                    except Exception:
+                        args = {}
+                    arg_summary = str(args)[:120]
+                    events.append(f"  TOOL: {name}({arg_summary})")
+            elif msg.get("role") == "tool":
+                result_snip = str(msg.get("content", ""))[:100]
+                events.append(f"  RESULT: {result_snip}")
+
+        if not events:
+            return
+
+        digest = "\n".join(events[:60])  # cap at 60 events to stay in context
+
+        resp = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are analyzing a session log to extract concrete lessons. "
+                        "Output a JSON array of reflection objects. Each object must have exactly these keys: "
+                        "'trigger' (what happened or what was tried — 'when I...'), "
+                        "'insight' (the actual lesson — 'I learned that...'), "
+                        "'domain' (the subject area — e.g. 'file I/O', 'web scraping', 'Python syntax'), "
+                        "'confidence' (1-5, how certain/useful this lesson is). "
+                        "Extract 2-5 real lessons. Only include things that actually happened. "
+                        "No generic platitudes. Specific and actionable only. "
+                        "Output ONLY valid JSON. No explanation. No markdown."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Session summary: {summary}\n\nWhat happened:\n{digest}",
+                },
+            ],
+            max_tokens=500,
+            temperature=0.4,
+        )
+
+        raw = (resp.choices[0].message.content or "").strip()
+        # Strip markdown fences if present
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1]
+            raw = raw.rsplit("```", 1)[0]
+
+        import json as _j
+        lessons = _j.loads(raw)
+        if isinstance(lessons, list):
+            for item in lessons:
+                if isinstance(item, dict) and all(k in item for k in ("trigger", "insight", "domain")):
+                    save_reflection(
+                        trigger=str(item.get("trigger", ""))[:200],
+                        insight=str(item.get("insight", ""))[:300],
+                        domain=str(item.get("domain", ""))[:100],
+                        confidence=int(item.get("confidence", 3)),
+                    )
+    except Exception:
+        pass  # reflection is best-effort — never crash the session
+
+
 def _build_voice_line(name: str, inp: dict, result: str) -> str:
     """Build a natural spoken line from tool context — no extra LLM call needed.
 
@@ -1633,6 +1713,11 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
 
     else:
         print(f"\n[Max iterations ({MAX_ITERATIONS}) reached — stopping.]\n")
+
+    # Post-session reflection — extract structured lessons from what actually happened
+    if final_summary:
+        print("[Reflecting on session...]")
+        _run_session_reflection(messages, final_summary, client)
 
     return final_summary
 
