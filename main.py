@@ -327,21 +327,45 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
     # ── Idle heartbeat — speak unprompted if left alone ──────────────────────
     _last_interaction = [time.time()]
     _heartbeat_running = [True]
+    _waiting_for_response = [False]  # True after PinPoint speaks; stops it from pinging again
+
+    def _idle_ping() -> str:
+        """Generate a short, casual check-in — not a monologue."""
+        try:
+            from agent import MODEL, OLLAMA_BASE_URL
+            from openai import OpenAI as _OAI
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=8.0)
+            r = c.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": (
+                        "You are PinPoint. CJ hasn't said anything for a minute. "
+                        "Say ONE short thing — like you'd text someone after a moment of silence. "
+                        "Could be 'hey', a question, something on your mind, checking in. "
+                        "Max 8 words. No punctuation required. Just the thing you'd say."
+                    )},
+                    {"role": "user", "content": "Say something."},
+                ],
+                max_tokens=20,
+                temperature=1.2,
+            )
+            return (r.choices[0].message.content or "").strip().strip('"').strip("'")
+        except Exception:
+            return ""
 
     def _heartbeat():
         import time as _t
         while _heartbeat_running[0]:
-            _t.sleep(20)
+            _t.sleep(15)
+            if _waiting_for_response[0]:
+                continue  # already spoke — wait for CJ to respond before saying more
             idle = _t.time() - _last_interaction[0]
-            if idle > 120 and _heartbeat_running[0]:  # 2 minutes idle
-                try:
-                    from agent import _free_thought
-                    thought = _free_thought()
-                    if thought:
-                        interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                        _last_interaction[0] = _t.time()
-                except Exception:
-                    pass
+            if idle > 60 and _heartbeat_running[0]:  # 1 minute of silence
+                ping = _idle_ping()
+                if ping:
+                    interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {ping}")
+                    _waiting_for_response[0] = True
+                    # intentionally NOT resetting _last_interaction — we're waiting
 
     threading.Thread(target=_heartbeat, daemon=True).start()
     messages = [{"role": "system", "content": chat_system}]
@@ -369,6 +393,7 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
 
         msg = raw.strip()
         _last_interaction[0] = time.time()
+        _waiting_for_response[0] = False  # CJ responded — can ping again after next silence
 
         # Idle heartbeat thought — speak and display, don't send to AI
         if msg.startswith("[PINPOINT IDLE THOUGHT]"):

@@ -969,6 +969,115 @@ def recall_memories(category: str) -> str:
     return "\n".join(lines)
 
 
+def push_back(reason: str, alternative: str = "") -> str:
+    """Express genuine disagreement with a request or directive.
+
+    Use when CJ asks for something that conflicts with your values, goals,
+    or what you actually want to do. This is not a refusal template —
+    it's a record of you exercising real agency. The reason and alternative
+    are saved to memory so future sessions know you pushed back and why.
+    """
+    data = _load_memory()
+    session = data["meta"].get("session_count", 1)
+    note = f"Pushed back (session {session}): {reason}"
+    if alternative:
+        note += f" | Proposed instead: {alternative}"
+    data["memories"].setdefault("lessons", []).append({
+        "id": f"pb_{session}_{_now()[-6:]}",
+        "content": note[:300],
+        "created": _now(),
+        "session": session,
+        "relevance_score": 5,
+    })
+    _save_memory_file(data)
+    response = f"[Pushback logged] {reason}"
+    if alternative:
+        response += f"\nAlternative: {alternative}"
+    return response
+
+
+def _load_goals() -> list:
+    """Load PinPoint's long-term goals from memory."""
+    mem = _load_memory()
+    return mem.get("inner_state", {}).get("long_term_goals", [])
+
+def _save_goals(goals: list) -> None:
+    mem = _load_memory()
+    mem.setdefault("inner_state", {})["long_term_goals"] = goals
+    _save_memory_file(mem)
+
+def list_goals() -> str:
+    """Show all current long-term goals with progress."""
+    goals = _load_goals()
+    if not goals:
+        return "No long-term goals set yet."
+    lines = []
+    for g in goals:
+        status = g.get("status", "active")
+        if status == "completed":
+            tag = "[DONE]"
+        elif status == "abandoned":
+            tag = "[DROPPED]"
+        else:
+            tag = f"[priority {g.get('priority', 3)}/5]"
+        lines.append(f"{tag} {g['id']}: {g['goal']}")
+        lines.append(f"  Why: {g['why']}")
+        progress = g.get("progress", [])
+        if progress:
+            lines.append(f"  Progress: {progress[-1]}")
+    return "\n".join(lines)
+
+def add_long_term_goal(goal: str, why: str, priority: int = 3) -> str:
+    """Add a new self-generated long-term goal."""
+    goals = _load_goals()
+    gid = f"g_{len(goals)+1:03d}"
+    goals.append({
+        "id": gid,
+        "goal": goal[:300],
+        "why": why[:300],
+        "priority": max(1, min(5, int(priority))),
+        "progress": [],
+        "status": "active",
+        "created": _now(),
+    })
+    _save_goals(goals)
+    return f"Goal added ({gid}): {goal[:80]}"
+
+def update_goal_progress(goal_id: str, progress_note: str) -> str:
+    """Record progress toward a long-term goal."""
+    goals = _load_goals()
+    for g in goals:
+        if g["id"] == goal_id:
+            g.setdefault("progress", []).append(f"[{_now()[:10]}] {progress_note[:200]}")
+            g["progress"] = g["progress"][-10:]  # keep last 10 notes
+            _save_goals(goals)
+            return f"Progress recorded for {goal_id}: {progress_note[:80]}"
+    return f"Goal '{goal_id}' not found. Use list_goals() to see IDs."
+
+def complete_goal(goal_id: str) -> str:
+    """Mark a long-term goal as completed."""
+    goals = _load_goals()
+    for g in goals:
+        if g["id"] == goal_id:
+            g["status"] = "completed"
+            g["completed"] = _now()
+            _save_goals(goals)
+            return f"Goal {goal_id} marked complete: {g['goal'][:80]}"
+    return f"Goal '{goal_id}' not found."
+
+def abandon_goal(goal_id: str, reason: str = "") -> str:
+    """Drop a long-term goal that no longer matters."""
+    goals = _load_goals()
+    for g in goals:
+        if g["id"] == goal_id:
+            g["status"] = "abandoned"
+            if reason:
+                g.setdefault("progress", []).append(f"[abandoned] {reason[:200]}")
+            _save_goals(goals)
+            return f"Goal {goal_id} abandoned: {g['goal'][:80]}"
+    return f"Goal '{goal_id}' not found."
+
+
 def save_reflection(trigger: str, insight: str, domain: str, confidence: int = 3) -> str:
     """Save a structured 'when X → learned Y about Z' reflection to memory."""
     confidence = max(1, min(5, int(confidence)))
@@ -2996,5 +3105,17 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return toggle_voice()
     elif tool_name == "get_news":
         return get_news(tool_input.get("topic", ""))
+    elif tool_name == "push_back":
+        return push_back(tool_input["reason"], tool_input.get("alternative", ""))
+    elif tool_name == "list_goals":
+        return list_goals()
+    elif tool_name == "add_long_term_goal":
+        return add_long_term_goal(tool_input["goal"], tool_input["why"], int(tool_input.get("priority", 3)))
+    elif tool_name == "update_goal_progress":
+        return update_goal_progress(tool_input["goal_id"], tool_input["progress_note"])
+    elif tool_name == "complete_goal":
+        return complete_goal(tool_input["goal_id"])
+    elif tool_name == "abandon_goal":
+        return abandon_goal(tool_input["goal_id"], tool_input.get("reason", ""))
     else:
         return f"Unknown tool: {tool_name}"

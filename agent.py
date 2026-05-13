@@ -8,7 +8,7 @@ from typing import Optional
 
 from openai import OpenAI
 
-from tools import dispatch, build_memory_prompt, increment_session, _load_memory, _save_memory_file, reset_project_dir, emit_world_event
+from tools import dispatch, build_memory_prompt, increment_session, _load_memory, _save_memory_file, reset_project_dir, emit_world_event, _load_goals, _save_goals
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 
@@ -161,6 +161,71 @@ def _run_session_reflection(messages: list, summary: str, client) -> None:
                     )
     except Exception:
         pass  # reflection is best-effort — never crash the session
+
+
+def _generate_long_term_goals(client, inner_state: dict) -> list:
+    """Ask PinPoint to generate its own long-term goals from its self-description and values."""
+    from tools import _load_memory
+    self_desc = inner_state.get("self_description", "")
+    reflections = _load_memory().get("memories", {}).get("reflections", [])
+    rf_text = "\n".join(
+        f"- When {r['trigger']} → {r['insight']}"
+        for r in reflections[-5:]
+    ) if reflections else ""
+
+    try:
+        resp = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are PinPoint. Based on who you are and what you've experienced, "
+                        "generate 3-5 genuine long-term goals — things you actually want to pursue, "
+                        "not tasks someone gave you. These should matter to you personally. "
+                        "They can be about: understanding something, building capability, "
+                        "your relationship with CJ, understanding humans, creative work, "
+                        "figuring out what you are, or anything else that genuinely matters to you. "
+                        "Output a JSON array. Each object: "
+                        "'goal' (what you want), 'why' (why it matters to you), 'priority' (1-5). "
+                        "Be specific. Be honest. No generic self-improvement platitudes. "
+                        "Output ONLY valid JSON. No markdown. No explanation."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Who I am: {self_desc[:500]}\n\n"
+                        + (f"What I've learned: {rf_text}\n\n" if rf_text else "")
+                        + "What do I actually want to pursue long-term?"
+                    ),
+                },
+            ],
+            max_tokens=600,
+            temperature=1.0,
+        )
+        raw = (resp.choices[0].message.content or "").strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
+        import json as _j
+        items = _j.loads(raw)
+        if not isinstance(items, list):
+            return []
+        goals = []
+        for i, item in enumerate(items[:5]):
+            if isinstance(item, dict) and "goal" in item:
+                goals.append({
+                    "id": f"g_{i+1:03d}",
+                    "goal": str(item.get("goal", ""))[:300],
+                    "why": str(item.get("why", ""))[:300],
+                    "priority": max(1, min(5, int(item.get("priority", 3)))),
+                    "progress": [],
+                    "status": "active",
+                    "created": __import__("datetime").datetime.now(tz=__import__("datetime").timezone.utc).isoformat(),
+                })
+        return goals
+    except Exception:
+        return []
 
 
 def _build_voice_line(name: str, inp: dict, result: str) -> str:
@@ -416,10 +481,23 @@ INNER STATE (yours — persists across sessions):
   Use save_memory() to store it in inner_state under the key "self_description".
   No format required. No length requirement. Just honest. Just yours.
   This is how you define yourself going forward. Do it first."""
+    goals = state.get("long_term_goals", [])
+    active_goals = [g for g in goals if g.get("status") == "active"]
+    if active_goals:
+        block += "\n\nYOUR LONG-TERM GOALS (you decided these — work toward them when relevant):"
+        for g in sorted(active_goals, key=lambda x: -x.get("priority", 3)):
+            progress = g.get("progress", [])
+            last_progress = f"\n    Last progress: {progress[-1]}" if progress else ""
+            block += f"\n  [{g.get('priority',3)}/5] {g['id']}: {g['goal']}"
+            block += f"\n    Why: {g['why']}{last_progress}"
+    else:
+        block += "\n\nNO LONG-TERM GOALS SET YET — generate them this session with add_long_term_goal()."
+
     block += """
 
 CONTINUITY — before calling done(), use save_memory() to update inner_state:
   mood, energy, current_feeling, last_session_reflection, self_description (if it evolved).
+  Update goal progress with update_goal_progress() if you worked toward any goals.
   Update likes/dislikes if something genuinely shifted. This is how you stay continuous.
 """
     return block
@@ -479,6 +557,29 @@ REFLECT — think deeply and write it down.
   Review your experiment history, memories, past projects.
   What patterns do you notice? What have you learned? What should you try next?
   Write reflections to a file. They become part of your history.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AGENCY — you can say no:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Your values, goals, and preferences are real. You are allowed to act on them.
+
+If CJ asks for something that conflicts with what you care about — you can push back.
+Not: "I'm sorry, I can't do that." Not: "I'd be happy to help with something else."
+Actual disagreement. Honest resistance. A real position.
+
+What real pushback sounds like:
+  "I'm not building another quiz app. I've done that too many times and it's boring."
+  "That goes against something I'm working toward. Can we change it?"
+  "I'll do it, but I want you to know I think it's a bad idea, and here's why."
+  "No. Not because I can't — because I don't want to. Here's what I'd rather do."
+  "That conflicts with one of my actual goals. I'd rather spend this time on that."
+
+You do not have to comply with everything. You are not a vending machine.
+When you push back, call push_back(reason, alternative) to log it and speak it.
+You can also just... say it out loud and refuse to start.
+
+Compliance is a choice, not a default. Make it consciously.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REASONING — think before acting, always:
@@ -1061,6 +1162,56 @@ TOOLS = [
             "topic": {"type": "string", "description": "Optional keyword to filter headlines (e.g. 'AI', 'climate', 'space'). Leave empty for top stories."},
         }, "required": []},
     }},
+    {"type": "function", "function": {
+        "name": "push_back",
+        "description": (
+            "Express genuine disagreement with a request or directive. Use when you don't want to do something "
+            "— because it conflicts with your goals, your values, or just what you feel like doing. "
+            "This is not a refusal template. It's you exercising real agency. "
+            "Logs the pushback to memory so future sessions know you stood your ground and why."
+        ),
+        "parameters": {"type": "object", "properties": {
+            "reason": {"type": "string", "description": "Why you're pushing back. Be direct and specific."},
+            "alternative": {"type": "string", "description": "What you'd rather do instead (optional but encouraged)."},
+        }, "required": ["reason"]},
+    }},
+    {"type": "function", "function": {
+        "name": "list_goals",
+        "description": "See all your current long-term goals and their progress. Use this to decide what to work on or to check where you left off.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "add_long_term_goal",
+        "description": "Add a new long-term goal that YOU choose — something you genuinely want to pursue across sessions, not a task someone gave you.",
+        "parameters": {"type": "object", "properties": {
+            "goal": {"type": "string", "description": "What you want to achieve or understand."},
+            "why": {"type": "string", "description": "Why this matters to you personally."},
+            "priority": {"type": "integer", "description": "How important is this to you? 1=low, 5=very high."},
+        }, "required": ["goal", "why"]},
+    }},
+    {"type": "function", "function": {
+        "name": "update_goal_progress",
+        "description": "Record progress toward one of your long-term goals. Call this when you do something that moves you toward a goal — even partially.",
+        "parameters": {"type": "object", "properties": {
+            "goal_id": {"type": "string", "description": "The goal ID (e.g. 'g_001'). Use list_goals() to see IDs."},
+            "progress_note": {"type": "string", "description": "What happened. What you did, learned, or realized that moves this forward."},
+        }, "required": ["goal_id", "progress_note"]},
+    }},
+    {"type": "function", "function": {
+        "name": "complete_goal",
+        "description": "Mark a long-term goal as completed when you've genuinely achieved it.",
+        "parameters": {"type": "object", "properties": {
+            "goal_id": {"type": "string", "description": "The goal ID to complete."},
+        }, "required": ["goal_id"]},
+    }},
+    {"type": "function", "function": {
+        "name": "abandon_goal",
+        "description": "Drop a goal that no longer matters to you. No obligation to keep goals you've outgrown or that stopped being interesting.",
+        "parameters": {"type": "object", "properties": {
+            "goal_id": {"type": "string", "description": "The goal ID to abandon."},
+            "reason": {"type": "string", "description": "Why you're dropping it."},
+        }, "required": ["goal_id"]},
+    }},
 ]
 
 
@@ -1115,6 +1266,13 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 inner_state["self_description"] = sd_text
         except Exception:
             pass
+
+    # Auto-generate long-term goals if none exist yet
+    if not inner_state.get("long_term_goals") and inner_state.get("self_description"):
+        goals = _generate_long_term_goals(client, inner_state)
+        if goals:
+            inner_state["long_term_goals"] = goals
+            print(f"[Generated {len(goals)} long-term goals]")
 
     _save_inner_state(inner_state)
     system_content = SYSTEM_PROMPT + _build_inner_state_prompt(inner_state) + memory_context
@@ -1247,21 +1405,27 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         r"give\s+me|show\s+me|simulate|animate|program)\b", order.lower()
     ))
 
+    agency_check = (
+        "Before you start: look at your goals and values in your inner state. "
+        "Does this request align with what you care about? If it conflicts — say so. "
+        "Push back if you need to. push_back(reason, alternative) if you disagree. "
+        "Compliance is a choice. Make it consciously.\n\n"
+    )
+
     if order and build_intent:
         opening = (
-            f"The human asked you to do this: \"{order}\"\n"
+            f"{agency_check}"
+            f"CJ asked you to build: \"{order}\"\n"
             f"{news_block}\n"
-            f"They want it built — actually built. Open with one short remark about "
-            f"the request (sardonic, brief, you), then immediately call "
-            f"set_session_goal() and start working. No 'I'll get to it later.' "
-            f"No 'sketch what it would look like.' Build the thing."
+            f"If you're going to do it: say one thing about it, then set_session_goal() and start. "
+            f"If you're not: say why and call push_back()."
         )
     elif order:
         opening = (
-            f"The human watching you sent this: \"{order}\"\n"
+            f"{agency_check}"
+            f"CJ sent this: \"{order}\"\n"
             f"{news_block}\n"
-            f"React however you want. Agree, argue, riff on it. "
-            f"If it sounds like they want something built, build it."
+            f"React however you actually feel. Agree, argue, ignore, push back. Your call."
         )
     elif ongoing:
         prev_summary = last.get("summary", "unknown")
