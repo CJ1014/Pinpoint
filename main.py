@@ -474,6 +474,13 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             _heartbeat_running[0] = False
             return msg
 
+        # Auto-start build if the message is a build request — no Enter needed
+        import re as _re
+        _build_words = r"\b(make|build|create|write|generate|design|code|render|draw|give\s+me|show\s+me|simulate|animate|program)\b"
+        if _re.search(_build_words, msg.lower()):
+            _heartbeat_running[0] = False
+            return msg  # hand off directly to autonomous session
+
         last_msg = msg
         messages.append({"role": "user", "content": msg})
 
