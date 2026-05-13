@@ -506,6 +506,31 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             print("\nYou: ", end="", flush=True)
             continue
 
+        # /update — git pull then hot-reload agent.py, all from within chat
+        if msg.lower() == "/update":
+            print("\n[Pulling latest code...]")
+            try:
+                import subprocess as _sp
+                result = _sp.run(
+                    ["git", "pull"],
+                    cwd=_DIR,
+                    capture_output=True, text=True, timeout=30,
+                )
+                output = (result.stdout + result.stderr).strip()
+                print(f"[git] {output}")
+                # Reload agent.py if it changed
+                try:
+                    import importlib as _il
+                    import agent as _ag
+                    _il.reload(_ag)
+                    print("[agent.py reloaded — new code active]")
+                except Exception as _re:
+                    print(f"[reload failed: {_re}]")
+            except Exception as _e:
+                print(f"[update failed: {_e}]")
+            print("\nYou: ", end="", flush=True)
+            continue
+
         # /error and /paste — treat as direct chat questions in chat mode
         if msg.startswith("/error "):
             error_body = msg[len("/error "):].strip()
