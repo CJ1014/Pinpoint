@@ -594,6 +594,17 @@ def main() -> None:
     else:
         print("  Voice input      : unavailable (type instead)")
 
+    # Pre-warm TTS engine in the background — edge_tts cold-starts slowly on
+    # first use (network handshake + possible pip install). Firing it now means
+    # it's ready by the time PinPoint generates its opening line.
+    def _warmup_tts():
+        try:
+            from tools import _try_edge_tts
+            _try_edge_tts(".")  # tiny text, warms the engine without being audible
+        except Exception:
+            pass
+    threading.Thread(target=_warmup_tts, daemon=True).start()
+
     # Command-line order overrides auto-start
     order = " ".join(sys.argv[1:]).strip() if len(sys.argv) > 1 else ""
     dev_mode = False
