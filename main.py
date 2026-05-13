@@ -674,6 +674,13 @@ def main() -> None:
         return goals
 
     session = 0
+
+    # Start in chat mode immediately — PinPoint wakes up into a conversation.
+    # Blank Enter in chat drops into an autonomous session; typed text becomes the order.
+    # Skip this if a command-line order was already given (/dev, sandbox, etc.)
+    if not order:
+        order = _chat_mode(interrupt_queue)
+
     while True:
         session += 1
         _sessions_run[0] = session  # keep signal handler count in sync

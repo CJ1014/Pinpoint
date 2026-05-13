@@ -1508,20 +1508,14 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
 
         for attempt in range(5):
             try:
-                # Talk-first warmup: no tools for the first few turns.
-                # Skip entirely when user gave a build order; keep short (2) otherwise.
-                TALK_FIRST_TURNS = 0 if build_intent else 2
-                in_warmup = iteration <= TALK_FIRST_TURNS
                 stream_kwargs = dict(
                     model=MODEL,
                     messages=messages,
                     temperature=0.85,
                     stream=True,
+                    tools=active_tools,
+                    tool_choice="auto",
                 )
-                if not in_warmup:
-                    stream_kwargs["tools"] = active_tools
-                    stream_kwargs["tool_choice"] = "auto"
-
                 stream = client.chat.completions.create(**stream_kwargs)
                 print("\n[AGENT] ", end="", flush=True)
                 for chunk in stream:
@@ -1699,21 +1693,23 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             raw_tool_calls = _parse_text_tool_calls(message.content)
 
         if not raw_tool_calls:
-            # PinPoint is talking freely — keep the conversation going
+            # PinPoint produced plain text — speak it, then give it a chance to do something or finish.
             chat_only_turns += 1
-            _LISTEN_PROMPTS = ["...", "...", "[listening]", "...", "go on", "..."]
-            if chat_only_turns >= 10:
-                # Too long without building anything — push harder
-                nudge = (
-                    "[You've been talking for a while without doing anything. "
-                    "Decide now: build something or call done(). "
-                    "If you're going to build, call set_session_goal() right now.]"
-                )
-                chat_only_turns = 7  # Allow a couple more talk turns then push again
-            elif chat_only_turns == 6:
-                nudge = "[You've been talking a while — are you going to make something, or wrap up?]"
+            if full_content.strip():
+                import re as _re
+                spoken = _re.sub(r"</?speak>", "", full_content).strip()
+                if spoken:
+                    try:
+                        import threading as _th
+                        from tools import speak as _speak
+                        _th.Thread(target=lambda t=spoken: _speak(t, False), daemon=True).start()
+                    except Exception:
+                        pass
+            if chat_only_turns >= 5:
+                nudge = "[Use a tool — speak(), done(), or start building.]"
+                chat_only_turns = 3
             else:
-                nudge = _LISTEN_PROMPTS[chat_only_turns % len(_LISTEN_PROMPTS)]
+                nudge = "[listening — use speak() to say something, or call done() when finished.]"
             messages.append({"role": "user", "content": nudge})
             continue
 
