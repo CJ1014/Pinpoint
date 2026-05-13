@@ -506,6 +506,32 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             print("\nYou: ", end="", flush=True)
             continue
 
+        # Natural update trigger — "update", "update yourself", "pull updates", etc.
+        _update_phrases = ("update", "update yourself", "pull updates", "check for updates", "pull latest")
+        if msg.lower().strip() in _update_phrases or msg.lower().strip() == "/update":
+            print("\n[Pulling latest code...]")
+            try:
+                import subprocess as _sp
+                result = _sp.run(
+                    ["git", "pull"],
+                    cwd=_DIR,
+                    capture_output=True, text=True, timeout=30,
+                )
+                output = (result.stdout + result.stderr).strip()
+                print(f"[git] {output}")
+                # Reload agent.py if it changed
+                try:
+                    import importlib as _il
+                    import agent as _ag
+                    _il.reload(_ag)
+                    print("[agent.py reloaded — new code active]")
+                except Exception as _re:
+                    print(f"[reload failed: {_re}]")
+            except Exception as _e:
+                print(f"[update failed: {_e}]")
+            print("\nYou: ", end="", flush=True)
+            continue
+
         # /error and /paste — treat as direct chat questions in chat mode
         if msg.startswith("/error "):
             error_body = msg[len("/error "):].strip()
