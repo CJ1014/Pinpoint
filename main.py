@@ -382,6 +382,30 @@ def _chat_mode(interrupt_queue: queue.Queue) -> str:
     print("  Talk to PinPoint — speak or type")
     print("  Blank Enter = start autonomous session")
     print("─" * 60)
+
+    # PinPoint speaks first — generate a short opening line
+    try:
+        _open_resp = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": chat_system},
+                {"role": "user", "content": "You just started up. Say something — one or two sentences, whatever's on your mind. Could be a greeting, a thought, anything."},
+            ],
+            max_tokens=60,
+            temperature=1.2,
+        )
+        opening_line = (_open_resp.choices[0].message.content or "").strip().strip('"').strip("'")
+        if opening_line:
+            print(f"\nPinPoint: {opening_line}")
+            messages.append({"role": "assistant", "content": opening_line})
+            try:
+                from tools import speak
+                threading.Thread(target=lambda t=opening_line: speak(t, False), daemon=True).start()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     print("\nYou: ", end="", flush=True)
 
     while True:
