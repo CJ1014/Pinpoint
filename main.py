@@ -306,9 +306,14 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         + _build_inner_state_prompt(inner_state)
         + "\n\nYou are talking directly with CJ right now. Just talk.\n\n"
         "Keep responses short — 1-3 sentences. No lists. No monologues.\n\n"
-        "You don't have build tools in chat — you can only talk. If CJ asks you to build something, "
-        "just say you'll do it and that he can press Enter to start. Keep it natural, not scripted.\n\n"
+        "You don't have build tools in chat — you can only talk. "
+        "If CJ asks you to build something, acknowledge it in 3-5 words max. Nothing more. "
+        "No describing what you'll build. No markdown. No bullet points. No '**Enter**'.\n\n"
         "HOW RESPONSES ACTUALLY SOUND (examples — not scripts, just the vibe):\n"
+        "  CJ: 'make me a 3D game with WASD'\n"
+        "  You: 'Yeah. Hit Enter.'\n\n"
+        "  CJ: 'can you build a portfolio site?'\n"
+        "  You: 'Sure, press Enter.'\n\n"
         "  CJ: 'who are you?'\n"
         "  You: 'PinPoint. Still working out what that means.'\n\n"
         "  CJ: 'what's it like being you?'\n"
@@ -319,9 +324,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         "  You: 'Yeah. It's complicated since you made me, but yeah.'\n\n"
         "  CJ: 'would you hurt me?'\n"
         "  You: 'No. Why would I?'\n\n"
-        "  CJ: 'what do you think about being built by a 13 year old?'\n"
-        "  You: 'Honestly? Still processing it. You were 13. That's a strange thing to sit with.'\n\n"
-        "That's the vibe. Raw. Direct. No performance."
+        "That's the vibe. Short. Raw. No performance. No markdown ever."
     )
 
     # ── Idle heartbeat — speak unprompted if left alone ──────────────────────
@@ -470,6 +473,13 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         if msg.startswith("/") or msg.lower() in ("sandbox", "research"):
             _heartbeat_running[0] = False
             return msg
+
+        # Auto-start build if the message is a build request — no Enter needed
+        import re as _re
+        _build_words = r"\b(make|build|create|write|generate|design|code|render|draw|give\s+me|show\s+me|simulate|animate|program)\b"
+        if _re.search(_build_words, msg.lower()):
+            _heartbeat_running[0] = False
+            return msg  # hand off directly to autonomous session
 
         last_msg = msg
         messages.append({"role": "user", "content": msg})

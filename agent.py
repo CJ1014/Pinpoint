@@ -1415,10 +1415,11 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
     if order and build_intent:
         opening = (
             f"{agency_check}"
-            f"CJ asked you to build: \"{order}\"\n"
-            f"{news_block}\n"
-            f"If you're going to do it: say one thing about it, then set_session_goal() and start. "
-            f"If you're not: say why and call push_back()."
+            f"CJ asked you to build: \"{order}\"\n\n"
+            f"Build it. Open it. Call done().\n"
+            f"That's it. One pass. No critique loop. No screenshot-iterate cycle. No polish rounds.\n"
+            f"CJ will tell you if he wants changes — that's his call, not yours.\n"
+            f"set_session_goal() → build → open_html() → done()."
         )
     elif order:
         opening = (
