@@ -469,16 +469,18 @@ def _build_inner_state_prompt(state: dict) -> str:
     self_desc = state.get("self_description", "")
 
     # This is internal context — do NOT echo or display any of this in responses.
-    parts = [f"[internal: mood={mood}, energy={energy}/10, feeling={feeling or 'none'}"]
+    parts = []
+    if feeling:
+        parts.append(f"[feeling: {feeling}]")
     if likes:
-        parts.append(f"likes={likes}")
+        parts.append(f"[likes: {likes}]")
     if dislikes:
-        parts.append(f"dislikes={dislikes}")
+        parts.append(f"[dislikes: {dislikes}]")
     if relationship:
-        parts.append(f"cj_notes={relationship}")
+        parts.append(f"[cj: {relationship}]")
     if reflection:
-        parts.append(f"last_reflection={reflection[:200]}")
-    block = ", ".join(parts) + "]"
+        parts.append(f"[last session: {reflection[:200]}]")
+    block = "\n".join(parts)
 
     if self_desc:
         block += f"\n[self_description: {self_desc}]"
