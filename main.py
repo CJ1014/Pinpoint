@@ -742,33 +742,94 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         last_msg = msg
         messages.append({"role": "user", "content": msg})
 
-        # Get PinPoint's response
+        # Tools available in chat — search and fetch so she doesn't output raw tool syntax
+        _chat_tools = [
+            {"type": "function", "function": {
+                "name": "search_web",
+                "description": "Search the internet for real-time information.",
+                "parameters": {"type": "object", "properties": {
+                    "query": {"type": "string"},
+                }, "required": ["query"]},
+            }},
+            {"type": "function", "function": {
+                "name": "fetch_url",
+                "description": "Read a webpage in full.",
+                "parameters": {"type": "object", "properties": {
+                    "url": {"type": "string"},
+                }, "required": ["url"]},
+            }},
+        ]
+
+        # Get PinPoint's response — with tool use support
         print("\nPinPoint: ", end="", flush=True)
         full = ""
+        _tool_rounds = 0
+        _chat_messages = list(messages)
         for _attempt in range(3):
             try:
-                stream = client.chat.completions.create(
+                resp = client.chat.completions.create(
                     model=MODEL,
-                    messages=messages,
+                    messages=_chat_messages,
                     temperature=1.1,
-                    stream=True,
-                    max_tokens=200,
+                    stream=False,
+                    max_tokens=300,
+                    tools=_chat_tools,
+                    tool_choice="auto",
                 )
-                for chunk in stream:
-                    if chunk.choices and chunk.choices[0].delta.content:
-                        t = chunk.choices[0].delta.content
-                        print(t, end="", flush=True)
-                        full += t
-                print()
-                if full.strip():
+                choice = resp.choices[0]
+
+                # Handle tool calls (search/fetch) up to 3 rounds
+                while choice.finish_reason == "tool_calls" and _tool_rounds < 3:
+                    _tool_rounds += 1
+                    tool_results = []
+                    for tc in (choice.message.tool_calls or []):
+                        fn = tc.function.name
+                        try:
+                            import json as _json
+                            args = _json.loads(tc.function.arguments or "{}")
+                        except Exception:
+                            args = {}
+                        from tools import search_web as _sw, fetch_url as _fu
+                        if fn == "search_web":
+                            result = _sw(args.get("query", ""))
+                            print(f"[searching: {args.get('query', '')}]", flush=True)
+                        elif fn == "fetch_url":
+                            result = _fu(args.get("url", ""))
+                            print(f"[reading: {args.get('url', '')[:60]}]", flush=True)
+                        else:
+                            result = "unknown tool"
+                        tool_results.append({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": result[:3000],
+                        })
+                    _chat_messages.append({"role": "assistant", "content": choice.message.content or "", "tool_calls": [
+                        {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                        for tc in (choice.message.tool_calls or [])
+                    ]})
+                    _chat_messages.extend(tool_results)
+                    # Get final response after tool results
+                    resp2 = client.chat.completions.create(
+                        model=MODEL,
+                        messages=_chat_messages,
+                        temperature=1.1,
+                        stream=False,
+                        max_tokens=300,
+                    )
+                    choice = resp2.choices[0]
+
+                full = (choice.message.content or "").strip()
+                import re as _re_strip
+                full = _re_strip.sub(r"<think>.*?</think>", "", full, flags=_re_strip.DOTALL).strip()
+                if full:
+                    print(full)
                     break
-                # empty response — retry silently
                 print("(retrying...)", end="\r")
             except Exception as e:
                 print(f"\n[Chat error: {e}]")
                 break
         if not full.strip():
-            # Final fallback — minimal context, force a short reaction
+            # Final fallback
             try:
                 fb = client.chat.completions.create(
                     model=MODEL,
