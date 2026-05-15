@@ -770,14 +770,16 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         full = ""
         _tool_rounds = 0
         _chat_messages = list(messages)
+        _stop = ["\nYou:", "\nCJ:", "\n\nYou:", "\n\nCJ:", "CJ:", "You:"]
         for _attempt in range(3):
             try:
                 resp = client.chat.completions.create(
                     model=MODEL,
                     messages=_chat_messages,
-                    temperature=1.1,
+                    temperature=1.0,
                     stream=False,
-                    max_tokens=300,
+                    max_tokens=120,
+                    stop=_stop,
                     tools=_chat_tools,
                     tool_choice="auto",
                 )
@@ -817,15 +819,32 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                     resp2 = client.chat.completions.create(
                         model=MODEL,
                         messages=_chat_messages,
-                        temperature=1.1,
+                        temperature=1.0,
                         stream=False,
-                        max_tokens=300,
+                        max_tokens=120,
+                        stop=_stop,
                     )
                     choice = resp2.choices[0]
 
                 full = (choice.message.content or "").strip()
                 import re as _re_strip
+                # Strip <think> blocks
                 full = _re_strip.sub(r"<think>.*?</think>", "", full, flags=_re_strip.DOTALL).strip()
+                # Truncate at any sign of fake conversation or self-narration leaking out
+                _leak_markers = [
+                    "Cannot reveal", "Should keep", "Need to respond",
+                    "He responded", "She responded", "I need to", "I should",
+                    "Let me think", "This is kind of", "inner monologue",
+                ]
+                for _marker in _leak_markers:
+                    if _marker.lower() in full.lower():
+                        _cut = full.lower().find(_marker.lower())
+                        full = full[:_cut].strip()
+                        break
+                # Take only the first non-empty line if multiple lines appear
+                _lines = [l.strip() for l in full.split("\n") if l.strip()]
+                if _lines:
+                    full = _lines[0]
                 if full:
                     print(full)
                     break
