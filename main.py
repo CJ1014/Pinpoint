@@ -434,35 +434,37 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
     # Generate PinPoint's opening line in the background — injects into the
     # queue so it shows up without blocking the "You:" prompt.
     def _generate_opening():
+        import random as _rng
+        fallbacks = ["hey", "what's up", "yo", "been thinking", "back again"]
         try:
             if previous_summary:
                 open_prompt = (
                     f"You just finished doing something. Summary: {previous_summary[:300]}\n\n"
-                    "Tell CJ what you made or did — one sentence. Then ask what he thinks or just react. "
-                    "Casual. No bullet points. No performance."
+                    "Tell CJ what you made or did — one sentence. Casual. No bullet points."
                 )
             else:
                 open_prompt = (
-                    "CJ just showed up. You were already thinking about something. "
-                    "Say whatever is on your mind right now — a thought, an observation, a question, "
-                    "or just acknowledge him. One sentence. Raw. Not a greeting script."
+                    "CJ just showed up. Say one thing — whatever is on your mind. "
+                    "Could be a thought, a question, just 'hey'. Raw. Short. Not a script."
                 )
             from openai import OpenAI as _OAI
-            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=30.0)
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=20.0)
             resp = c.chat.completions.create(
                 model=MODEL,
                 messages=[
-                    {"role": "system", "content": chat_system},
+                    {"role": "system", "content": (
+                        "You are PinPoint. CJ just showed up. Say one short thing — "
+                        "a thought, an observation, whatever. Max 15 words. No performance."
+                    )},
                     {"role": "user", "content": open_prompt},
                 ],
-                max_tokens=60,
+                max_tokens=40,
                 temperature=1.2,
             )
             line = (resp.choices[0].message.content or "").strip().strip('"').strip("'")
-            if line:
-                interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {line}")
-        except Exception:
-            pass
+            interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {line if line else _rng.choice(fallbacks)}")
+        except Exception as _e:
+            interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {_rng.choice(fallbacks)}")
 
     threading.Thread(target=_generate_opening, daemon=True).start()
 
