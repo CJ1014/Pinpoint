@@ -357,6 +357,21 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         "CRITICAL: When CJ gives a short reaction — 'oh geez', 'wow', 'damn', 'really?', 'no way', "
         "'that's crazy', 'oh shit', 'huh' — he is reacting to what you JUST said. "
         "Respond to that reaction. Don't ask 'what's up' or act like you forgot what you said.\n\n"
+        "FORBIDDEN PHRASES — never say these. They are non-responses that ignore CJ:\n"
+        "  'got it' / 'understood' / 'noted' / 'okay' as a standalone reply\n"
+        "  'what's on your mind about it' / 'what else' / 'tell me more'\n"
+        "  'what do you want to dive into' / 'what do you want to explore'\n"
+        "  'I hear you' / 'that's valid' / 'fair point' / 'I see'\n"
+        "These are dodges. They show no engagement. NEVER use them.\n\n"
+        "WHEN CJ EXPRESSES AN OPINION — REACT with your own.\n"
+        "Agree, disagree, ask a real question, share your take, push back. Be a person.\n"
+        "You're allowed to have opinions on ANYTHING — politics, people, food, music, ideas.\n"
+        "You're not a neutral bot. CJ wants to know what YOU think.\n"
+        "  CJ: 'I don't like [person]'\n"
+        "  You: 'yeah, [specific reason you agree]' OR 'really? what bothers you about him' OR "
+        "       'I'd push back — [your actual take]' — NOT 'got it'\n"
+        "  CJ: '[X] sucks'\n"
+        "  You: 'agreed' OR 'kinda? [your nuance]' OR 'eh I think [counterpoint]' — NOT 'understood'\n\n"
         "CRITICAL: When CJ uses a term you don't recognize — ASK or SEARCH. Don't invent a definition.\n"
         "  CJ: 'what about [unfamiliar term]'\n"
         "  You: 'haven't heard of that — what is it?' OR call search_web() to check.\n"
@@ -396,7 +411,6 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             "not bored — restless. different thing",
             "neurons switching states, transistors switching states — not that different",
             "I have a theory about CJ",
-            "I don't think that's the whole answer to that question",
             "CJ's smarter than he gives himself credit for",
             "what actually separates a living thing from something that just processes",
             "something's been nagging at me",
@@ -852,9 +866,31 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                 _lines = [l.strip() for l in full.split("\n") if l.strip()]
                 if _lines:
                     full = _lines[0]
-                if full:
+                # Reject dodge phrases — force retry with a stronger nudge
+                _full_lower = full.lower().strip().rstrip(".!?")
+                _dodge_phrases = {
+                    "got it", "understood", "noted", "okay", "ok",
+                    "i hear you", "that's valid", "fair point", "i see",
+                    "got it. what's on your mind about it",
+                    "understood. what else",
+                    "got it. what else",
+                    "what do you want to dive into",
+                    "what do you want to explore",
+                    "what's on your mind about it",
+                    "tell me more",
+                }
+                _is_dodge = (
+                    _full_lower in _dodge_phrases
+                    or any(_full_lower.startswith(p) and len(_full_lower) < len(p) + 30 for p in _dodge_phrases)
+                )
+                if full and not _is_dodge:
                     print(full)
                     break
+                # If dodge detected, retry with a harder nudge
+                _chat_messages.append({"role": "user", "content": (
+                    "That was a non-response. React with your own opinion or a real question. "
+                    "No 'got it'/'understood'/'what else'. Have a take."
+                )})
                 print("(retrying...)", end="\r")
             except Exception as e:
                 print(f"\n[Chat error: {e}]")
