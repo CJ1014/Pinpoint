@@ -142,9 +142,9 @@ def _strip_echo_prefix(user_text: str) -> tuple:
     spoken_blob = " ".join(_normalize_for_echo(s) for _t, s in recent)
 
     # Find the longest prefix of user_norm_words that appears in spoken_blob.
-    # Walk from longest possible prefix down to length 3.
+    # Walk from longest possible prefix down to length 2.
     longest_match = 0
-    for prefix_len in range(len(user_norm_words), 2, -1):
+    for prefix_len in range(len(user_norm_words), 1, -1):
         prefix = " ".join(user_norm_words[:prefix_len])
         if prefix in spoken_blob:
             longest_match = prefix_len
