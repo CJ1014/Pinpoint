@@ -407,20 +407,27 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         except Exception:
             return _rng.choice(fallbacks)
 
+    _thought_pending = [False]  # prevent stacking thoughts before previous one plays
+
     def _heartbeat():
         import time as _t
         import random as _rng
         while _heartbeat_running[0]:
-            # Check every 8-15 seconds
-            _t.sleep(_rng.uniform(8, 15))
+            # Check every 20-35 seconds — slower so thoughts don't stack
+            _t.sleep(_rng.uniform(20, 35))
             if not _heartbeat_running[0]:
                 break
+            if _thought_pending[0]:
+                continue  # previous thought hasn't played yet, skip
             idle = _t.time() - _last_interaction[0]
-            # Speak after 12 seconds of silence from CJ
-            if idle > 12:
+            # Speak after 15 seconds of silence from CJ
+            if idle > 15:
+                _thought_pending[0] = True
                 thought = _idle_thought()
                 if thought:
                     interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+                else:
+                    _thought_pending[0] = False
 
     threading.Thread(target=_heartbeat, daemon=True).start()
     messages = [{"role": "system", "content": chat_system}]
@@ -489,6 +496,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         # Don't reset _last_interaction for her own thoughts — only CJ's input counts
         if msg.startswith("[PINPOINT IDLE THOUGHT]"):
             thought = msg[len("[PINPOINT IDLE THOUGHT]"):].strip()
+            _thought_pending[0] = False  # ready for next thought
             print(f"\nPinPoint: {thought}")
             messages.append({"role": "assistant", "content": thought})
             try:
