@@ -710,6 +710,20 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
     # Continuous decision loop — she constantly picks an activity and does it.
     # CJ can interrupt anytime by typing. No idle waiting, no schedule.
     _activity_pending = [False]
+    _current_focus = [None]  # what she's focused on right now
+    _focus_iterations = [0]  # how many times she's explored this focus
+    _focus_max = [None]  # how many iterations before she gets bored
+
+    def _pick_new_focus():
+        """Pick a new activity focus and how long to stay with it."""
+        import random as _fr
+        roll = _fr.random()
+        if roll < 0.35:
+            return ("research", _fr.randint(2, 4))  # 2-4 related research queries
+        elif roll < 0.70:
+            return ("think", _fr.randint(3, 5))  # 3-5 related thoughts
+        else:
+            return ("build", 1)  # 1 build impulse (full session)
 
     while True:
         # Check for CJ input (short timeout so we don't block)
@@ -855,34 +869,38 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                     return f"[Conversation context:\n" + "\n".join(_ctx_turns) + f"]\n\nCJ's last message: {msg}"
             return msg
 
-        # No CJ input in this iteration — she picks an activity
+        # No CJ input — she pursues her current focus or picks a new one
         if not msg:
             import random as _act_rng
             import time as _t_pause
-            roll = _act_rng.random()
-            if roll < 0.35:  # 35% research
-                if not _activity_pending[0]:
-                    _activity_pending[0] = True
+
+            # Pick new focus if she doesn't have one or is bored with it
+            if _current_focus[0] is None or _focus_iterations[0] >= _focus_max[0]:
+                _current_focus[0], _focus_max[0] = _pick_new_focus()
+                _focus_iterations[0] = 0
+
+            # Pursue current focus
+            if not _activity_pending[0]:
+                _activity_pending[0] = True
+                focus_type, _ = _current_focus[0], _focus_max[0]
+
+                if focus_type == "research":
                     thought = _web_research_thought()
                     if thought:
                         interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                        _t_pause.sleep(_act_rng.uniform(1.0, 2.0))  # reflect on finding
-                    _activity_pending[0] = False
-            elif roll < 0.70:  # 35% think
-                if not _activity_pending[0]:
-                    _activity_pending[0] = True
+                        _t_pause.sleep(_act_rng.uniform(1.0, 2.0))
+                elif focus_type == "think":
                     thought = _idle_thought()
                     if thought:
                         interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                        _t_pause.sleep(_act_rng.uniform(0.8, 1.5))  # brief reflection
-                    _activity_pending[0] = False
-            else:  # 30% build impulse
-                if not _activity_pending[0]:
-                    _activity_pending[0] = True
+                        _t_pause.sleep(_act_rng.uniform(0.8, 1.5))
+                elif focus_type == "build":
                     impulse = _build_impulse()
                     if impulse:
                         interrupt_queue.put(f"[BUILD IMPULSE] {impulse}")
-                    _activity_pending[0] = False
+
+                _focus_iterations[0] += 1
+                _activity_pending[0] = False
             continue
 
         # CJ said something
