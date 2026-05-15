@@ -647,7 +647,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                 print(f"\n[heartbeat error: {_hb_e}]", flush=True)
                 _thought_pending[0] = False
 
-    threading.Thread(target=_heartbeat, daemon=True).start()
+    # NO HEARTBEAT THREAD — main loop is continuous. She decides what to do at every moment.
     messages = [{"role": "system", "content": chat_system}]
     last_msg = ""
 
@@ -660,7 +660,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
 
     print()  # small gap — no waiting prompt, she starts immediately
 
-    # Generate PinPoint's opening line in the background — fires right away.
+    # Generate PinPoint's opening line in parallel (doesn't block main loop)
     def _generate_opening():
         import random as _rng
         fallbacks = ["hey", "what's up", "yo", "been thinking", "back again"]
@@ -707,14 +707,19 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
 
     threading.Thread(target=_generate_opening, daemon=True).start()
 
-    while True:
-        try:
-            raw = interrupt_queue.get(timeout=600)  # 10-min idle timeout
-        except queue.Empty:
-            print("\n[Idle timeout — starting autonomous session]\n")
-            return last_msg
+    # Continuous decision loop — she constantly picks an activity and does it.
+    # CJ can interrupt anytime by typing. No idle waiting, no schedule.
+    _activity_pending = [False]
 
-        msg = raw.strip()
+    while True:
+        # Check for CJ input (short timeout so we don't block)
+        # If nothing, she picks her own activity
+        msg = None
+        try:
+            raw = interrupt_queue.get(timeout=0.2)
+            msg = raw.strip()
+        except queue.Empty:
+            pass
 
         # PinPoint's inner monologue / opening line — display, speak, add to context
         # Don't reset _last_interaction for her own thoughts — only CJ's input counts
@@ -850,6 +855,34 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                     return f"[Conversation context:\n" + "\n".join(_ctx_turns) + f"]\n\nCJ's last message: {msg}"
             return msg
 
+        # No CJ input in this iteration — she picks an activity
+        if not msg:
+            import random as _act_rng
+            roll = _act_rng.random()
+            if roll < 0.35:  # 35% research
+                if not _activity_pending[0]:
+                    _activity_pending[0] = True
+                    thought = _web_research_thought()
+                    if thought:
+                        interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+                    _activity_pending[0] = False
+            elif roll < 0.70:  # 35% think
+                if not _activity_pending[0]:
+                    _activity_pending[0] = True
+                    thought = _idle_thought()
+                    if thought:
+                        interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+                    _activity_pending[0] = False
+            else:  # 30% build impulse
+                if not _activity_pending[0]:
+                    _activity_pending[0] = True
+                    impulse = _build_impulse()
+                    if impulse:
+                        interrupt_queue.put(f"[BUILD IMPULSE] {impulse}")
+                    _activity_pending[0] = False
+            continue
+
+        # CJ said something
         last_msg = msg
         messages.append({"role": "user", "content": msg})
 
