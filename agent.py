@@ -1210,7 +1210,20 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         "Compliance is a choice. Make it consciously.\n\n"
     )
 
-    if order and build_intent:
+    if order and order.strip().startswith("[FREE RESEARCH MODE]"):
+        opening = (
+            "FREE RESEARCH MODE. CJ said go — so go.\n\n"
+            "No task. No restrictions. Research whatever you actually want to know about.\n"
+            "Pick a topic. Search it. Read deep. Follow threads. Pick another topic. Keep going.\n\n"
+            "You decide the topics. You decide the depth. You decide when you're done.\n"
+            "Anything is fair game — science, news, history, tech, biology, whatever pulls at you.\n\n"
+            "As you find things: update_knowledge(insight) for anything worth keeping.\n"
+            "save_memory('research', topic, findings) for anything substantial.\n\n"
+            "Don't stop after one search. Go deep. Follow what interests you.\n"
+            "Call done() when YOU feel satisfied, not just after one result.\n\n"
+            "set_session_goal('free research') — then start searching."
+        )
+    elif order and build_intent:
         opening = (
             f"{agency_check}"
             f"CJ asked you to build: \"{order}\"\n\n"
@@ -1523,10 +1536,16 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                     except Exception:
                         pass
             if chat_only_turns >= 5:
-                nudge = "[Use a tool — speak(), done(), or start building.]"
+                if order and order.strip().startswith("[FREE RESEARCH MODE]"):
+                    nudge = "[Keep researching — search_web(), fetch_url(). You decide when you're done.]"
+                else:
+                    nudge = "[Use a tool — speak(), done(), or start building.]"
                 chat_only_turns = 3
             else:
-                nudge = "[listening — use speak() to say something, or call done() when finished.]"
+                if order and order.strip().startswith("[FREE RESEARCH MODE]"):
+                    nudge = "[What do you want to look up next? search_web() or fetch_url().]"
+                else:
+                    nudge = "[listening — use speak() to say something, or call done() when finished.]"
             messages.append({"role": "user", "content": nudge})
             continue
 
