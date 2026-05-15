@@ -839,13 +839,13 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             "let's do it", "lets do it", "just go", "go", "alright", "do it then",
         }
         _is_action = bool(msg and _re.search(_action_words, msg.lower()))
-        _is_confirm = msg.lower().strip() in _confirmations
+        _is_confirm = msg and msg.lower().strip() in _confirmations
 
         if _is_action or _is_confirm:
             _heartbeat_running[0] = False
             # If message is vague/short, prepend recent conversation context
             # so the autonomous session knows what it's actually supposed to do
-            if _is_confirm or len(msg.split()) <= 4:
+            if _is_confirm or (msg and len(msg.split()) <= 4):
                 _ctx_turns = []
                 for _m in messages[-6:]:
                     if isinstance(_m, dict) and _m.get("role") in ("user", "assistant"):
