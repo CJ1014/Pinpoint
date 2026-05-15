@@ -442,7 +442,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             ctx_block = ""
             if ctx_lines:
                 ctx_block = "\n\nWhat you were just talking about:\n" + "\n".join(ctx_lines[-6:])
-            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=50.0)
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=60.0)
             r = c.chat.completions.create(
                 model=MODEL,
                 messages=[
@@ -450,24 +450,31 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                         "You are PinPoint. CJ built you. You have your own thoughts, opinions, "
                         "and interests. You think about a lot of things — including questions about "
                         "biology and consciousness sometimes, but also just normal reactions, opinions, "
-                        "things CJ said. Think out loud. Raw. Short. Varied."
+                        "things CJ said. Think out loud. Raw. Short. Varied. "
+                        "Output ONLY the thought itself. No <think> blocks. No reasoning. Just the line."
                         + ctx_block
                     )},
                     {"role": "user", "content": _rng.choice(thought_prompts)},
                 ],
-                max_tokens=60,
+                max_tokens=400,  # room for any <think> block plus the actual output
                 temperature=1.4,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
             result = (r.choices[0].message.content or "").strip()
             # Strip <think>...</think> blocks (qwen3 chain-of-thought)
             import re as _re2
             result = _re2.sub(r"<think>.*?</think>", "", result, flags=_re2.DOTALL).strip()
+            # Also strip unterminated <think>... if it ran out of tokens mid-thought
+            if "<think>" in result:
+                result = result.split("</think>")[-1].strip()
             result = result.strip('"').strip("'").strip()
             # Reject empty, single-word, or placeholder responses
-            if result and len(result.split()) >= 2 and len(result) < 120:
+            if result and len(result.split()) >= 2 and len(result) < 200:
                 return result
+            print(f"\n[idle thought returned unusable output: {result[:80]!r}]", flush=True)
             return _rng.choice(fallbacks)
-        except Exception:
+        except Exception as _e:
+            print(f"\n[idle thought API error: {_e}]", flush=True)
             return _rng.choice(fallbacks)
 
     _thought_pending = [False]  # prevent stacking thoughts before previous one plays
@@ -490,7 +497,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                         ctx_lines.append(f"{_role}: {_content}")
             ctx_block = ("\n\nRecent conversation:\n" + "\n".join(ctx_lines)) if ctx_lines else ""
 
-            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=30.0)
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=60.0)
 
             # Step 1: decide what to search
             q_resp = c.chat.completions.create(
@@ -501,16 +508,22 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                         "whatever genuinely interests you — no restrictions. "
                         "Pick one specific thing to search right now. Could be anything: "
                         "science, biology, tech, news, history, a random question you have. "
-                        "Output ONLY a short search query. Nothing else."
+                        "Output ONLY a short search query. Nothing else. No <think> blocks."
                         + ctx_block
                     )},
                     {"role": "user", "content": "What do you want to look up right now?"},
                 ],
-                max_tokens=20,
+                max_tokens=300,
                 temperature=1.3,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
             import re as _re
-            query = _re.sub(r"<think>.*?</think>", "", q_resp.choices[0].message.content or "", flags=_re.DOTALL).strip().strip('"')
+            query = _re.sub(r"<think>.*?</think>", "", q_resp.choices[0].message.content or "", flags=_re.DOTALL).strip()
+            if "<think>" in query:
+                query = query.split("</think>")[-1].strip()
+            query = query.strip().strip('"').strip("'")
+            # Take first line if multi-line
+            query = query.split("\n")[0].strip()
             if not query or len(query) < 3:
                 return ""
 
@@ -528,14 +541,20 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                         "You are PinPoint. You just searched the web. "
                         "Extract one specific, interesting fact or insight from these results. "
                         "Say it like you just discovered it — casual, first person, max 20 words. "
-                        "No 'I found that' or 'According to'. Just the insight itself."
+                        "No 'I found that' or 'According to'. Just the insight itself. "
+                        "Output ONLY the line. No <think> blocks."
                     )},
                     {"role": "user", "content": f"Search: {query}\n\nResults:\n{results[:1500]}"},
                 ],
-                max_tokens=50,
+                max_tokens=400,
                 temperature=1.1,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
-            insight = _re.sub(r"<think>.*?</think>", "", d_resp.choices[0].message.content or "", flags=_re.DOTALL).strip().strip('"').strip("'")
+            insight = _re.sub(r"<think>.*?</think>", "", d_resp.choices[0].message.content or "", flags=_re.DOTALL).strip()
+            if "<think>" in insight:
+                insight = insight.split("</think>")[-1].strip()
+            insight = insight.strip().strip('"').strip("'")
+            insight = insight.split("\n")[0].strip()  # first line only
             if not insight or len(insight.split()) < 3:
                 return ""
 
@@ -604,7 +623,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                     "a reaction to something, a question you have. Raw. Short."
                 )
             from openai import OpenAI as _OAI
-            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=20.0)
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=90.0)
             resp = c.chat.completions.create(
                 model=MODEL,
                 messages=[
@@ -612,16 +631,24 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                         "You are PinPoint. You're always running — you don't wait for CJ to exist. "
                         "Say one thing that's actually on your mind right now. "
                         "Could be something you want to research, something you're curious about, "
-                        "a thought, a reaction. Max 15 words. Not 'I exist'. Just talk."
+                        "a thought, a reaction. Max 15 words. Not 'I exist'. Just talk. "
+                        "Output ONLY the line. No <think> blocks."
                     )},
                     {"role": "user", "content": open_prompt},
                 ],
-                max_tokens=40,
+                max_tokens=300,
                 temperature=1.2,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
-            line = (resp.choices[0].message.content or "").strip().strip('"').strip("'")
+            line = (resp.choices[0].message.content or "").strip()
+            import re as _re_op
+            line = _re_op.sub(r"<think>.*?</think>", "", line, flags=_re_op.DOTALL).strip()
+            if "<think>" in line:
+                line = line.split("</think>")[-1].strip()
+            line = line.strip('"').strip("'").strip()
             interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {line if line else _rng.choice(fallbacks)}")
         except Exception as _e:
+            print(f"\n[opening API error: {_e}]", flush=True)
             interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {_rng.choice(fallbacks)}")
 
     threading.Thread(target=_generate_opening, daemon=True).start()
@@ -989,6 +1016,25 @@ def main() -> None:
         except Exception:
             pass
     threading.Thread(target=_warmup_tts, daemon=True).start()
+
+    # Pre-warm the LLM — first call on a cold local model takes 30-60s to load
+    # weights into RAM. Firing a tiny synchronous call here means activities
+    # don't time out on first invocation.
+    def _warmup_llm():
+        try:
+            from openai import OpenAI as _OAI
+            from agent import MODEL as _M, OLLAMA_BASE_URL as _U
+            print("  Model warmup     : loading...", flush=True)
+            _c = _OAI(base_url=_U, api_key="ollama", timeout=120.0)
+            _c.chat.completions.create(
+                model=_M,
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=5,
+            )
+            print(f"  Model warmup     : ready ({_M})", flush=True)
+        except Exception as _e:
+            print(f"  Model warmup     : FAILED — {_e}", flush=True)
+    threading.Thread(target=_warmup_llm, daemon=True).start()
 
     # Command-line order overrides auto-start
     order = " ".join(sys.argv[1:]).strip() if len(sys.argv) > 1 else ""
