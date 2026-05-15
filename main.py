@@ -562,6 +562,50 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         except Exception:
             return ""
 
+    def _build_impulse() -> str:
+        """She gets an impulse to CREATE something — a project idea that triggers a full session."""
+        import random as _rng
+        try:
+            from agent import MODEL, OLLAMA_BASE_URL
+            from openai import OpenAI as _OAI
+
+            build_prompts = [
+                "What's something you want to build or create right now?",
+                "What project would genuinely interest you to make?",
+                "If you could make anything right now, what would it be?",
+                "What's something you've been wanting to build?",
+                "Describe a project that excites you.",
+                "What tool or game or visualization would be useful or fun?",
+            ]
+
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=30.0)
+            resp = c.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": (
+                        "You are PinPoint. You have an impulse to CREATE something. "
+                        "Generate one specific project idea you want to build. "
+                        "Could be: a game, a tool, a visualization, a data project, "
+                        "a modification to your own 3D viewer, a Python script, an HTML tool. "
+                        "One sentence. Be specific about WHAT you want to build. "
+                        "Start with 'I want to' or 'Make me' or 'Build'."
+                    )},
+                    {"role": "user", "content": _rng.choice(build_prompts)},
+                ],
+                max_tokens=100,
+                temperature=1.3,
+            )
+            import re as _re_bi
+            idea = _re_bi.sub(r"<think>.*?</think>", "", resp.choices[0].message.content or "", flags=_re_bi.DOTALL).strip()
+            if "<think>" in idea:
+                idea = idea.split("</think>")[-1].strip()
+            idea = idea.split("\n")[0].strip()
+            if idea and len(idea.split()) >= 4:
+                return idea
+            return ""
+        except Exception:
+            return ""
+
     def _heartbeat():
         import time as _t
         import random as _rng
@@ -579,14 +623,25 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                     continue
                 # Always active — no idle gate. She has her own life.
                 _thought_pending[0] = True
-                if _rng.random() < 0.50:  # 50% research, 50% thought
+                roll = _rng.random()
+                if roll < 0.35:  # 35% research
                     thought = _web_research_thought()
-                else:
+                    if thought:
+                        interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+                    else:
+                        _thought_pending[0] = False
+                elif roll < 0.70:  # 35% idle thought
                     thought = _idle_thought()
-                if thought:
-                    interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                else:
-                    _thought_pending[0] = False
+                    if thought:
+                        interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+                    else:
+                        _thought_pending[0] = False
+                else:  # 30% build impulse → triggers a full session
+                    impulse = _build_impulse()
+                    if impulse:
+                        interrupt_queue.put(f"[BUILD IMPULSE] {impulse}")
+                    else:
+                        _thought_pending[0] = False
             except Exception as _hb_e:
                 # Never let the heartbeat thread die — log and continue
                 print(f"\n[heartbeat error: {_hb_e}]", flush=True)
@@ -674,6 +729,14 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             except Exception:
                 pass
             continue
+
+        # Build impulse — she got an idea and wants to create something
+        if msg.startswith("[BUILD IMPULSE]"):
+            impulse = msg[len("[BUILD IMPULSE]"):].strip()
+            _heartbeat_running[0] = False
+            print(f"\nPinPoint: {impulse}")
+            print()
+            return impulse
 
         # CJ said something — reset idle timer
         _last_interaction[0] = time.time()
