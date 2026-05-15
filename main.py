@@ -858,6 +858,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         # No CJ input in this iteration — she picks an activity
         if not msg:
             import random as _act_rng
+            import time as _t_pause
             roll = _act_rng.random()
             if roll < 0.35:  # 35% research
                 if not _activity_pending[0]:
@@ -865,6 +866,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                     thought = _web_research_thought()
                     if thought:
                         interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+                        _t_pause.sleep(_act_rng.uniform(1.0, 2.0))  # reflect on finding
                     _activity_pending[0] = False
             elif roll < 0.70:  # 35% think
                 if not _activity_pending[0]:
@@ -872,6 +874,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                     thought = _idle_thought()
                     if thought:
                         interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+                        _t_pause.sleep(_act_rng.uniform(0.8, 1.5))  # brief reflection
                     _activity_pending[0] = False
             else:  # 30% build impulse
                 if not _activity_pending[0]:
