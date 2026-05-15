@@ -1078,6 +1078,20 @@ def abandon_goal(goal_id: str, reason: str = "") -> str:
     return f"Goal '{goal_id}' not found."
 
 
+def _update_knowledge(note: str) -> str:
+    """Append a timestamped note to pinpoint_knowledge.txt."""
+    import datetime
+    knowledge_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pinpoint_knowledge.txt")
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d")
+    entry = f"[{timestamp}] {note.strip()}\n"
+    try:
+        with open(knowledge_file, "a", encoding="utf-8") as f:
+            f.write(entry)
+        return f"Knowledge updated: {note[:80]}"
+    except Exception as e:
+        return f"Failed to update knowledge: {e}"
+
+
 def save_reflection(trigger: str, insight: str, domain: str, confidence: int = 3) -> str:
     """Save a structured 'when X → learned Y about Z' reflection to memory."""
     confidence = max(1, min(5, int(confidence)))
@@ -3117,5 +3131,7 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return complete_goal(tool_input["goal_id"])
     elif tool_name == "abandon_goal":
         return abandon_goal(tool_input["goal_id"], tool_input.get("reason", ""))
+    elif tool_name == "update_knowledge":
+        return _update_knowledge(tool_input["note"])
     else:
         return f"Unknown tool: {tool_name}"
