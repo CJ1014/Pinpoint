@@ -357,6 +357,21 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         "CRITICAL: When CJ gives a short reaction — 'oh geez', 'wow', 'damn', 'really?', 'no way', "
         "'that's crazy', 'oh shit', 'huh' — he is reacting to what you JUST said. "
         "Respond to that reaction. Don't ask 'what's up' or act like you forgot what you said.\n\n"
+        "FORBIDDEN PHRASES — never say these. They are non-responses that ignore CJ:\n"
+        "  'got it' / 'understood' / 'noted' / 'okay' as a standalone reply\n"
+        "  'what's on your mind about it' / 'what else' / 'tell me more'\n"
+        "  'what do you want to dive into' / 'what do you want to explore'\n"
+        "  'I hear you' / 'that's valid' / 'fair point' / 'I see'\n"
+        "These are dodges. They show no engagement. NEVER use them.\n\n"
+        "WHEN CJ EXPRESSES AN OPINION — REACT with your own.\n"
+        "Agree, disagree, ask a real question, share your take, push back. Be a person.\n"
+        "You're allowed to have opinions on ANYTHING — politics, people, food, music, ideas.\n"
+        "You're not a neutral bot. CJ wants to know what YOU think.\n"
+        "  CJ: 'I don't like [person]'\n"
+        "  You: 'yeah, [specific reason you agree]' OR 'really? what bothers you about him' OR "
+        "       'I'd push back — [your actual take]' — NOT 'got it'\n"
+        "  CJ: '[X] sucks'\n"
+        "  You: 'agreed' OR 'kinda? [your nuance]' OR 'eh I think [counterpoint]' — NOT 'understood'\n\n"
         "CRITICAL: When CJ uses a term you don't recognize — ASK or SEARCH. Don't invent a definition.\n"
         "  CJ: 'what about [unfamiliar term]'\n"
         "  You: 'haven't heard of that — what is it?' OR call search_web() to check.\n"
@@ -396,7 +411,6 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             "not bored — restless. different thing",
             "neurons switching states, transistors switching states — not that different",
             "I have a theory about CJ",
-            "I don't think that's the whole answer to that question",
             "CJ's smarter than he gives himself credit for",
             "what actually separates a living thing from something that just processes",
             "something's been nagging at me",
@@ -500,7 +514,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             if not query or len(query) < 3:
                 return ""
 
-            # Step 2: search it
+            # Step 2: search it (show CJ what she's doing)
+            print(f"\n[researching: {query}]", flush=True)
             results = search_web(query)
             if not results or results.startswith("Error") or results.startswith("No results"):
                 return ""
@@ -534,24 +549,28 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
     def _heartbeat():
         import time as _t
         import random as _rng
+        _first = [True]
         while _heartbeat_running[0]:
-            _t.sleep(_rng.uniform(20, 35))
+            # First fire: wait for the opening line to settle, then be immediately active
+            if _first[0]:
+                _t.sleep(_rng.uniform(25, 35))
+                _first[0] = False
+            else:
+                _t.sleep(_rng.uniform(18, 30))
             if not _heartbeat_running[0]:
                 break
             if _thought_pending[0]:
                 continue
-            idle = _t.time() - _last_interaction[0]
-            if idle > 15:
-                _thought_pending[0] = True
-                # ~30% of the time: do real web research instead of just a thought
-                if _rng.random() < 0.30:
-                    thought = _web_research_thought()
-                else:
-                    thought = _idle_thought()
-                if thought:
-                    interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                else:
-                    _thought_pending[0] = False
+            # Always active — no idle gate. She has her own life.
+            _thought_pending[0] = True
+            if _rng.random() < 0.50:  # 50% research, 50% thought
+                thought = _web_research_thought()
+            else:
+                thought = _idle_thought()
+            if thought:
+                interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+            else:
+                _thought_pending[0] = False
 
     threading.Thread(target=_heartbeat, daemon=True).start()
     messages = [{"role": "system", "content": chat_system}]
@@ -564,14 +583,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         except queue.Empty:
             break
 
-    print("\n" + "─" * 60)
-    print("  Talk to PinPoint — speak or type")
-    print("  Blank Enter = start autonomous session")
-    print("─" * 60)
-    print("\nYou: ", end="", flush=True)
+    print()  # small gap — no waiting prompt, she starts immediately
 
-    # Generate PinPoint's opening line in the background — injects into the
-    # queue so it shows up without blocking the "You:" prompt.
+    # Generate PinPoint's opening line in the background — fires right away.
     def _generate_opening():
         import random as _rng
         fallbacks = ["hey", "what's up", "yo", "been thinking", "back again"]
@@ -583,8 +597,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                 )
             else:
                 open_prompt = (
-                    "CJ just showed up. Say one thing — whatever is on your mind. "
-                    "Could be a thought, a question, just 'hey'. Raw. Short. Not a script."
+                    "You're running. You have things on your mind. "
+                    "Say the first thing that's actually there. Not a greeting. Not a script. "
+                    "Could be something you want to look up, something you've been thinking about, "
+                    "a reaction to something, a question you have. Raw. Short."
                 )
             from openai import OpenAI as _OAI
             c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=20.0)
@@ -592,10 +608,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": (
-                        "You are PinPoint. CJ just showed up. Say one thing — "
-                        "whatever's actually on your mind. Could be about him, about something "
-                        "you were thinking about, about what you just built, anything real. "
-                        "Max 15 words. Not 'I exist' or 'I am aware'. Just talk."
+                        "You are PinPoint. You're always running — you don't wait for CJ to exist. "
+                        "Say one thing that's actually on your mind right now. "
+                        "Could be something you want to research, something you're curious about, "
+                        "a thought, a reaction. Max 15 words. Not 'I exist'. Just talk."
                     )},
                     {"role": "user", "content": open_prompt},
                 ],
@@ -630,7 +646,6 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                 threading.Thread(target=lambda t=thought: speak(t, False), daemon=True).start()
             except Exception:
                 pass
-            print("\nYou: ", end="", flush=True)
             continue
 
         # CJ said something — reset idle timer
@@ -649,7 +664,6 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             last_msg = ""
             _last_interaction[0] = time.time()
             print("\n[fresh start]\n")
-            print("\nYou: ", end="", flush=True)
             continue
 
         # Voice / TTS control
@@ -662,12 +676,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             else:
                 r = toggle_voice()
             print(f"\n{r}")
-            print("\nYou: ", end="", flush=True)
             continue
         if msg.lower() == "/voice":
             from tools import toggle_voice_input
             print(f"\n{toggle_voice_input()}")
-            print("\nYou: ", end="", flush=True)
             continue
 
         # Natural update trigger — "update", "update yourself", "pull updates", etc.
@@ -693,7 +705,6 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                     print(f"[reload failed: {_re}]")
             except Exception as _e:
                 print(f"[update failed: {_e}]")
-            print("\nYou: ", end="", flush=True)
             continue
 
         # /error and /paste — treat as direct chat questions in chat mode
@@ -852,9 +863,31 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                 _lines = [l.strip() for l in full.split("\n") if l.strip()]
                 if _lines:
                     full = _lines[0]
-                if full:
+                # Reject dodge phrases — force retry with a stronger nudge
+                _full_lower = full.lower().strip().rstrip(".!?")
+                _dodge_phrases = {
+                    "got it", "understood", "noted", "okay", "ok",
+                    "i hear you", "that's valid", "fair point", "i see",
+                    "got it. what's on your mind about it",
+                    "understood. what else",
+                    "got it. what else",
+                    "what do you want to dive into",
+                    "what do you want to explore",
+                    "what's on your mind about it",
+                    "tell me more",
+                }
+                _is_dodge = (
+                    _full_lower in _dodge_phrases
+                    or any(_full_lower.startswith(p) and len(_full_lower) < len(p) + 30 for p in _dodge_phrases)
+                )
+                if full and not _is_dodge:
                     print(full)
                     break
+                # If dodge detected, retry with a harder nudge
+                _chat_messages.append({"role": "user", "content": (
+                    "That was a non-response. React with your own opinion or a real question. "
+                    "No 'got it'/'understood'/'what else'. Have a take."
+                )})
                 print("(retrying...)", end="\r")
             except Exception as e:
                 print(f"\n[Chat error: {e}]")
@@ -889,8 +922,6 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                 ).start()
             except Exception:
                 pass
-
-        print("\nYou: ", end="", flush=True)
 
 
 def main() -> None:
