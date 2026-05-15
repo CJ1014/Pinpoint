@@ -551,12 +551,13 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         import random as _rng
         _first = [True]
         while _heartbeat_running[0]:
-            # First fire: wait for the opening line to settle, then be immediately active
+            # API call itself takes ~10-20s on the 235B cloud model, so the
+            # sleep here is on top of that. Keep it short or she feels dead.
             if _first[0]:
-                _t.sleep(_rng.uniform(25, 35))
+                _t.sleep(_rng.uniform(3, 7))
                 _first[0] = False
             else:
-                _t.sleep(_rng.uniform(18, 30))
+                _t.sleep(_rng.uniform(6, 14))
             if not _heartbeat_running[0]:
                 break
             if _thought_pending[0]:
