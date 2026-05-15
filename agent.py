@@ -29,7 +29,7 @@ def _load_knowledge() -> str:
 #   qwen3-coder:480b-cloud    - 480B params (best for coding tasks)
 #   deepseek-v3.1:671b-cloud  - 671B params (very strong general reasoning)
 #   kimi-k2:1t-cloud          - 1 trillion params (most capable, slowest)
-MODEL = os.environ.get("OLLAMA_MODEL", "qwen3-vl:8b")
+MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:14b")
 MAX_ITERATIONS = 200
 
 # Tools that are safe to run concurrently — read-only / no shared state
