@@ -415,11 +415,7 @@ def start_voice_listener(interrupt_queue) -> bool:
                                     cleaned, stripped = _strip_echo_prefix(text.strip())
                                     if stripped:
                                         if not cleaned or len(cleaned.split()) < 2:
-                                            sys.stdout.write(f"\n[ECHO] Ignored: '{text.strip()}'\n")
-                                            sys.stdout.flush()
-                                            return
-                                        sys.stdout.write(f"\n[ECHO trimmed → user said] {cleaned}\n")
-                                        sys.stdout.flush()
+                                            return  # silent echo drop
                                         interrupt_queue.put(cleaned)
                                         return
                                     sys.stdout.write(f"\n[YOU] {text.strip()}\n")

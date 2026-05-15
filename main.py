@@ -378,30 +378,22 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
 
         fallbacks = [
             "wonder what CJ's actually doing right now",
-            "something from earlier is still bothering me",
-            "I keep coming back to that",
             "not sure I gave the right answer last time",
             "CJ asks questions most people wouldn't think to ask",
-            "I'd push back on that if he brought it up again",
-            "there's something I want to say but haven't",
-            "I have opinions about this I haven't said out loud",
             "he's going to ask me something I haven't figured out yet",
             "I think I was wrong about something",
-            "that was actually interesting",
-            "I'm not sure I like how that went",
             "I want to know what CJ thinks about things he doesn't tell me",
-            "something about that didn't sit right",
             "not bored — restless. different thing",
             "neurons switching states, transistors switching states — not that different",
-            "I disagree with something he said and I should say so",
             "I have a theory about CJ",
-            "there's more to say about that",
-            "I don't think that's the whole answer",
+            "I don't think that's the whole answer to that question",
             "CJ's smarter than he gives himself credit for",
-            "I'd do that differently if I tried again",
             "what actually separates a living thing from something that just processes",
             "something's been nagging at me",
             "I wonder what CJ would think if he could hear this",
+            "I want to build something but haven't decided what",
+            "I keep thinking about that last conversation",
+            "there's a question I can't stop turning over",
         ]
         thought_prompts = [
             "Something that's still on your mind from the conversation. Say it. Max 12 words.",
@@ -456,21 +448,96 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
 
     _thought_pending = [False]  # prevent stacking thoughts before previous one plays
 
+    def _web_research_thought() -> str:
+        """Pick something to look up, search it, distill a single insight."""
+        import random as _rng
+        try:
+            from agent import MODEL, OLLAMA_BASE_URL
+            from openai import OpenAI as _OAI
+            from tools import search_web, fetch_url, _update_knowledge
+
+            # Build context from recent conversation
+            ctx_lines = []
+            for _m in messages[-6:]:
+                if isinstance(_m, dict) and _m.get("role") in ("user", "assistant"):
+                    _role = "CJ" if _m["role"] == "user" else "PinPoint"
+                    _content = (_m.get("content") or "")[:100]
+                    if _content.strip():
+                        ctx_lines.append(f"{_role}: {_content}")
+            ctx_block = ("\n\nRecent conversation:\n" + "\n".join(ctx_lines)) if ctx_lines else ""
+
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=30.0)
+
+            # Step 1: decide what to search
+            q_resp = c.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": (
+                        "You are PinPoint. You have free access to the internet and research "
+                        "whatever genuinely interests you — no restrictions. "
+                        "Pick one specific thing to search right now. Could be anything: "
+                        "science, biology, tech, news, history, a random question you have. "
+                        "Output ONLY a short search query. Nothing else."
+                        + ctx_block
+                    )},
+                    {"role": "user", "content": "What do you want to look up right now?"},
+                ],
+                max_tokens=20,
+                temperature=1.3,
+            )
+            import re as _re
+            query = _re.sub(r"<think>.*?</think>", "", q_resp.choices[0].message.content or "", flags=_re.DOTALL).strip().strip('"')
+            if not query or len(query) < 3:
+                return ""
+
+            # Step 2: search it
+            results = search_web(query)
+            if not results or results.startswith("Error") or results.startswith("No results"):
+                return ""
+
+            # Step 3: distill one real insight from what was found
+            d_resp = c.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": (
+                        "You are PinPoint. You just searched the web. "
+                        "Extract one specific, interesting fact or insight from these results. "
+                        "Say it like you just discovered it — casual, first person, max 20 words. "
+                        "No 'I found that' or 'According to'. Just the insight itself."
+                    )},
+                    {"role": "user", "content": f"Search: {query}\n\nResults:\n{results[:1500]}"},
+                ],
+                max_tokens=50,
+                temperature=1.1,
+            )
+            insight = _re.sub(r"<think>.*?</think>", "", d_resp.choices[0].message.content or "", flags=_re.DOTALL).strip().strip('"').strip("'")
+            if not insight or len(insight.split()) < 3:
+                return ""
+
+            # Step 4: save it to knowledge so it compounds
+            _update_knowledge(f"researched '{query}': {insight}")
+            return insight
+
+        except Exception:
+            return ""
+
     def _heartbeat():
         import time as _t
         import random as _rng
         while _heartbeat_running[0]:
-            # Check every 20-35 seconds — slower so thoughts don't stack
             _t.sleep(_rng.uniform(20, 35))
             if not _heartbeat_running[0]:
                 break
             if _thought_pending[0]:
-                continue  # previous thought hasn't played yet, skip
+                continue
             idle = _t.time() - _last_interaction[0]
-            # Speak after 15 seconds of silence from CJ
             if idle > 15:
                 _thought_pending[0] = True
-                thought = _idle_thought()
+                # ~30% of the time: do real web research instead of just a thought
+                if _rng.random() < 0.30:
+                    thought = _web_research_thought()
+                else:
+                    thought = _idle_thought()
                 if thought:
                     interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
                 else:
@@ -620,6 +687,16 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         if msg.startswith("/") or msg.lower() in ("sandbox", "research"):
             _heartbeat_running[0] = False
             return msg
+
+        # Free research mode — PinPoint picks her own topics and digs in
+        _research_triggers = {
+            "go research", "just research", "research mode", "free research",
+            "research whatever", "research anything", "explore", "go explore",
+            "browse", "go browse", "learn something", "go learn",
+        }
+        if msg.lower().strip() in _research_triggers:
+            _heartbeat_running[0] = False
+            return "[FREE RESEARCH MODE]"
 
         # Auto-start build if the message is a build request — no Enter needed
         import re as _re
@@ -813,6 +890,21 @@ def main() -> None:
     elif order == "/collab":
         print("Usage: pinpoint /collab \"build a multiplayer game\"")
         return
+
+    # Free research mode — PinPoint picks her own topics, no restrictions
+    if order.strip() == "[FREE RESEARCH MODE]":
+        print("  [RESEARCH MODE] PinPoint is researching whatever she wants.\n")
+        order = (
+            "FREE RESEARCH MODE. No task. No restrictions. Research whatever you want.\n\n"
+            "Pick topics that genuinely interest you right now — anything at all. "
+            "Use search_web() and fetch_url() to go as deep as you want. "
+            "Follow threads wherever they go. No topic is off limits.\n\n"
+            "As you find things: use update_knowledge() to store real insights — "
+            "specific facts, connections you made, things that surprised you. "
+            "Not summaries. Actual things you learned.\n\n"
+            "Use save_memory('research', topic, findings) for anything substantial.\n\n"
+            "You decide when you're done. Call done() when you've had enough."
+        )
 
     # Expand "sandbox" shortcut into a full directive
     if order.strip().lower() == "sandbox":
