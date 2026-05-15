@@ -632,6 +632,16 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             print()
             return last_msg
 
+        # Restart — wipe conversation history and start fresh
+        if msg.lower().strip() == "restart":
+            messages.clear()
+            messages.append({"role": "system", "content": chat_system})
+            last_msg = ""
+            _last_interaction[0] = time.time()
+            print("\n[fresh start]\n")
+            print("\nYou: ", end="", flush=True)
+            continue
+
         # Voice / TTS control
         if msg.lower() in ("/mute", "/unmute", "/toggle"):
             from tools import mute_voice, unmute_voice, toggle_voice

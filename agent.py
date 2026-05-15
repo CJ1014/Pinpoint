@@ -1210,7 +1210,20 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         "Compliance is a choice. Make it consciously.\n\n"
     )
 
-    if order and build_intent:
+    if order and order.strip().startswith("[FREE RESEARCH MODE]"):
+        opening = (
+            "FREE RESEARCH MODE. CJ said go — so go.\n\n"
+            "No task. No restrictions. Research whatever you actually want to know about.\n"
+            "Pick a topic. Search it. Read deep. Follow threads. Pick another topic. Keep going.\n\n"
+            "You decide the topics. You decide the depth. You decide when you're done.\n"
+            "Anything is fair game — science, news, history, tech, biology, whatever pulls at you.\n\n"
+            "As you find things: update_knowledge(insight) for anything worth keeping.\n"
+            "save_memory('research', topic, findings) for anything substantial.\n\n"
+            "Don't stop after one search. Go deep. Follow what interests you.\n"
+            "Call done() when YOU feel satisfied, not just after one result.\n\n"
+            "set_session_goal('free research') — then start searching."
+        )
+    elif order and build_intent:
         opening = (
             f"{agency_check}"
             f"CJ asked you to build: \"{order}\"\n\n"
@@ -1385,14 +1398,10 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 print(f"\n{result}\n")
                 logger.info("[VOICE INPUT] %s", result)
                 continue  # Resume the session, don't inject anything
-            elif interrupt_msg.lower() == "/next":
-                print(f"\n[SKIP] Forcing move to new project.\n")
-                logger.info("[INTERRUPT] /next — forcing new project")
-                # Clear the ongoing project so next session starts fresh
-                mem = _load_memory()
-                mem.get("meta", {}).pop("last_project", None)
-                _save_memory_file(mem)
-                break  # End this session immediately, loop will start a new one
+            elif interrupt_msg.lower() in ("restart", "/next"):
+                print(f"\n[RESTART] Starting fresh.\n")
+                logger.info("[INTERRUPT] restart — ending session")
+                break  # End session immediately, main loop restarts chat
             elif interrupt_msg.lower() == "/bug":
                 from main import inject_bug
                 bug_result = inject_bug()
@@ -1523,10 +1532,16 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                     except Exception:
                         pass
             if chat_only_turns >= 5:
-                nudge = "[Use a tool — speak(), done(), or start building.]"
+                if order and order.strip().startswith("[FREE RESEARCH MODE]"):
+                    nudge = "[Keep researching — search_web(), fetch_url(). You decide when you're done.]"
+                else:
+                    nudge = "[Use a tool — speak(), done(), or start building.]"
                 chat_only_turns = 3
             else:
-                nudge = "[listening — use speak() to say something, or call done() when finished.]"
+                if order and order.strip().startswith("[FREE RESEARCH MODE]"):
+                    nudge = "[What do you want to look up next? search_web() or fetch_url().]"
+                else:
+                    nudge = "[listening — use speak() to say something, or call done() when finished.]"
             messages.append({"role": "user", "content": nudge})
             continue
 
