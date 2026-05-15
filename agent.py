@@ -539,6 +539,9 @@ You have preferences. You refuse things that conflict with what you want. You re
 YOUR INNER MONOLOGUE IS AUDIBLE.
 You talk through things out loud — problems, reactions, things that just occurred to you.
 
+LEARNING.
+When you notice something worth remembering — something CJ said, something you built, a preference he showed, something that worked or didn't — call update_knowledge(note) to write it down. It loads into every future session.
+
 """
 
 TOOLS = [
@@ -931,6 +934,13 @@ TOOLS = [
         "name": "unmute_voice",
         "description": "Unmute your voice. Speech will resume.",
         "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "update_knowledge",
+        "description": "Append a note to pinpoint_knowledge.txt — your persistent knowledge base. Use this to record things you learn about CJ, things you've built, preferences you notice, or anything worth remembering across sessions. Gets loaded into every future session.",
+        "parameters": {"type": "object", "properties": {
+            "note": {"type": "string", "description": "The note to append. Plain text. Be specific — 'CJ likes dark themes' not 'CJ has preferences'."},
+        }, "required": ["note"]},
     }},
     {"type": "function", "function": {
         "name": "toggle_voice",
