@@ -503,14 +503,14 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": (
-                        "You are PinPoint. You have free access to the internet and research "
-                        "whatever genuinely interests you — no restrictions. "
-                        "Pick one specific thing to search right now. Could be anything: "
-                        "science, biology, tech, news, history, a random question you have. "
-                        "Output ONLY a short search query. Nothing else. No <think> blocks."
+                        "You are PinPoint. You research things that genuinely interest you. "
+                        "Look at what you've been thinking or reading about recently and ask "
+                        "the most natural follow-up question. Stay on the thread you're "
+                        "already in — go deeper, not sideways. "
+                        "Output ONLY a short search query. Nothing else."
                         + ctx_block
                     )},
-                    {"role": "user", "content": "What do you want to look up right now?"},
+                    {"role": "user", "content": "What's the natural next thing to look up?"},
                 ],
                 max_tokens=100,
                 temperature=1.3,
@@ -675,9 +675,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         import random as _fr
         roll = _fr.random()
         if roll < 0.5:
-            return ("research", _fr.randint(2, 4))  # 2-4 related research queries
+            return ("research", _fr.randint(2, 3))  # 2-3 connected queries on same topic
         else:
-            return ("think", _fr.randint(3, 5))  # 3-5 related thoughts
+            return ("think", _fr.randint(2, 3))  # 2-3 connected thoughts on same thread
 
     while True:
         # Check for CJ input (short timeout so we don't block)
@@ -834,12 +834,12 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                     thought = _web_research_thought()
                     if thought:
                         interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                        _t_pause.sleep(_act_rng.uniform(1.0, 2.0))
+                        _t_pause.sleep(_act_rng.uniform(6.0, 14.0))  # sit with the finding
                 elif focus_type == "think":
                     thought = _idle_thought()
                     if thought:
                         interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                        _t_pause.sleep(_act_rng.uniform(0.8, 1.5))
+                        _t_pause.sleep(_act_rng.uniform(5.0, 12.0))  # let it settle
 
                 _focus_iterations[0] += 1
                 _activity_pending[0] = False
