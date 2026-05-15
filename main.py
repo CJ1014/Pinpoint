@@ -613,13 +613,16 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                 print(f"\n[Chat error: {e}]")
                 break
         if not full.strip():
-            # Final fallback — strip conversation context, just ask for a reaction
+            # Final fallback — minimal context, force a short reaction
             try:
                 fb = client.chat.completions.create(
                     model=MODEL,
-                    messages=[messages[0], {"role": "user", "content": "What's on your mind right now?"}],
+                    messages=[
+                        messages[0],
+                        {"role": "user", "content": f"CJ said: '{msg}'. Respond in one short sentence."},
+                    ],
                     temperature=1.3,
-                    max_tokens=80,
+                    max_tokens=60,
                 )
                 full = (fb.choices[0].message.content or "").strip()
                 if full:
@@ -627,7 +630,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             except Exception:
                 pass
         if not full.strip():
-            print("(no response)")
+            print("...")
         messages.append({"role": "assistant", "content": full or "(no response)"})
         # Speak full response
         if full.strip():
