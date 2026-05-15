@@ -454,9 +454,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                         "Output ONLY the thought itself. No <think> blocks. No reasoning. Just the line."
                         + ctx_block
                     )},
-                    {"role": "user", "content": _rng.choice(thought_prompts) + " /no_think"},
+                    {"role": "user", "content": _rng.choice(thought_prompts)},
                 ],
-                max_tokens=100,
+                max_tokens=200,
                 temperature=1.4,
             )
             result = (r.choices[0].message.content or "").strip()
@@ -510,9 +510,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                         "Output ONLY a short search query. Nothing else. No <think> blocks."
                         + ctx_block
                     )},
-                    {"role": "user", "content": "What do you want to look up right now? /no_think"},
+                    {"role": "user", "content": "What do you want to look up right now?"},
                 ],
-                max_tokens=60,
+                max_tokens=100,
                 temperature=1.3,
             )
             import re as _re
@@ -542,9 +542,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                         "No 'I found that' or 'According to'. Just the insight itself. "
                         "Output ONLY the line. No <think> blocks."
                     )},
-                    {"role": "user", "content": f"Search: {query}\n\nResults:\n{results[:1500]} /no_think"},
+                    {"role": "user", "content": f"Search: {query}\n\nResults:\n{results[:1500]}"},
                 ],
-                max_tokens=120,
+                max_tokens=200,
                 temperature=1.1,
             )
             insight = _re.sub(r"<think>.*?</think>", "", d_resp.choices[0].message.content or "", flags=_re.DOTALL).strip()
@@ -634,9 +634,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                         "a thought, a reaction. Max 15 words. Not 'I exist'. Just talk. "
                         "Output ONLY the line. No <think> blocks."
                     )},
-                    {"role": "user", "content": open_prompt + " /no_think"},
+                    {"role": "user", "content": open_prompt},
                 ],
-                max_tokens=100,
+                max_tokens=150,
                 temperature=1.2,
             )
             line = (resp.choices[0].message.content or "").strip()
