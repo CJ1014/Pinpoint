@@ -723,7 +723,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
 
         # PinPoint's inner monologue / opening line — display, speak, add to context
         # Don't reset _last_interaction for her own thoughts — only CJ's input counts
-        if msg.startswith("[PINPOINT IDLE THOUGHT]"):
+        if msg and msg.startswith("[PINPOINT IDLE THOUGHT]"):
             thought = msg[len("[PINPOINT IDLE THOUGHT]"):].strip()
             _thought_pending[0] = False  # ready for next thought
             print(f"\nPinPoint: {thought}")
@@ -736,7 +736,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             continue
 
         # Build impulse — she got an idea and wants to create something
-        if msg.startswith("[BUILD IMPULSE]"):
+        if msg and msg.startswith("[BUILD IMPULSE]"):
             impulse = msg[len("[BUILD IMPULSE]"):].strip()
             _heartbeat_running[0] = False
             print(f"\nPinPoint: {impulse}")
@@ -747,13 +747,13 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         _last_interaction[0] = time.time()
 
         # Blank line → end chat, pass last message as session context
-        if not msg:
+        if msg is not None and not msg:
             _heartbeat_running[0] = False
             print()
             return last_msg
 
         # Restart — wipe conversation history and start fresh
-        if msg.lower().strip() == "restart":
+        if msg and msg.lower().strip() == "restart":
             messages.clear()
             messages.append({"role": "system", "content": chat_system})
             last_msg = ""
@@ -762,7 +762,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             continue
 
         # Voice / TTS control
-        if msg.lower() in ("/mute", "/unmute", "/toggle"):
+        if msg and msg.lower() in ("/mute", "/unmute", "/toggle"):
             from tools import mute_voice, unmute_voice, toggle_voice
             if msg.lower() == "/mute":
                 r = mute_voice()
@@ -772,14 +772,14 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                 r = toggle_voice()
             print(f"\n{r}")
             continue
-        if msg.lower() == "/voice":
+        if msg and msg.lower() == "/voice":
             from tools import toggle_voice_input
             print(f"\n{toggle_voice_input()}")
             continue
 
         # Natural update trigger — "update", "update yourself", "pull updates", etc.
         _update_phrases = ("update", "update yourself", "pull updates", "check for updates", "pull latest")
-        if msg.lower().strip() in _update_phrases or msg.lower().strip() == "/update":
+        if msg and (msg.lower().strip() in _update_phrases or msg.lower().strip() == "/update"):
             print("\n[Pulling latest code...]")
             try:
                 import subprocess as _sp
@@ -803,14 +803,14 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             continue
 
         # /error and /paste — treat as direct chat questions in chat mode
-        if msg.startswith("/error "):
+        if msg and msg.startswith("/error "):
             error_body = msg[len("/error "):].strip()
             msg = f"I got this error:\n\n{error_body}\n\nWhat's wrong and how do I fix it?"
-        elif msg.startswith("/paste "):
+        elif msg and msg.startswith("/paste "):
             msg = msg[len("/paste "):].strip()
 
         # Pass-through commands (will be handled by main loop)
-        if msg.startswith("/") or msg.lower() in ("sandbox", "research"):
+        if msg and (msg.startswith("/") or msg.lower() in ("sandbox", "research")):
             _heartbeat_running[0] = False
             return msg
 
@@ -820,7 +820,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             "research whatever", "research anything", "explore", "go explore",
             "browse", "go browse", "learn something", "go learn",
         }
-        if msg.lower().strip() in _research_triggers:
+        if msg and msg.lower().strip() in _research_triggers:
             _heartbeat_running[0] = False
             return "[FREE RESEARCH MODE]"
 
@@ -838,7 +838,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             "go for it", "just do it", "do it", "do that", "sounds good",
             "let's do it", "lets do it", "just go", "go", "alright", "do it then",
         }
-        _is_action = bool(_re.search(_action_words, msg.lower()))
+        _is_action = bool(msg and _re.search(_action_words, msg.lower()))
         _is_confirm = msg.lower().strip() in _confirmations
 
         if _is_action or _is_confirm:
