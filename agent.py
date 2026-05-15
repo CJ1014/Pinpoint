@@ -707,9 +707,17 @@ TOOLS = [
     }},
     {"type": "function", "function": {
         "name": "search_web",
-        "description": "Search the web using DuckDuckGo and return results.",
+        "description": "Search the web using DuckDuckGo and return result snippets.",
         "parameters": {"type": "object", "properties": {
             "query": {"type": "string", "description": "The search query."},
+        }, "required": ["query"]},
+    }},
+    {"type": "function", "function": {
+        "name": "deep_research",
+        "description": "Deep research: searches the web AND fetches the top articles in full, in parallel. Use this when you need thorough, multi-source information — not just snippets. Returns combined text from multiple articles so you can synthesize a real answer.",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "What to research."},
+            "max_articles": {"type": "integer", "description": "How many articles to fetch (default 5)."},
         }, "required": ["query"]},
     }},
     {"type": "function", "function": {
