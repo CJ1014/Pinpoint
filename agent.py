@@ -1398,14 +1398,10 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 print(f"\n{result}\n")
                 logger.info("[VOICE INPUT] %s", result)
                 continue  # Resume the session, don't inject anything
-            elif interrupt_msg.lower() == "/next":
-                print(f"\n[SKIP] Forcing move to new project.\n")
-                logger.info("[INTERRUPT] /next — forcing new project")
-                # Clear the ongoing project so next session starts fresh
-                mem = _load_memory()
-                mem.get("meta", {}).pop("last_project", None)
-                _save_memory_file(mem)
-                break  # End this session immediately, loop will start a new one
+            elif interrupt_msg.lower() in ("restart", "/next"):
+                print(f"\n[RESTART] Starting fresh.\n")
+                logger.info("[INTERRUPT] restart — ending session")
+                break  # End session immediately, main loop restarts chat
             elif interrupt_msg.lower() == "/bug":
                 from main import inject_bug
                 bug_result = inject_bug()
