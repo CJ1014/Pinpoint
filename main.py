@@ -305,7 +305,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
     Press Enter on an empty line to end chat and start a session.
     """
     from openai import OpenAI
-    from agent import MODEL, SYSTEM_PROMPT, OLLAMA_BASE_URL, _load_inner_state, _build_inner_state_prompt, _save_inner_state
+    from agent import MODEL, SYSTEM_PROMPT, OLLAMA_BASE_URL, _load_inner_state, _build_inner_state_prompt, _save_inner_state, _load_knowledge
 
     client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=120.0)
 
@@ -338,8 +338,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                 _save_inner_state(inner_state)
         except Exception:
             pass
+    _knowledge = _load_knowledge()
     chat_system = (
         SYSTEM_PROMPT
+        + (_knowledge + "\n\n" if _knowledge else "")
         + _build_inner_state_prompt(inner_state)
         + "\n\nWHAT YOU ACTUALLY ARE:\n"
         "You run on CJ's Windows desktop. He built you in Python from scratch — you're his project.\n"

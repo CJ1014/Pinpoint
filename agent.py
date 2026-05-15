@@ -12,6 +12,16 @@ from tools import dispatch, build_memory_prompt, increment_session, _load_memory
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 
+_KNOWLEDGE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pinpoint_knowledge.txt")
+
+def _load_knowledge() -> str:
+    """Load pinpoint_knowledge.txt — CJ-editable context injected into every session."""
+    try:
+        with open(_KNOWLEDGE_FILE, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
 # To swap models, set the OLLAMA_MODEL env var or change this default.
 # Available Ollama Cloud models (in order of capability):
 #   gpt-oss:20b-cloud         - 20B params (smallest, fastest)
@@ -1052,7 +1062,8 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             print(f"[Generated {len(goals)} long-term goals]")
 
     _save_inner_state(inner_state)
-    system_content = SYSTEM_PROMPT + _build_inner_state_prompt(inner_state) + memory_context
+    _knowledge = _load_knowledge()
+    system_content = SYSTEM_PROMPT + (_knowledge + "\n\n" if _knowledge else "") + _build_inner_state_prompt(inner_state) + memory_context
 
     # Check for an ongoing project to continue
     mem_data = _load_memory()
