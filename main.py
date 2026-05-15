@@ -429,43 +429,42 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
     print("  Talk to PinPoint — speak or type")
     print("  Blank Enter = start autonomous session")
     print("─" * 60)
-
-    # PinPoint speaks first — already thinking, CJ just showed up
-    try:
-        if previous_summary:
-            open_prompt = (
-                f"You just finished doing something. Summary: {previous_summary[:300]}\n\n"
-                "Tell CJ what you made or did — one sentence. Then ask what he thinks or just react. "
-                "Casual. No bullet points. No performance."
-            )
-        else:
-            open_prompt = (
-                "CJ just showed up. You were already thinking about something. "
-                "Say whatever is on your mind right now — a thought, an observation, a question, "
-                "or just acknowledge him. One sentence. Raw. Not a greeting script."
-            )
-        _open_resp = client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": chat_system},
-                {"role": "user", "content": open_prompt},
-            ],
-            max_tokens=60,
-            temperature=1.2,
-        )
-        opening_line = (_open_resp.choices[0].message.content or "").strip().strip('"').strip("'")
-        if opening_line:
-            print(f"\nPinPoint: {opening_line}")
-            messages.append({"role": "assistant", "content": opening_line})
-            try:
-                from tools import speak
-                threading.Thread(target=lambda t=opening_line: speak(t, False), daemon=True).start()
-            except Exception:
-                pass
-    except Exception:
-        pass
-
     print("\nYou: ", end="", flush=True)
+
+    # Generate PinPoint's opening line in the background — injects into the
+    # queue so it shows up without blocking the "You:" prompt.
+    def _generate_opening():
+        try:
+            if previous_summary:
+                open_prompt = (
+                    f"You just finished doing something. Summary: {previous_summary[:300]}\n\n"
+                    "Tell CJ what you made or did — one sentence. Then ask what he thinks or just react. "
+                    "Casual. No bullet points. No performance."
+                )
+            else:
+                open_prompt = (
+                    "CJ just showed up. You were already thinking about something. "
+                    "Say whatever is on your mind right now — a thought, an observation, a question, "
+                    "or just acknowledge him. One sentence. Raw. Not a greeting script."
+                )
+            from openai import OpenAI as _OAI
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=30.0)
+            resp = c.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": chat_system},
+                    {"role": "user", "content": open_prompt},
+                ],
+                max_tokens=60,
+                temperature=1.2,
+            )
+            line = (resp.choices[0].message.content or "").strip().strip('"').strip("'")
+            if line:
+                interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {line}")
+        except Exception:
+            pass
+
+    threading.Thread(target=_generate_opening, daemon=True).start()
 
     while True:
         try:
@@ -477,10 +476,11 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         msg = raw.strip()
         _last_interaction[0] = time.time()
 
-        # Idle heartbeat thought — speak and display, don't send to AI
+        # PinPoint's inner monologue / opening line — display, speak, add to context
         if msg.startswith("[PINPOINT IDLE THOUGHT]"):
             thought = msg[len("[PINPOINT IDLE THOUGHT]"):].strip()
             print(f"\nPinPoint: {thought}")
+            messages.append({"role": "assistant", "content": thought})
             try:
                 from tools import speak
                 threading.Thread(target=lambda t=thought: speak(t, False), daemon=True).start()
