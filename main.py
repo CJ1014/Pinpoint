@@ -756,14 +756,14 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         _chat_tools = [
             {"type": "function", "function": {
                 "name": "search_web",
-                "description": "Search the internet for real-time information.",
+                "description": "Deep research: searches the web AND reads the top 5 articles in full, in parallel. Returns combined content from multiple sources so you can synthesize a thorough answer with real context — not just a snippet summary.",
                 "parameters": {"type": "object", "properties": {
                     "query": {"type": "string"},
                 }, "required": ["query"]},
             }},
             {"type": "function", "function": {
                 "name": "fetch_url",
-                "description": "Read a webpage in full.",
+                "description": "Read a single webpage in full when you have a specific URL.",
                 "parameters": {"type": "object", "properties": {
                     "url": {"type": "string"},
                 }, "required": ["url"]},
@@ -801,10 +801,11 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                             args = _json.loads(tc.function.arguments or "{}")
                         except Exception:
                             args = {}
-                        from tools import search_web as _sw, fetch_url as _fu
+                        from tools import deep_research as _dr, fetch_url as _fu
                         if fn == "search_web":
-                            result = _sw(args.get("query", ""))
-                            print(f"[searching: {args.get('query', '')}]", flush=True)
+                            q = args.get("query", "")
+                            print(f"[deep researching: {q}]", flush=True)
+                            result = _dr(q, max_articles=5)
                         elif fn == "fetch_url":
                             result = _fu(args.get("url", ""))
                             print(f"[reading: {args.get('url', '')[:60]}]", flush=True)
@@ -820,13 +821,14 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                         for tc in (choice.message.tool_calls or [])
                     ]})
                     _chat_messages.extend(tool_results)
-                    # Get final response after tool results
+                    # Get final response after tool results — bump tokens so she can
+                    # synthesize across sources properly
                     resp2 = client.chat.completions.create(
                         model=MODEL,
                         messages=_chat_messages,
                         temperature=1.0,
                         stream=False,
-                        max_tokens=120,
+                        max_tokens=250,
                         stop=_stop,
                     )
                     choice = resp2.choices[0]

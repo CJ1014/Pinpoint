@@ -1426,6 +1426,74 @@ def fetch_url(url: str) -> str:
         return f"Error fetching URL: {e}"
 
 
+def deep_research(query: str, max_articles: int = 5) -> str:
+    """Search the web and fetch the top results in parallel.
+
+    Returns combined text from multiple sources so PinPoint can synthesize
+    across them — not just summarize a single snippet.
+    """
+    try:
+        # Step 1: get search results
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
+        resp = httpx.get(
+            "https://html.duckduckgo.com/html/",
+            params={"q": query},
+            headers=headers,
+            timeout=10,
+            follow_redirects=True,
+        )
+        import re as _re
+        links = _re.findall(r'<a[^>]+class="result__a"[^>]+href="([^"]*)"[^>]*>(.*?)</a>', resp.text)
+        snippets = _re.findall(r'<a[^>]+class="result__snippet"[^>]*>(.*?)</a>', resp.text, _re.DOTALL)
+
+        urls_with_titles = []
+        for i, (url, title) in enumerate(links[:max_articles]):
+            clean_title = _re.sub(r'<[^>]+>', '', title).strip()
+            clean_snippet = ""
+            if i < len(snippets):
+                clean_snippet = _re.sub(r'<[^>]+>', '', snippets[i]).strip()
+            if "uddg=" in url:
+                real_url = url.split("uddg=")[-1].split("&")[0]
+                from urllib.parse import unquote
+                url = unquote(real_url)
+            urls_with_titles.append((url, clean_title, clean_snippet))
+
+        if not urls_with_titles:
+            return f"No results found for: {query}"
+
+        # Step 2: fetch top articles in parallel
+        articles = []
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=max_articles) as ex:
+            future_to_meta = {
+                ex.submit(fetch_url, url): (url, title, snippet)
+                for url, title, snippet in urls_with_titles
+            }
+            for fut in as_completed(future_to_meta, timeout=30):
+                url, title, snippet = future_to_meta[fut]
+                try:
+                    content = fut.result()
+                    if content and not content.startswith("Error"):
+                        articles.append(
+                            f"=== {title} ===\nURL: {url}\nSnippet: {snippet}\n\n{content[:3500]}\n"
+                        )
+                except Exception:
+                    pass
+
+        if not articles:
+            # Fall back to just the snippets if no articles fetched successfully
+            fallback = []
+            for url, title, snippet in urls_with_titles:
+                fallback.append(f"=== {title} ===\nURL: {url}\n{snippet}\n")
+            return "\n".join(fallback)
+
+        return "\n\n".join(articles)
+    except Exception as e:
+        return f"Error in deep research: {e}"
+
+
 def search_web(query: str) -> str:
     try:
         headers = {
@@ -3012,6 +3080,8 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return open_html(tool_input["filename"])
     elif tool_name == "search_web":
         return search_web(tool_input["query"])
+    elif tool_name == "deep_research":
+        return deep_research(tool_input["query"], tool_input.get("max_articles", 5))
     elif tool_name == "fetch_url":
         return fetch_url(tool_input["url"])
     elif tool_name == "validate_html":
