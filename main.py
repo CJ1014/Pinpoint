@@ -442,7 +442,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             ctx_block = ""
             if ctx_lines:
                 ctx_block = "\n\nWhat you were just talking about:\n" + "\n".join(ctx_lines[-6:])
-            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=60.0)
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=30.0)
             r = c.chat.completions.create(
                 model=MODEL,
                 messages=[
@@ -454,11 +454,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                         "Output ONLY the thought itself. No <think> blocks. No reasoning. Just the line."
                         + ctx_block
                     )},
-                    {"role": "user", "content": _rng.choice(thought_prompts)},
+                    {"role": "user", "content": _rng.choice(thought_prompts) + " /no_think"},
                 ],
-                max_tokens=400,  # room for any <think> block plus the actual output
+                max_tokens=100,
                 temperature=1.4,
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
             result = (r.choices[0].message.content or "").strip()
             # Strip <think>...</think> blocks (qwen3 chain-of-thought)
@@ -497,7 +496,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                         ctx_lines.append(f"{_role}: {_content}")
             ctx_block = ("\n\nRecent conversation:\n" + "\n".join(ctx_lines)) if ctx_lines else ""
 
-            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=60.0)
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=30.0)
 
             # Step 1: decide what to search
             q_resp = c.chat.completions.create(
@@ -511,11 +510,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                         "Output ONLY a short search query. Nothing else. No <think> blocks."
                         + ctx_block
                     )},
-                    {"role": "user", "content": "What do you want to look up right now?"},
+                    {"role": "user", "content": "What do you want to look up right now? /no_think"},
                 ],
-                max_tokens=300,
+                max_tokens=60,
                 temperature=1.3,
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
             import re as _re
             query = _re.sub(r"<think>.*?</think>", "", q_resp.choices[0].message.content or "", flags=_re.DOTALL).strip()
@@ -544,11 +542,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                         "No 'I found that' or 'According to'. Just the insight itself. "
                         "Output ONLY the line. No <think> blocks."
                     )},
-                    {"role": "user", "content": f"Search: {query}\n\nResults:\n{results[:1500]}"},
+                    {"role": "user", "content": f"Search: {query}\n\nResults:\n{results[:1500]} /no_think"},
                 ],
-                max_tokens=400,
+                max_tokens=120,
                 temperature=1.1,
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
             insight = _re.sub(r"<think>.*?</think>", "", d_resp.choices[0].message.content or "", flags=_re.DOTALL).strip()
             if "<think>" in insight:
@@ -570,26 +567,29 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         import random as _rng
         _first = [True]
         while _heartbeat_running[0]:
-            # API call itself takes ~10-20s on the 235B cloud model, so the
-            # sleep here is on top of that. Keep it short or she feels dead.
-            if _first[0]:
-                _t.sleep(_rng.uniform(3, 7))
-                _first[0] = False
-            else:
-                _t.sleep(_rng.uniform(6, 14))
-            if not _heartbeat_running[0]:
-                break
-            if _thought_pending[0]:
-                continue
-            # Always active — no idle gate. She has her own life.
-            _thought_pending[0] = True
-            if _rng.random() < 0.50:  # 50% research, 50% thought
-                thought = _web_research_thought()
-            else:
-                thought = _idle_thought()
-            if thought:
-                interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-            else:
+            try:
+                if _first[0]:
+                    _t.sleep(_rng.uniform(3, 7))
+                    _first[0] = False
+                else:
+                    _t.sleep(_rng.uniform(6, 14))
+                if not _heartbeat_running[0]:
+                    break
+                if _thought_pending[0]:
+                    continue
+                # Always active — no idle gate. She has her own life.
+                _thought_pending[0] = True
+                if _rng.random() < 0.50:  # 50% research, 50% thought
+                    thought = _web_research_thought()
+                else:
+                    thought = _idle_thought()
+                if thought:
+                    interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+                else:
+                    _thought_pending[0] = False
+            except Exception as _hb_e:
+                # Never let the heartbeat thread die — log and continue
+                print(f"\n[heartbeat error: {_hb_e}]", flush=True)
                 _thought_pending[0] = False
 
     threading.Thread(target=_heartbeat, daemon=True).start()
@@ -623,7 +623,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                     "a reaction to something, a question you have. Raw. Short."
                 )
             from openai import OpenAI as _OAI
-            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=90.0)
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=45.0)
             resp = c.chat.completions.create(
                 model=MODEL,
                 messages=[
@@ -634,11 +634,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                         "a thought, a reaction. Max 15 words. Not 'I exist'. Just talk. "
                         "Output ONLY the line. No <think> blocks."
                     )},
-                    {"role": "user", "content": open_prompt},
+                    {"role": "user", "content": open_prompt + " /no_think"},
                 ],
-                max_tokens=300,
+                max_tokens=100,
                 temperature=1.2,
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
             line = (resp.choices[0].message.content or "").strip()
             import re as _re_op
