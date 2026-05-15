@@ -381,7 +381,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         try:
             from agent import MODEL, OLLAMA_BASE_URL
             from openai import OpenAI as _OAI
-            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=8.0)
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=20.0)
             r = c.chat.completions.create(
                 model=MODEL,
                 messages=[
@@ -403,13 +403,13 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         import time as _t
         import random as _rng
         while _heartbeat_running[0]:
-            # Random interval — 25 to 50 seconds between thoughts
-            _t.sleep(_rng.uniform(25, 50))
+            # Check every 8-15 seconds
+            _t.sleep(_rng.uniform(8, 15))
             if not _heartbeat_running[0]:
                 break
             idle = _t.time() - _last_interaction[0]
-            # Think out loud after 20+ seconds of silence — no waiting-for-response gate
-            if idle > 20:
+            # Speak after 12 seconds of silence from CJ
+            if idle > 12:
                 thought = _idle_thought()
                 if thought:
                     interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
@@ -476,9 +476,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             return last_msg
 
         msg = raw.strip()
-        _last_interaction[0] = time.time()
 
         # PinPoint's inner monologue / opening line — display, speak, add to context
+        # Don't reset _last_interaction for her own thoughts — only CJ's input counts
         if msg.startswith("[PINPOINT IDLE THOUGHT]"):
             thought = msg[len("[PINPOINT IDLE THOUGHT]"):].strip()
             print(f"\nPinPoint: {thought}")
@@ -490,6 +490,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                 pass
             print("\nYou: ", end="", flush=True)
             continue
+
+        # CJ said something — reset idle timer
+        _last_interaction[0] = time.time()
 
         # Blank line → end chat, pass last message as session context
         if not msg:
