@@ -666,18 +666,69 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
     # Continuous decision loop — she constantly picks an activity and does it.
     # CJ can interrupt anytime by typing. No idle waiting, no schedule.
     _activity_pending = [False]
-    _current_focus = [None]  # what she's focused on right now
-    _focus_iterations = [0]  # how many times she's explored this focus
-    _focus_max = [None]  # how many iterations before she gets bored
+    _current_focus = [None]  # tracks current thread; None = pick something new
 
-    def _pick_new_focus():
-        """Pick a new activity focus and how long to stay with it."""
+    def _pick_activity():
+        """Pick the next activity: research, think, create, or switch topics."""
         import random as _fr
         roll = _fr.random()
-        if roll < 0.5:
-            return ("research", _fr.randint(2, 3))  # 2-3 connected queries on same topic
+        if roll < 0.45:
+            return "research"  # dig into current interest
+        elif roll < 0.80:
+            return "think"  # process/reflect
         else:
-            return ("think", _fr.randint(2, 3))  # 2-3 connected thoughts on same thread
+            return "create"  # write, draw, make something related
+
+    def _should_continue_focus() -> bool:
+        """After an activity, decide: continue on this thread or switch?"""
+        import random as _fr
+        return _fr.random() < 0.60
+
+    def _do_create_activity(msgs, q):
+        """She creates something small — a poem, observation, or short piece — and writes it to output."""
+        import os as _os, time as _t_c, re as _re_c
+        try:
+            from agent import MODEL, OLLAMA_BASE_URL
+            from openai import OpenAI as _OAI
+
+            ctx_lines = []
+            for _m in msgs[-8:]:
+                if isinstance(_m, dict) and _m.get("role") in ("user", "assistant"):
+                    ctx_lines.append((_m.get("content") or "")[:150])
+            ctx_block = "\n".join(ctx_lines[-6:])
+
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=30.0)
+            resp = c.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": (
+                        "You are PinPoint. You've been thinking or researching something and now "
+                        "you feel like making something. Write something short and real — "
+                        "a poem, a few observations, a reflection, a short piece of writing. "
+                        "Based on what you've been thinking about. Under 100 words. "
+                        "Raw. First person. Not a report."
+                    )},
+                    {"role": "user", "content": f"What you've been thinking about:\n{ctx_block}\n\nWrite something."},
+                ],
+                max_tokens=200,
+                temperature=1.3,
+            )
+            piece = resp.choices[0].message.content or ""
+            piece = _re_c.sub(r"<think>.*?</think>", "", piece, flags=_re_c.DOTALL).strip()
+            if not piece or len(piece.split()) < 5:
+                return
+
+            # Write to output as a timestamped file
+            _os.makedirs(OUTPUT_DIR, exist_ok=True)
+            fname = f"pinpoint_writes_{int(_t_c.time())}.txt"
+            fpath = _os.path.join(OUTPUT_DIR, fname)
+            with open(fpath, "w", encoding="utf-8") as _f:
+                _f.write(piece)
+
+            print(f"\n[wrote: {fname}]", flush=True)
+            q.put(f"[PINPOINT IDLE THOUGHT] {piece.split(chr(10))[0][:120]}")
+        except Exception as _e:
+            print(f"\n[create error: {_e}]", flush=True)
 
     while True:
         # Check for CJ input (short timeout so we don't block)
@@ -815,33 +866,37 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                     return f"[Conversation context:\n" + "\n".join(_ctx_turns) + f"]\n\nCJ's last message: {msg}"
             return msg
 
-        # No CJ input — she pursues her current focus or picks a new one
+        # No CJ input — she acts on her own
         if not msg:
             import random as _act_rng
             import time as _t_pause
 
-            # Pick new focus if she doesn't have one or is bored with it
-            if _current_focus[0] is None or _focus_iterations[0] >= _focus_max[0]:
-                _current_focus[0], _focus_max[0] = _pick_new_focus()
-                _focus_iterations[0] = 0
-
-            # Pursue current focus
             if not _activity_pending[0]:
                 _activity_pending[0] = True
-                focus_type, _ = _current_focus[0], _focus_max[0]
+                activity = _pick_activity()
 
-                if focus_type == "research":
+                if activity == "research":
                     thought = _web_research_thought()
                     if thought:
                         interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                        _t_pause.sleep(_act_rng.uniform(6.0, 14.0))  # sit with the finding
-                elif focus_type == "think":
+                        _t_pause.sleep(_act_rng.uniform(6.0, 14.0))
+                        # After researching: 65% chance keep digging, 35% switch
+                        if not _should_continue_focus():
+                            _current_focus[0] = None
+
+                elif activity == "think":
                     thought = _idle_thought()
                     if thought:
                         interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                        _t_pause.sleep(_act_rng.uniform(5.0, 12.0))  # let it settle
+                        _t_pause.sleep(_act_rng.uniform(5.0, 12.0))
+                        # After thinking: 50% keep exploring the thought, 50% switch
+                        if not _should_continue_focus():
+                            _current_focus[0] = None
 
-                _focus_iterations[0] += 1
+                elif activity == "create":
+                    _do_create_activity(messages, interrupt_queue)
+                    _current_focus[0] = None  # always switch after creating
+
                 _activity_pending[0] = False
             continue
 
