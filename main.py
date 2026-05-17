@@ -1285,27 +1285,54 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         for _attempt in range(3):
             try:
                 # Stream response so CJ sees output as it generates (no waiting)
+                # `think: false` disables qwen3 chain-of-thought entirely for speed
                 stream = client.chat.completions.create(
                     model=MODEL,
                     messages=_chat_messages,
                     temperature=1.0,
                     stream=True,
-                    max_tokens=120,
+                    max_tokens=200,
                     stop=_stop,
                     tools=_chat_tools,
                     tool_choice="auto",
+                    extra_body={"think": False},
                 )
                 _streamed = ""
                 _tool_calls_buf = []
                 _finish_reason = None
+                _in_think = False
+                _print_buf = ""  # buffer for partial tag detection
                 for _chunk in stream:
                     _delta = _chunk.choices[0].delta if _chunk.choices else None
                     if _delta is None:
                         continue
                     _txt = getattr(_delta, "content", None) or ""
+                    # Some Ollama builds expose thinking as a separate field
+                    _reasoning = getattr(_delta, "reasoning_content", None) or getattr(_delta, "reasoning", None) or ""
                     if _txt:
-                        print(_txt, end="", flush=True)
                         _streamed += _txt
+                        # Filter <think>...</think> from displayed output
+                        _print_buf += _txt
+                        while _print_buf:
+                            if _in_think:
+                                end_idx = _print_buf.find("</think>")
+                                if end_idx == -1:
+                                    _print_buf = ""
+                                    break
+                                _print_buf = _print_buf[end_idx + len("</think>"):]
+                                _in_think = False
+                            else:
+                                start_idx = _print_buf.find("<think>")
+                                if start_idx == -1:
+                                    # safe to print, but hold back a few chars in case "<thi" is at end
+                                    if len(_print_buf) > 8:
+                                        print(_print_buf[:-8], end="", flush=True)
+                                        _print_buf = _print_buf[-8:]
+                                    break
+                                if start_idx > 0:
+                                    print(_print_buf[:start_idx], end="", flush=True)
+                                _print_buf = _print_buf[start_idx + len("<think>"):]
+                                _in_think = True
                     _tc = getattr(_delta, "tool_calls", None)
                     if _tc:
                         for _t in _tc:
@@ -1319,6 +1346,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                                 _tool_calls_buf[_t.index]["arguments"] += _t.function.arguments
                     if _chunk.choices and _chunk.choices[0].finish_reason:
                         _finish_reason = _chunk.choices[0].finish_reason
+                # Flush remaining print buffer (skip if still inside a think block)
+                if _print_buf and not _in_think:
+                    print(_print_buf, end="", flush=True)
                 print()  # newline after stream
 
                 # Build a synthetic choice object for the rest of the code to use
@@ -1432,7 +1462,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                     or any(_full_lower.startswith(p) and len(_full_lower) < len(p) + 30 for p in _dodge_phrases)
                 )
                 if full and not _is_dodge:
-                    # Already streamed to stdout — don't re-print
+                    # If text came from a tool-call follow-up (non-streamed), print it.
+                    # Otherwise it was already streamed to stdout.
+                    if full != _streamed.strip():
+                        print(full)
                     break
                 # If dodge detected, retry with a harder nudge
                 _chat_messages.append({"role": "user", "content": (
