@@ -1336,6 +1336,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 import re as _re_strip
                 # Strip <think> blocks
                 full = _re_strip.sub(r"<think>.*?</think>", "", full, flags=_re_strip.DOTALL).strip()
+                # Model sometimes outputs raw JSON tool call attempts — treat as malformed
+                if full.startswith("{") or full.startswith("```json") or full.startswith("```{"):
+                    full = ""  # force retry
                 # Truncate at any sign of fake conversation or self-narration leaking out
                 _leak_markers = [
                     "Cannot reveal", "Should keep", "Need to respond",
