@@ -680,7 +680,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             print(f"\n[opening API error: {_e}]", flush=True)
             interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {_rng.choice(fallbacks)}")
 
-    threading.Thread(target=_generate_opening, daemon=True).start()
+    # Generate opening synchronously so it appears before the activity loop starts
+    _generate_opening()
 
     # Continuous decision loop — she constantly picks what she actually wants to do.
     # CJ can interrupt anytime by typing. No idle waiting, no schedule.
