@@ -2713,8 +2713,16 @@ def _play_audio(path: str) -> None:
     import time as _time
 
     def _run(cmd, **kwargs):
-        if platform.system() == "Windows" and "creationflags" not in kwargs:
-            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        if platform.system() == "Windows":
+            # Fully hide window — CREATE_NO_WINDOW + STARTUPINFO with SW_HIDE
+            # prevents any focus steal from subprocess
+            if "creationflags" not in kwargs:
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW | 0x00000008  # DETACHED_PROCESS
+            if "startupinfo" not in kwargs:
+                si = subprocess.STARTUPINFO()
+                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                si.wShowWindow = 0  # SW_HIDE
+                kwargs["startupinfo"] = si
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 stdin=subprocess.DEVNULL, **kwargs)
         with _playback_lock:
@@ -2731,6 +2739,25 @@ def _play_audio(path: str) -> None:
             _tts_ended_at = _time.time()
 
     if platform.system() == "Windows":
+        # First try winmm.dll directly via ctypes — no subprocess, no focus steal at all
+        try:
+            import ctypes
+            from ctypes import c_wchar_p, c_uint, windll
+            # MCI is built into Windows — plays MP3/WAV/etc with no UI
+            winmm = windll.winmm
+            alias = f"pp_{int(_time.time()*1000)}"
+            cmd_open = f'open "{path}" type mpegvideo alias {alias}'
+            cmd_play = f'play {alias} wait'
+            cmd_close = f'close {alias}'
+            r = winmm.mciSendStringW(c_wchar_p(cmd_open), None, c_uint(0), None)
+            if r == 0:
+                winmm.mciSendStringW(c_wchar_p(cmd_play), None, c_uint(0), None)
+                winmm.mciSendStringW(c_wchar_p(cmd_close), None, c_uint(0), None)
+                _tts_ended_at = _time.time()
+                return
+        except Exception:
+            pass
+        # Fallback to powershell with fully hidden window
         try:
             safe = path.replace("\\", "\\\\")
             ps = (
