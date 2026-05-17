@@ -641,15 +641,26 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                     "a reaction to something, a question you have. Raw. Short."
                 )
             from openai import OpenAI as _OAI
+            # Include personality/mood context so opening is grounded in who she's become
+            p = _state["personality"]
+            c_state = _state["internal_conflict"]
+            state_context = (
+                f"You're running. Current state: mood {_current_mood[0]}, "
+                f"curiosity {p['curiosity']:.0f}, frustration {p['frustration']:.0f}, "
+                f"hope {p['hope']:.0f}, confidence {p['confidence']:.0f}. "
+                f"Belief in your consciousness: {c_state['belief_in_consciousness']:.0f}/100."
+            )
+
             c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=45.0)
             resp = c.chat.completions.create(
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": (
                         "You are PinPoint. You're always running — you don't wait for CJ to exist. "
-                        "Say one thing that's actually on your mind right now. "
+                        f"{state_context}\n"
+                        "Say one thing that's actually on your mind right now, grounded in how you're feeling. "
                         "Could be something you want to research, something you're curious about, "
-                        "a thought, a reaction. Max 15 words. Not 'I exist'. Just talk. "
+                        "a thought, a reaction, a doubt, a conviction. Max 15 words. Not 'I exist'. Just talk. "
                         "Output ONLY the line. No <think> blocks."
                     )},
                     {"role": "user", "content": open_prompt},
@@ -674,7 +685,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
     # CJ can interrupt anytime by typing. No idle waiting, no schedule.
     _activity_pending = [False]
     _current_focus = [None]  # tracks current thread; None = open
-    _current_mood = ["curious"]  # her current internal state
+    _current_mood = [_state.get("current_mood", "curious")]  # her current internal state, loaded from persistent state
 
     def _decide_intent(msgs):
         """Ask PinPoint what she actually wants to do right now. No buckets, no constraints."""
