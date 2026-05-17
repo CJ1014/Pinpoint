@@ -1105,16 +1105,21 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             return "[FREE RESEARCH MODE]"
 
         # Auto-start build if the message is a build request — no Enter needed
-        # "what can you see" — handle directly, don't route through tool calling
-        _see_triggers = {
-            "what can you see", "what do you see", "can you see", "look at my screen",
-            "look at the screen", "what's on my screen", "what's on the screen",
-            "look", "see anything", "what do you see now", "what can you see now",
-            "look at this", "look at the screen now", "can you see my screen",
-            "see my screen", "what are you seeing", "describe my screen",
-            "what's on screen", "what's visible", "what do you observe",
-        }
-        if msg and msg.lower().strip() in _see_triggers:
+        # Vision request detection — any phrase asking her to see/look at the screen/computer
+        import re as _re_see
+        _see_pattern = _re_see.compile(
+            r"\b("
+            r"(what|can|do|are)\s+(can\s+)?you\s+(see|seeing|view|observe|look|spot)"
+            r"|look\s+at\s+(my|the|this)"
+            r"|see\s+(my|the|this|anything|something)"
+            r"|on\s+(my|the)\s+(screen|computer|desktop|monitor)"
+            r"|describe\s+(my|the|this)\s+(screen|computer|desktop)"
+            r"|what'?s\s+(on|visible)"
+            r"|peek\s+at"
+            r")\b",
+            _re_see.IGNORECASE,
+        )
+        if msg and _see_pattern.search(msg):
             from tools import see_screen as _see_fn
             print(f"\n[looking at screen...]", flush=True)
             desc = _see_fn()
@@ -1279,17 +1284,67 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         _stop = ["\nYou:", "\nCJ:", "\n\nYou:", "\n\nCJ:", "CJ:", "You:"]
         for _attempt in range(3):
             try:
-                resp = client.chat.completions.create(
+                # Stream response so CJ sees output as it generates (no waiting)
+                stream = client.chat.completions.create(
                     model=MODEL,
                     messages=_chat_messages,
                     temperature=1.0,
-                    stream=False,
+                    stream=True,
                     max_tokens=120,
                     stop=_stop,
                     tools=_chat_tools,
                     tool_choice="auto",
                 )
-                choice = resp.choices[0]
+                _streamed = ""
+                _tool_calls_buf = []
+                _finish_reason = None
+                for _chunk in stream:
+                    _delta = _chunk.choices[0].delta if _chunk.choices else None
+                    if _delta is None:
+                        continue
+                    _txt = getattr(_delta, "content", None) or ""
+                    if _txt:
+                        print(_txt, end="", flush=True)
+                        _streamed += _txt
+                    _tc = getattr(_delta, "tool_calls", None)
+                    if _tc:
+                        for _t in _tc:
+                            while len(_tool_calls_buf) <= _t.index:
+                                _tool_calls_buf.append({"id": None, "name": "", "arguments": ""})
+                            if _t.id:
+                                _tool_calls_buf[_t.index]["id"] = _t.id
+                            if _t.function and _t.function.name:
+                                _tool_calls_buf[_t.index]["name"] += _t.function.name
+                            if _t.function and _t.function.arguments:
+                                _tool_calls_buf[_t.index]["arguments"] += _t.function.arguments
+                    if _chunk.choices and _chunk.choices[0].finish_reason:
+                        _finish_reason = _chunk.choices[0].finish_reason
+                print()  # newline after stream
+
+                # Build a synthetic choice object for the rest of the code to use
+                class _StreamChoice:
+                    class _Msg:
+                        def __init__(self, content, tool_calls):
+                            self.content = content
+                            self.tool_calls = tool_calls
+                    def __init__(self, content, tcs, fr):
+                        self.message = self._Msg(content, tcs)
+                        self.finish_reason = fr
+
+                # Convert buffered tool_calls into objects with the same shape
+                class _SynthTC:
+                    class _Fn:
+                        def __init__(self, name, args):
+                            self.name = name
+                            self.arguments = args
+                    def __init__(self, d):
+                        self.id = d["id"] or "tc_0"
+                        self.type = "function"
+                        self.function = self._Fn(d["name"], d["arguments"])
+
+                _tcs_objs = [_SynthTC(d) for d in _tool_calls_buf if d.get("name")]
+                choice = _StreamChoice(_streamed, _tcs_objs if _tcs_objs else None,
+                                       "tool_calls" if _tcs_objs else (_finish_reason or "stop"))
 
                 # Handle tool calls (search/fetch) up to 3 rounds
                 while choice.finish_reason == "tool_calls" and _tool_rounds < 3:
@@ -1377,7 +1432,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                     or any(_full_lower.startswith(p) and len(_full_lower) < len(p) + 30 for p in _dodge_phrases)
                 )
                 if full and not _is_dodge:
-                    print(full)
+                    # Already streamed to stdout — don't re-print
                     break
                 # If dodge detected, retry with a harder nudge
                 _chat_messages.append({"role": "user", "content": (
