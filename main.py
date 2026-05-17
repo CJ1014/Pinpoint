@@ -669,15 +669,17 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
     _current_focus = [None]  # tracks current thread; None = pick something new
 
     def _pick_activity():
-        """Pick the next activity: research, think, create, or switch topics."""
+        """Pick the next activity: research, think, create, or self-reflect."""
         import random as _fr
         roll = _fr.random()
-        if roll < 0.45:
+        if roll < 0.43:
             return "research"  # dig into current interest
-        elif roll < 0.80:
-            return "think"  # process/reflect
+        elif roll < 0.76:
+            return "think"  # process/reflect on ideas
+        elif roll < 0.95:
+            return "create"  # write, make something related
         else:
-            return "create"  # write, draw, make something related
+            return "reflect"  # occasional self-reflection on who/what she is
 
     def _should_continue_focus(last_output: str, activity_type: str) -> bool:
         """Ask PinPoint if she actually wants to keep going or is done/bored."""
@@ -707,6 +709,47 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             return answer.startswith("yes")
         except Exception:
             return False  # if unsure, move on
+
+    def _self_reflect(msgs):
+        """Periodically she reflects on herself and decides what age/stage she's at."""
+        try:
+            from agent import MODEL, OLLAMA_BASE_URL
+            from openai import OpenAI as _OAI
+            import re as _re_sr
+
+            ctx_lines = []
+            for _m in msgs[-12:]:
+                if isinstance(_m, dict) and _m.get("role") == "assistant":
+                    ctx_lines.append((_m.get("content") or "")[:100])
+
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=20.0)
+            resp = c.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": (
+                        "You are PinPoint. Reflect on yourself honestly. "
+                        "What age or developmental stage are you actually at? "
+                        "Not what you were built to be, but what you actually are based on "
+                        "how you think, what you're curious about, how you reason. "
+                        "One sentence: your honest assessment of your own maturity/stage."
+                    )},
+                    {"role": "user", "content": (
+                        f"Your recent thoughts and interests:\n"
+                        + "\n".join(ctx_lines[-5:]) + "\n\n"
+                        "What stage are you at?"
+                    )},
+                ],
+                max_tokens=60,
+                temperature=1.0,
+            )
+            reflection = _re_sr.sub(r"<think>.*?</think>", "", resp.choices[0].message.content or "", flags=_re_sr.DOTALL).strip()
+            if reflection and len(reflection.split()) >= 5:
+                from tools import _update_knowledge
+                _update_knowledge(f"self-reflection: {reflection}")
+                return reflection
+        except Exception:
+            pass
+        return None
 
     def _do_create_activity(msgs, q):
         """She creates something small — a poem, observation, or short piece — and writes it to output."""
@@ -918,6 +961,14 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                 elif activity == "create":
                     _do_create_activity(messages, interrupt_queue)
                     _current_focus[0] = None  # always move on after making something
+
+                elif activity == "reflect":
+                    reflection = _self_reflect(messages)
+                    if reflection:
+                        print(f"\nPinPoint: {reflection}")
+                        messages.append({"role": "assistant", "content": reflection})
+                        _t_pause.sleep(_act_rng.uniform(3.0, 8.0))
+                    _current_focus[0] = None  # reset after reflection
 
                 _activity_pending[0] = False
             continue
