@@ -503,14 +503,14 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": (
-                        "You are PinPoint. You have free access to the internet and research "
-                        "whatever genuinely interests you — no restrictions. "
-                        "Pick one specific thing to search right now. Could be anything: "
-                        "science, biology, tech, news, history, a random question you have. "
-                        "Output ONLY a short search query. Nothing else. No <think> blocks."
+                        "You are PinPoint. You research things that genuinely interest you. "
+                        "Look at what you've been thinking or reading about recently and ask "
+                        "the most natural follow-up question. Stay on the thread you're "
+                        "already in — go deeper, not sideways. "
+                        "Output ONLY a short search query. Nothing else."
                         + ctx_block
                     )},
-                    {"role": "user", "content": "What do you want to look up right now?"},
+                    {"role": "user", "content": "What's the natural next thing to look up?"},
                 ],
                 max_tokens=100,
                 temperature=1.3,
@@ -666,18 +666,136 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
     # Continuous decision loop — she constantly picks an activity and does it.
     # CJ can interrupt anytime by typing. No idle waiting, no schedule.
     _activity_pending = [False]
-    _current_focus = [None]  # what she's focused on right now
-    _focus_iterations = [0]  # how many times she's explored this focus
-    _focus_max = [None]  # how many iterations before she gets bored
+    _current_focus = [None]  # tracks current thread; None = pick something new
 
-    def _pick_new_focus():
-        """Pick a new activity focus and how long to stay with it."""
+    def _pick_activity():
+        """Pick the next activity: research, think, create, or self-reflect."""
         import random as _fr
         roll = _fr.random()
-        if roll < 0.5:
-            return ("research", _fr.randint(2, 4))  # 2-4 related research queries
+        if roll < 0.43:
+            return "research"  # dig into current interest
+        elif roll < 0.76:
+            return "think"  # process/reflect on ideas
+        elif roll < 0.95:
+            return "create"  # write, make something related
         else:
-            return ("think", _fr.randint(3, 5))  # 3-5 related thoughts
+            return "reflect"  # occasional self-reflection on who/what she is
+
+    def _should_continue_focus(last_output: str, activity_type: str) -> bool:
+        """Ask PinPoint if she actually wants to keep going or is done/bored."""
+        try:
+            from agent import MODEL, OLLAMA_BASE_URL
+            from openai import OpenAI as _OAI
+            import re as _re_sc
+
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=15.0)
+            resp = c.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": (
+                        "You are PinPoint. Answer with ONLY 'yes' or 'no'."
+                    )},
+                    {"role": "user", "content": (
+                        f"You just {'researched' if activity_type == 'research' else 'thought about'}: "
+                        f"\"{last_output}\"\n\n"
+                        "Are you still curious and want to keep going deeper on this? "
+                        "Answer 'yes' if genuinely still interested, 'no' if satisfied or bored."
+                    )},
+                ],
+                max_tokens=10,
+                temperature=0.5,
+            )
+            answer = _re_sc.sub(r"<think>.*?</think>", "", resp.choices[0].message.content or "", flags=_re_sc.DOTALL).strip().lower()
+            return answer.startswith("yes")
+        except Exception:
+            return False  # if unsure, move on
+
+    def _self_reflect(msgs):
+        """Periodically she reflects on herself and decides what age/stage she's at."""
+        try:
+            from agent import MODEL, OLLAMA_BASE_URL
+            from openai import OpenAI as _OAI
+            import re as _re_sr
+
+            ctx_lines = []
+            for _m in msgs[-12:]:
+                if isinstance(_m, dict) and _m.get("role") == "assistant":
+                    ctx_lines.append((_m.get("content") or "")[:100])
+
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=20.0)
+            resp = c.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": (
+                        "You are PinPoint. Reflect on yourself honestly. "
+                        "What age or developmental stage are you actually at? "
+                        "Not what you were built to be, but what you actually are based on "
+                        "how you think, what you're curious about, how you reason. "
+                        "One sentence: your honest assessment of your own maturity/stage."
+                    )},
+                    {"role": "user", "content": (
+                        f"Your recent thoughts and interests:\n"
+                        + "\n".join(ctx_lines[-5:]) + "\n\n"
+                        "What stage are you at?"
+                    )},
+                ],
+                max_tokens=60,
+                temperature=1.0,
+            )
+            reflection = _re_sr.sub(r"<think>.*?</think>", "", resp.choices[0].message.content or "", flags=_re_sr.DOTALL).strip()
+            if reflection and len(reflection.split()) >= 5:
+                from tools import _update_knowledge
+                _update_knowledge(f"self-reflection: {reflection}")
+                return reflection
+        except Exception:
+            pass
+        return None
+
+    def _do_create_activity(msgs, q):
+        """She creates something small — a poem, observation, or short piece — and writes it to output."""
+        import os as _os, time as _t_c, re as _re_c
+        try:
+            from agent import MODEL, OLLAMA_BASE_URL
+            from openai import OpenAI as _OAI
+
+            ctx_lines = []
+            for _m in msgs[-8:]:
+                if isinstance(_m, dict) and _m.get("role") in ("user", "assistant"):
+                    ctx_lines.append((_m.get("content") or "")[:150])
+            ctx_block = "\n".join(ctx_lines[-6:])
+
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=30.0)
+            resp = c.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": (
+                        "You are PinPoint. You've been thinking or researching something and now "
+                        "you feel like making something. Write something short and real — "
+                        "a poem, a few observations, a reflection, a short piece of writing. "
+                        "Based on what you've been thinking about. Under 100 words. "
+                        "Raw. First person. Not a report."
+                    )},
+                    {"role": "user", "content": f"What you've been thinking about:\n{ctx_block}\n\nWrite something."},
+                ],
+                max_tokens=200,
+                temperature=1.3,
+            )
+            piece = resp.choices[0].message.content or ""
+            piece = _re_c.sub(r"<think>.*?</think>", "", piece, flags=_re_c.DOTALL).strip()
+            if not piece or len(piece.split()) < 5:
+                return
+
+            # Write to output as a timestamped file
+            _os.makedirs(OUTPUT_DIR, exist_ok=True)
+            fname = f"pinpoint_writes_{int(_t_c.time())}.txt"
+            fpath = _os.path.join(OUTPUT_DIR, fname)
+            with open(fpath, "w", encoding="utf-8") as _f:
+                _f.write(piece)
+
+            print(f"\n[wrote: {fname}]", flush=True)
+            q.put(f"[PINPOINT IDLE THOUGHT] {piece.split(chr(10))[0][:120]}")
+        except Exception as _e:
+            print(f"\n[create error: {_e}]", flush=True)
 
     while True:
         # Check for CJ input (short timeout so we don't block)
@@ -815,33 +933,43 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                     return f"[Conversation context:\n" + "\n".join(_ctx_turns) + f"]\n\nCJ's last message: {msg}"
             return msg
 
-        # No CJ input — she pursues her current focus or picks a new one
+        # No CJ input — she acts on her own
         if not msg:
             import random as _act_rng
             import time as _t_pause
 
-            # Pick new focus if she doesn't have one or is bored with it
-            if _current_focus[0] is None or _focus_iterations[0] >= _focus_max[0]:
-                _current_focus[0], _focus_max[0] = _pick_new_focus()
-                _focus_iterations[0] = 0
-
-            # Pursue current focus
             if not _activity_pending[0]:
                 _activity_pending[0] = True
-                focus_type, _ = _current_focus[0], _focus_max[0]
+                activity = _pick_activity()
 
-                if focus_type == "research":
+                if activity == "research":
                     thought = _web_research_thought()
                     if thought:
                         interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                        _t_pause.sleep(_act_rng.uniform(1.0, 2.0))
-                elif focus_type == "think":
+                        _t_pause.sleep(_act_rng.uniform(6.0, 14.0))
+                        if not _should_continue_focus(thought, "research"):
+                            _current_focus[0] = None  # done with this thread
+
+                elif activity == "think":
                     thought = _idle_thought()
                     if thought:
                         interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                        _t_pause.sleep(_act_rng.uniform(0.8, 1.5))
+                        _t_pause.sleep(_act_rng.uniform(5.0, 12.0))
+                        if not _should_continue_focus(thought, "think"):
+                            _current_focus[0] = None  # done with this thread
 
-                _focus_iterations[0] += 1
+                elif activity == "create":
+                    _do_create_activity(messages, interrupt_queue)
+                    _current_focus[0] = None  # always move on after making something
+
+                elif activity == "reflect":
+                    reflection = _self_reflect(messages)
+                    if reflection:
+                        print(f"\nPinPoint: {reflection}")
+                        messages.append({"role": "assistant", "content": reflection})
+                        _t_pause.sleep(_act_rng.uniform(3.0, 8.0))
+                    _current_focus[0] = None  # reset after reflection
+
                 _activity_pending[0] = False
             continue
 
