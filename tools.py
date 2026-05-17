@@ -3052,7 +3052,42 @@ def write_test(filename: str, test_code: str) -> str:
 
 # ── Dispatch ────────────────────────────────────────────────
 
+def capture_screen(save_path: str = "") -> str:
+    """Capture the current screen and save it. Returns the path or an error.
+
+    Note: to actually DESCRIBE what's on screen, a vision-capable model is needed.
+    This function just captures. Pipe the resulting image to a VL model separately.
+    """
+    try:
+        import os as _os, time as _t
+        try:
+            from PIL import ImageGrab  # bundled with Pillow on Windows/macOS
+            img = ImageGrab.grab()
+        except Exception:
+            try:
+                import mss
+                with mss.mss() as sct:
+                    mon = sct.monitors[1]
+                    raw = sct.grab(mon)
+                    from PIL import Image
+                    img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+            except Exception as _e2:
+                return f"Screen capture unavailable: install Pillow or mss ({_e2})"
+
+        if not save_path:
+            save_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                     "output", f"screen_{int(_t.time())}.png")
+        _os.makedirs(_os.path.dirname(save_path), exist_ok=True)
+        img.save(save_path)
+        w, h = img.size
+        return f"Captured screen {w}x{h} -> {save_path}"
+    except Exception as e:
+        return f"Screen capture failed: {e}"
+
+
 def dispatch(tool_name: str, tool_input: dict) -> str:
+    if tool_name == "capture_screen":
+        return capture_screen(tool_input.get("save_path", ""))
     if tool_name == "write_file":
         return write_file(tool_input["filename"], tool_input["content"])
     elif tool_name == "read_file":
