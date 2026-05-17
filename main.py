@@ -45,13 +45,36 @@ def setup_logging() -> logging.Logger:
 
 def check_ollama() -> None:
     import httpx
+    import subprocess as _sp
     try:
         httpx.get("http://localhost:11434", timeout=3)
     except Exception:
-        print("Error: Ollama is not running.")
-        print("Start it with:  ollama serve")
-        print("Or just open the Ollama app from your Start menu.")
-        sys.exit(1)
+        # Ollama not running — auto-start it
+        print("  Starting Ollama...", flush=True)
+        try:
+            # Try to start ollama serve in background
+            if sys.platform == "win32":
+                _sp.Popen(["ollama", "serve"],
+                         stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                         creationflags=_sp.CREATE_NEW_CONSOLE)
+            else:
+                _sp.Popen(["ollama", "serve"],
+                         stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                         start_new_session=True)
+            # Wait for it to start
+            import time as _t_wait
+            for _ in range(30):  # try for 30 seconds
+                _t_wait.sleep(1)
+                try:
+                    httpx.get("http://localhost:11434", timeout=1)
+                    print("  Ollama started.", flush=True)
+                    return
+                except Exception:
+                    pass
+            print("  Ollama failed to start. Run manually: ollama serve", flush=True)
+        except Exception as _e:
+            print(f"  Could not auto-start Ollama: {_e}", flush=True)
+            print("  Start manually with: ollama serve", flush=True)
 
 
 def get_user_order() -> str:
@@ -1441,25 +1464,22 @@ def main() -> None:
             pass
     threading.Thread(target=_warmup_tts, daemon=True).start()
 
-    # Pre-warm the LLM — first call on a cold local model takes 30-60s to load
-    # weights into RAM. Use an event so the opening waits for model-ready.
+    # Pre-warm the LLM silently in background — don't block startup
     _model_ready = threading.Event()
     def _warmup_llm():
         try:
             from openai import OpenAI as _OAI
             from agent import MODEL as _M, OLLAMA_BASE_URL as _U
-            print("  Model warmup     : loading...", flush=True)
             _c = _OAI(base_url=_U, api_key="ollama", timeout=120.0)
             _c.chat.completions.create(
                 model=_M,
                 messages=[{"role": "user", "content": "hi"}],
                 max_tokens=1,
             )
-            print(f"  Model warmup     : ready ({_M})", flush=True)
-        except Exception as _e:
-            print(f"  Model warmup     : FAILED — {_e}", flush=True)
+        except Exception:
+            pass  # warmup failed, no big deal — opening will load it
         finally:
-            _model_ready.set()  # always unblock the opening, even on failure
+            _model_ready.set()
     threading.Thread(target=_warmup_llm, daemon=True).start()
 
     # Command-line order overrides auto-start
