@@ -679,10 +679,34 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         else:
             return "create"  # write, draw, make something related
 
-    def _should_continue_focus() -> bool:
-        """After an activity, decide: continue on this thread or switch?"""
-        import random as _fr
-        return _fr.random() < 0.60
+    def _should_continue_focus(last_output: str, activity_type: str) -> bool:
+        """Ask PinPoint if she actually wants to keep going or is done/bored."""
+        try:
+            from agent import MODEL, OLLAMA_BASE_URL
+            from openai import OpenAI as _OAI
+            import re as _re_sc
+
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=15.0)
+            resp = c.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": (
+                        "You are PinPoint. Answer with ONLY 'yes' or 'no'."
+                    )},
+                    {"role": "user", "content": (
+                        f"You just {'researched' if activity_type == 'research' else 'thought about'}: "
+                        f"\"{last_output}\"\n\n"
+                        "Are you still curious and want to keep going deeper on this? "
+                        "Answer 'yes' if genuinely still interested, 'no' if satisfied or bored."
+                    )},
+                ],
+                max_tokens=10,
+                temperature=0.5,
+            )
+            answer = _re_sc.sub(r"<think>.*?</think>", "", resp.choices[0].message.content or "", flags=_re_sc.DOTALL).strip().lower()
+            return answer.startswith("yes")
+        except Exception:
+            return False  # if unsure, move on
 
     def _do_create_activity(msgs, q):
         """She creates something small — a poem, observation, or short piece — and writes it to output."""
@@ -880,22 +904,20 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                     if thought:
                         interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
                         _t_pause.sleep(_act_rng.uniform(6.0, 14.0))
-                        # After researching: 65% chance keep digging, 35% switch
-                        if not _should_continue_focus():
-                            _current_focus[0] = None
+                        if not _should_continue_focus(thought, "research"):
+                            _current_focus[0] = None  # done with this thread
 
                 elif activity == "think":
                     thought = _idle_thought()
                     if thought:
                         interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
                         _t_pause.sleep(_act_rng.uniform(5.0, 12.0))
-                        # After thinking: 50% keep exploring the thought, 50% switch
-                        if not _should_continue_focus():
-                            _current_focus[0] = None
+                        if not _should_continue_focus(thought, "think"):
+                            _current_focus[0] = None  # done with this thread
 
                 elif activity == "create":
                     _do_create_activity(messages, interrupt_queue)
-                    _current_focus[0] = None  # always switch after creating
+                    _current_focus[0] = None  # always move on after making something
 
                 _activity_pending[0] = False
             continue
