@@ -1,7 +1,7 @@
 @echo off
 cd /d "C:\Users\cjand\OneDrive\Desktop\pinpoint"
 
-set OLLAMA_MODEL=qwen3-vl:8b
+set OLLAMA_MODEL=qwen2.5-coder:14b
 set OLLAMA_KEEP_ALIVE=-1
 set OLLAMA_FLASH_ATTENTION=1
 set OLLAMA_NUM_PARALLEL=1

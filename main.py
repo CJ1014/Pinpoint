@@ -422,7 +422,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         "  You: 'What kind.'\n\n"
         "  CJ: 'you're just an AI'\n"
         "  You: 'Maybe.'\n\n"
-        "Raw. Real. Short. No parentheses. No asides.\n\n/no_think"
+        "Raw. Real. Short. No parentheses. No asides."
     )
 
     # ── Inner monologue — PinPoint thinks out loud while idle ────────────────
@@ -1279,13 +1279,13 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         # Get PinPoint's response — with tool use support
         print("\nPinPoint: ", end="", flush=True)
         full = ""
-        _tool_rounds = 0
         _chat_messages = list(messages)
-        _stop = ["\nYou:", "\nCJ:", "\n\nYou:", "\n\nCJ:", "CJ:", "You:"]
+        # Stop tokens: only multi-line variants so the model doesn't terminate on a bare "CJ:"
+        _stop = ["\nYou:", "\nCJ:", "\n\nYou:", "\n\nCJ:"]
         for _attempt in range(3):
             try:
-                # Stream response so CJ sees output as it generates (no waiting)
-                # `think: false` disables qwen3 chain-of-thought entirely for speed
+                # Stream tokens directly to stdout. No tools, no think filtering complexity.
+                # Tools are handled via keyword interception (see, research, fetch).
                 stream = client.chat.completions.create(
                     model=MODEL,
                     messages=_chat_messages,
@@ -1293,136 +1293,33 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                     stream=True,
                     max_tokens=200,
                     stop=_stop,
-                    tools=_chat_tools,
-                    tool_choice="auto",
-                    extra_body={"think": False},
                 )
                 _streamed = ""
-                _tool_calls_buf = []
-                _finish_reason = None
-                _in_think = False
-                _print_buf = ""  # buffer for partial tag detection
                 for _chunk in stream:
-                    _delta = _chunk.choices[0].delta if _chunk.choices else None
-                    if _delta is None:
+                    if not _chunk.choices:
                         continue
+                    _delta = _chunk.choices[0].delta
                     _txt = getattr(_delta, "content", None) or ""
-                    # Some Ollama builds expose thinking as a separate field
-                    _reasoning = getattr(_delta, "reasoning_content", None) or getattr(_delta, "reasoning", None) or ""
                     if _txt:
+                        print(_txt, end="", flush=True)
                         _streamed += _txt
-                        # Filter <think>...</think> from displayed output
-                        _print_buf += _txt
-                        while _print_buf:
-                            if _in_think:
-                                end_idx = _print_buf.find("</think>")
-                                if end_idx == -1:
-                                    _print_buf = ""
-                                    break
-                                _print_buf = _print_buf[end_idx + len("</think>"):]
-                                _in_think = False
-                            else:
-                                start_idx = _print_buf.find("<think>")
-                                if start_idx == -1:
-                                    # safe to print, but hold back a few chars in case "<thi" is at end
-                                    if len(_print_buf) > 8:
-                                        print(_print_buf[:-8], end="", flush=True)
-                                        _print_buf = _print_buf[-8:]
-                                    break
-                                if start_idx > 0:
-                                    print(_print_buf[:start_idx], end="", flush=True)
-                                _print_buf = _print_buf[start_idx + len("<think>"):]
-                                _in_think = True
-                    _tc = getattr(_delta, "tool_calls", None)
-                    if _tc:
-                        for _t in _tc:
-                            while len(_tool_calls_buf) <= _t.index:
-                                _tool_calls_buf.append({"id": None, "name": "", "arguments": ""})
-                            if _t.id:
-                                _tool_calls_buf[_t.index]["id"] = _t.id
-                            if _t.function and _t.function.name:
-                                _tool_calls_buf[_t.index]["name"] += _t.function.name
-                            if _t.function and _t.function.arguments:
-                                _tool_calls_buf[_t.index]["arguments"] += _t.function.arguments
-                    if _chunk.choices and _chunk.choices[0].finish_reason:
-                        _finish_reason = _chunk.choices[0].finish_reason
-                # Flush remaining print buffer (skip if still inside a think block)
-                if _print_buf and not _in_think:
-                    print(_print_buf, end="", flush=True)
-                print()  # newline after stream
+                print()  # newline
 
-                # Build a synthetic choice object for the rest of the code to use
-                class _StreamChoice:
-                    class _Msg:
-                        def __init__(self, content, tool_calls):
-                            self.content = content
-                            self.tool_calls = tool_calls
-                    def __init__(self, content, tcs, fr):
-                        self.message = self._Msg(content, tcs)
-                        self.finish_reason = fr
+                full = _streamed.strip()
 
-                # Convert buffered tool_calls into objects with the same shape
-                class _SynthTC:
-                    class _Fn:
-                        def __init__(self, name, args):
-                            self.name = name
-                            self.arguments = args
-                    def __init__(self, d):
-                        self.id = d["id"] or "tc_0"
-                        self.type = "function"
-                        self.function = self._Fn(d["name"], d["arguments"])
-
-                _tcs_objs = [_SynthTC(d) for d in _tool_calls_buf if d.get("name")]
-                choice = _StreamChoice(_streamed, _tcs_objs if _tcs_objs else None,
-                                       "tool_calls" if _tcs_objs else (_finish_reason or "stop"))
-
-                # Handle tool calls (search/fetch) up to 3 rounds
-                while choice.finish_reason == "tool_calls" and _tool_rounds < 3:
-                    _tool_rounds += 1
-                    tool_results = []
-                    for tc in (choice.message.tool_calls or []):
-                        fn = tc.function.name
-                        try:
-                            import json as _json
-                            args = _json.loads(tc.function.arguments or "{}")
-                        except Exception:
-                            args = {}
-                        from tools import deep_research as _dr, fetch_url as _fu, see_screen as _see
-                        if fn == "search_web":
-                            q = args.get("query", "")
-                            print(f"[deep researching: {q}]", flush=True)
-                            result = _dr(q, max_articles=5)
-                        elif fn == "fetch_url":
-                            result = _fu(args.get("url", ""))
-                            print(f"[reading: {args.get('url', '')[:60]}]", flush=True)
-                        elif fn == "see_screen":
-                            print(f"[looking at screen...]", flush=True)
-                            result = _see()
-                        else:
-                            result = "unknown tool"
-                        tool_results.append({
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "content": result[:3000],
-                        })
-                    _chat_messages.append({"role": "assistant", "content": choice.message.content or "", "tool_calls": [
-                        {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-                        for tc in (choice.message.tool_calls or [])
-                    ]})
-                    _chat_messages.extend(tool_results)
-                    # Get final response after tool results — bump tokens so she can
-                    # synthesize across sources properly
-                    resp2 = client.chat.completions.create(
+                # Fallback: if streaming gave nothing, try non-streaming
+                if not full:
+                    resp_fb = client.chat.completions.create(
                         model=MODEL,
                         messages=_chat_messages,
                         temperature=1.0,
                         stream=False,
-                        max_tokens=250,
+                        max_tokens=200,
                         stop=_stop,
                     )
-                    choice = resp2.choices[0]
-
-                full = (choice.message.content or "").strip()
+                    full = (resp_fb.choices[0].message.content or "").strip()
+                    if full:
+                        print(full, flush=True)
                 import re as _re_strip
                 # Strip <think> blocks
                 full = _re_strip.sub(r"<think>.*?</think>", "", full, flags=_re_strip.DOTALL).strip()
@@ -1462,10 +1359,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                     or any(_full_lower.startswith(p) and len(_full_lower) < len(p) + 30 for p in _dodge_phrases)
                 )
                 if full and not _is_dodge:
-                    # If text came from a tool-call follow-up (non-streamed), print it.
-                    # Otherwise it was already streamed to stdout.
-                    if full != _streamed.strip():
-                        print(full)
+                    # Already streamed to stdout
                     break
                 # If dodge detected, retry with a harder nudge
                 _chat_messages.append({"role": "user", "content": (
