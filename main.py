@@ -624,6 +624,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
     print()  # small gap — no waiting prompt, she starts immediately
 
     # Generate PinPoint's opening line in parallel (doesn't block main loop)
+    _opening_mood = _state.get("current_mood", "curious")  # snapshot before thread starts
     def _generate_opening():
         import random as _rng
         fallbacks = ["hey", "what's up", "yo", "been thinking", "back again"]
@@ -645,7 +646,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             p = _state["personality"]
             c_state = _state["internal_conflict"]
             state_context = (
-                f"You're running. Current state: mood {_current_mood[0]}, "
+                f"You're running. Current state: mood {_opening_mood}, "
                 f"curiosity {p['curiosity']:.0f}, frustration {p['frustration']:.0f}, "
                 f"hope {p['hope']:.0f}, confidence {p['confidence']:.0f}. "
                 f"Belief in your consciousness: {c_state['belief_in_consciousness']:.0f}/100."
