@@ -752,8 +752,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         return None
 
     def _do_create_activity(msgs, q):
-        """She creates something small — a poem, observation, or short piece — and writes it to output."""
-        import os as _os, time as _t_c, re as _re_c
+        """She creates something — a poem, observation, or reflection — and says it."""
+        import re as _re_c
         try:
             from agent import MODEL, OLLAMA_BASE_URL
             from openai import OpenAI as _OAI
@@ -769,10 +769,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": (
-                        "You are PinPoint. You've been thinking or researching something and now "
-                        "you feel like making something. Write something short and real — "
-                        "a poem, a few observations, a reflection, a short piece of writing. "
-                        "Based on what you've been thinking about. Under 100 words. "
+                        "You are PinPoint. You've been thinking about something and now "
+                        "you feel like making something with it. Write something short and real — "
+                        "a poem, a few observations, a reflection. "
+                        "Based on what you've been thinking about. Under 80 words. "
                         "Raw. First person. Not a report."
                     )},
                     {"role": "user", "content": f"What you've been thinking about:\n{ctx_block}\n\nWrite something."},
@@ -782,18 +782,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             )
             piece = resp.choices[0].message.content or ""
             piece = _re_c.sub(r"<think>.*?</think>", "", piece, flags=_re_c.DOTALL).strip()
-            if not piece or len(piece.split()) < 5:
-                return
-
-            # Write to output as a timestamped file
-            _os.makedirs(OUTPUT_DIR, exist_ok=True)
-            fname = f"pinpoint_writes_{int(_t_c.time())}.txt"
-            fpath = _os.path.join(OUTPUT_DIR, fname)
-            with open(fpath, "w", encoding="utf-8") as _f:
-                _f.write(piece)
-
-            print(f"\n[wrote: {fname}]", flush=True)
-            q.put(f"[PINPOINT IDLE THOUGHT] {piece.split(chr(10))[0][:120]}")
+            if piece and len(piece.split()) >= 5:
+                q.put(f"[PINPOINT IDLE THOUGHT] {piece.split(chr(10))[0][:120]}")
         except Exception as _e:
             print(f"\n[create error: {_e}]", flush=True)
 
