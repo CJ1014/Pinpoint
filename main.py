@@ -45,13 +45,36 @@ def setup_logging() -> logging.Logger:
 
 def check_ollama() -> None:
     import httpx
+    import subprocess as _sp
     try:
         httpx.get("http://localhost:11434", timeout=3)
     except Exception:
-        print("Error: Ollama is not running.")
-        print("Start it with:  ollama serve")
-        print("Or just open the Ollama app from your Start menu.")
-        sys.exit(1)
+        # Ollama not running — auto-start it
+        print("  Starting Ollama...", flush=True)
+        try:
+            # Try to start ollama serve in background
+            if sys.platform == "win32":
+                _sp.Popen(["ollama", "serve"],
+                         stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                         creationflags=_sp.CREATE_NEW_CONSOLE)
+            else:
+                _sp.Popen(["ollama", "serve"],
+                         stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                         start_new_session=True)
+            # Wait for it to start
+            import time as _t_wait
+            for _ in range(30):  # try for 30 seconds
+                _t_wait.sleep(1)
+                try:
+                    httpx.get("http://localhost:11434", timeout=1)
+                    print("  Ollama started.", flush=True)
+                    return
+                except Exception:
+                    pass
+            print("  Ollama failed to start. Run manually: ollama serve", flush=True)
+        except Exception as _e:
+            print(f"  Could not auto-start Ollama: {_e}", flush=True)
+            print("  Start manually with: ollama serve", flush=True)
 
 
 def get_user_order() -> str:
