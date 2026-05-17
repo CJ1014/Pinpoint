@@ -279,7 +279,7 @@ def start_voice_listener(interrupt_queue) -> bool:
 
     SAMPLE_RATE = 16000
     CHUNK = 1024          # frames per callback (~64 ms)
-    SILENCE_CHUNKS = 28   # chunks of silence that end a phrase (~1.8 s)
+    SILENCE_CHUNKS = 50   # chunks of silence that end a phrase (~3.2 s)
     PRE_ROLL_CHUNKS = 8   # ~0.5 s of audio kept before VAD triggers
 
     # Calibrate energy threshold from 0.5 s of ambient noise
