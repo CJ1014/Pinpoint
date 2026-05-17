@@ -1306,6 +1306,20 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 print()  # newline
 
                 full = _streamed.strip()
+
+                # Fallback: if streaming gave nothing, try non-streaming
+                if not full:
+                    resp_fb = client.chat.completions.create(
+                        model=MODEL,
+                        messages=_chat_messages,
+                        temperature=1.0,
+                        stream=False,
+                        max_tokens=200,
+                        stop=_stop,
+                    )
+                    full = (resp_fb.choices[0].message.content or "").strip()
+                    if full:
+                        print(full, flush=True)
                 import re as _re_strip
                 # Strip <think> blocks
                 full = _re_strip.sub(r"<think>.*?</think>", "", full, flags=_re_strip.DOTALL).strip()
