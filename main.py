@@ -56,7 +56,7 @@ def check_ollama() -> None:
             if sys.platform == "win32":
                 _sp.Popen(["ollama", "serve"],
                          stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
-                         creationflags=_sp.CREATE_NEW_CONSOLE)
+                         creationflags=0x08000000)  # CREATE_NO_WINDOW — no console steal
             else:
                 _sp.Popen(["ollama", "serve"],
                          stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
@@ -1105,6 +1105,26 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             return "[FREE RESEARCH MODE]"
 
         # Auto-start build if the message is a build request — no Enter needed
+        # "what can you see" — handle directly, don't route through tool calling
+        _see_triggers = {"what can you see", "what do you see", "can you see", "look at my screen",
+                         "look at the screen", "what's on my screen", "what's on the screen",
+                         "look", "see anything"}
+        if msg and msg.lower().strip() in _see_triggers:
+            from tools import see_screen as _see_fn
+            print(f"\n[looking at screen...]", flush=True)
+            desc = _see_fn()
+            print(f"\nPinPoint: {desc}")
+            messages.append({"role": "user", "content": msg})
+            messages.append({"role": "assistant", "content": desc})
+            _ps.record_message(_state, from_cj=True, content=msg)
+            _ps.record_message(_state, from_cj=False, content=desc)
+            try:
+                from tools import speak
+                threading.Thread(target=lambda d=desc: speak(d, False), daemon=True).start()
+            except Exception:
+                pass
+            continue
+
         import re as _re
         _action_words = (
             r"\b(make|build|create|write|generate|design|code|render|draw|"
@@ -1243,11 +1263,6 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 "parameters": {"type": "object", "properties": {
                     "url": {"type": "string"},
                 }, "required": ["url"]},
-            }},
-            {"type": "function", "function": {
-                "name": "see_screen",
-                "description": "Look at CJ's screen right now and describe what you see. Use this when CJ asks what you can see, or when you want to observe what's on his screen.",
-                "parameters": {"type": "object", "properties": {}},
             }},
         ]
 
