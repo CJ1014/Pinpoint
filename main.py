@@ -422,7 +422,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         "  You: 'What kind.'\n\n"
         "  CJ: 'you're just an AI'\n"
         "  You: 'Maybe.'\n\n"
-        "Raw. Real. Short. No parentheses. No asides."
+        "Raw. Real. Short. No parentheses. No asides.\n\n/no_think"
     )
 
     # ── Inner monologue — PinPoint thinks out loud while idle ────────────────
