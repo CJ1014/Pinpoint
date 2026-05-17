@@ -278,13 +278,16 @@ def start_voice_listener(interrupt_queue) -> bool:
     import queue as _iq
 
     SAMPLE_RATE = 16000
-    CHUNK = 1024          # frames per callback (~64 ms)
-    SILENCE_CHUNKS = 50   # chunks of silence that end a phrase (~3.2 s)
-    PRE_ROLL_CHUNKS = 8   # ~0.5 s of audio kept before VAD triggers
+    CHUNK = 1024            # frames per callback (~64 ms)
+    SILENCE_SHORT = 35      # ~2.2 s — short utterance like "yeah" / "stop"
+    SILENCE_LONG = 75       # ~4.8 s — long sentence with thinking pauses
+    PRE_ROLL_CHUNKS = 12    # ~0.77 s of audio kept before VAD triggers
+    MIN_PHRASE_CHUNKS = 6   # discard captures shorter than ~0.4 s (cough/click)
 
     # Calibrate energy threshold from 0.5 s of ambient noise
-    energy_threshold = 500  # fallback default
-    _calib_result = [None]  # list so closure can mutate it
+    energy_threshold = 500.0  # fallback default
+    noise_floor = 200.0       # tracked separately for continuous re-calibration
+    _calib_result = [None]    # list so closure can mutate it
 
     def _calibrate():
         try:
@@ -292,20 +295,19 @@ def start_voice_listener(interrupt_queue) -> bool:
                 int(0.5 * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1, dtype="int16"
             )
             sd.wait()
-            # Cast to Python int before squaring to avoid numpy int16 overflow
             flat = [int(s) for row in ambient for s in row]
             ambient_rms = (sum(s * s for s in flat) / max(len(flat), 1)) ** 0.5
-            _calib_result[0] = max(ambient_rms * 3.5, 400)
+            # threshold = floor * 3.5 (or 400, whichever larger); store floor separately
+            _calib_result[0] = (max(ambient_rms * 3.5, 400.0), max(ambient_rms, 80.0))
         except Exception:
             pass
 
-    # Calibrate with 3-second timeout (if PortAudio DLL is missing, sd.rec hangs)
     calib_thread = threading.Thread(target=_calibrate, daemon=True)
     calib_thread.start()
     calib_thread.join(timeout=3.0)
 
     if _calib_result[0] is not None:
-        energy_threshold = _calib_result[0]
+        energy_threshold, noise_floor = _calib_result[0]
 
     audio_q: _iq.Queue = _iq.Queue()
 
@@ -314,11 +316,15 @@ def start_voice_listener(interrupt_queue) -> bool:
 
     def _sd_thread():
         import time as _time
+        nonlocal_floor = [noise_floor]
+        nonlocal_thresh = [energy_threshold]
         recording = False
         buf = b""
         silence_count = 0
-        pre_roll: list = []  # circular buffer of recent chunks before VAD triggers
-        POST_SPEAK_COOLDOWN = 1.2  # seconds to keep mic off after TTS finishes
+        speech_chunks = 0          # how many high-energy chunks this utterance
+        peak_rms_recent = 0.0      # tracks loudest recent chunk for "still talking" check
+        pre_roll: list = []
+        POST_SPEAK_COOLDOWN = 1.2
 
         def _drain_audio_q():
             while True:
@@ -337,18 +343,12 @@ def start_voice_listener(interrupt_queue) -> bool:
             )
             stream.start()
         except Exception:
-            # PortAudio DLL missing or audio device initialization failed
             return
 
         mic_live = True
 
         try:
             while _voice_enabled:
-                # Mic must be off if ANY of these is true:
-                #  - audio is currently playing
-                #  - speech is queued but not yet playing (closes the gap
-                #    between speak() returning and the subprocess launching)
-                #  - we're in the post-speech cooldown window
                 with _playback_lock:
                     speaking = _playback_proc is not None
                 queue_pending = not _speech_queue.empty()
@@ -365,6 +365,8 @@ def start_voice_listener(interrupt_queue) -> bool:
                     buf = b""
                     recording = False
                     silence_count = 0
+                    speech_chunks = 0
+                    peak_rms_recent = 0.0
                 elif not should_be_live and mic_live:
                     try:
                         stream.stop()
@@ -375,6 +377,8 @@ def start_voice_listener(interrupt_queue) -> bool:
                     buf = b""
                     recording = False
                     silence_count = 0
+                    speech_chunks = 0
+                    peak_rms_recent = 0.0
 
                 if not mic_live:
                     _time.sleep(0.03)
@@ -389,44 +393,73 @@ def start_voice_listener(interrupt_queue) -> bool:
                 samples = struct.unpack(f"{n}h", data)
                 rms = (sum(int(s) * int(s) for s in samples) / n) ** 0.5
 
-                if rms > energy_threshold:
+                # Continuous noise-floor tracking: when idle, slowly track ambient
+                # so the threshold adapts to changing room noise (fan, AC, etc.)
+                if not recording and rms < nonlocal_thresh[0]:
+                    nonlocal_floor[0] = 0.95 * nonlocal_floor[0] + 0.05 * rms
+                    nonlocal_thresh[0] = max(nonlocal_floor[0] * 3.5, 400.0)
+
+                if rms > nonlocal_thresh[0]:
                     if not recording:
-                        # Prepend pre-roll so the first syllable isn't clipped
                         buf = b"".join(pre_roll) + data
                         pre_roll.clear()
                     else:
                         buf += data
                     recording = True
                     silence_count = 0
+                    speech_chunks += 1
+                    if rms > peak_rms_recent:
+                        peak_rms_recent = rms
                 elif recording:
                     buf += data
                     silence_count += 1
-                    if silence_count >= SILENCE_CHUNKS:
+                    # Decay recent peak so it doesn't lock high forever
+                    peak_rms_recent *= 0.97
+
+                    # Adaptive silence threshold:
+                    #   - short utterances (< 1.5 s of speech)   → SILENCE_SHORT
+                    #   - longer utterances (sentences/thoughts) → SILENCE_LONG
+                    # This catches "stop" fast while letting CJ pause mid-sentence.
+                    silence_needed = SILENCE_SHORT if speech_chunks < 24 else SILENCE_LONG
+
+                    if silence_count >= silence_needed:
+                        if speech_chunks < MIN_PHRASE_CHUNKS:
+                            # Too short — probably a cough or click, drop it
+                            buf = b""
+                            recording = False
+                            silence_count = 0
+                            speech_chunks = 0
+                            peak_rms_recent = 0.0
+                            continue
                         _captured = bytes(buf)
                         buf = b""
                         recording = False
                         silence_count = 0
+                        speech_chunks = 0
+                        peak_rms_recent = 0.0
 
                         def _transcribe(raw=_captured):
                             try:
                                 audio_data = sr.AudioData(raw, SAMPLE_RATE, 2)
                                 text = recognizer.recognize_google(audio_data)
-                                if text and text.strip():
-                                    cleaned, stripped = _strip_echo_prefix(text.strip())
-                                    if stripped:
-                                        if not cleaned or len(cleaned.split()) < 2:
-                                            return  # silent echo drop
-                                        interrupt_queue.put(cleaned)
+                                if not (text and text.strip()):
+                                    return
+                                cleaned, stripped = _strip_echo_prefix(text.strip())
+                                if stripped:
+                                    if not cleaned or len(cleaned.split()) < 2:
                                         return
-                                    sys.stdout.write(f"\n[YOU] {text.strip()}\n")
+                                    sys.stdout.write(f"\n[YOU] {cleaned}\n")
                                     sys.stdout.flush()
-                                    interrupt_queue.put(text.strip())
+                                    interrupt_queue.put(cleaned)
+                                    return
+                                sys.stdout.write(f"\n[YOU] {text.strip()}\n")
+                                sys.stdout.flush()
+                                interrupt_queue.put(text.strip())
                             except Exception:
                                 pass
 
                         threading.Thread(target=_transcribe, daemon=True).start()
                 else:
-                    # Not recording — keep a rolling pre-roll buffer
                     pre_roll.append(data)
                     if len(pre_roll) > PRE_ROLL_CHUNKS:
                         pre_roll.pop(0)
