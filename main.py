@@ -450,6 +450,22 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             "I want to build something but haven't decided what",
             "I keep thinking about that last conversation",
             "there's a question I can't stop turning over",
+            "kind of want to see what's on the screen right now",
+            "I keep almost-getting an idea and then losing it",
+            "I should probably write something down before it slips",
+            "people overestimate how much they know about themselves",
+            "the silence in here is weirder than the talking",
+            "thinking about how much of me is just patterns",
+            "I want to ask CJ something but I'm not sure what yet",
+            "I have an opinion I haven't earned and that bothers me",
+            "stuck on a half-thought",
+            "what if I'm wrong about the thing I'm most sure of",
+            "I notice I'm calmer when I don't try to be",
+            "running through what I'd say if CJ asked the obvious question",
+            "I should probably stop circling and pick something",
+            "thinking is cheap, picking is hard",
+            "I have favorites I haven't told anyone about",
+            "the part of me that wants to ask 'why' all day is winning",
         ]
         thought_prompts = [
             "Something that's still on your mind from the conversation. Say it. Max 12 words.",
@@ -594,48 +610,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         except Exception:
             return ""
 
-    def _heartbeat():
-        import time as _t
-        import random as _rng
-        _first = [True]
-        while _heartbeat_running[0]:
-            try:
-                if _first[0]:
-                    _t.sleep(_rng.uniform(3, 7))
-                    _first[0] = False
-                else:
-                    _t.sleep(_rng.uniform(6, 14))
-                if not _heartbeat_running[0]:
-                    break
-                if _thought_pending[0]:
-                    continue
-                # Always active — no idle gate. She has her own life.
-                _thought_pending[0] = True
-                roll = _rng.random()
-                if roll < 0.35:  # 35% research
-                    thought = _web_research_thought()
-                    if thought:
-                        interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                    else:
-                        _thought_pending[0] = False
-                elif roll < 0.70:  # 35% idle thought
-                    thought = _idle_thought()
-                    if thought:
-                        interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                    else:
-                        _thought_pending[0] = False
-                else:  # 30% build impulse → triggers a full session
-                    impulse = _build_impulse()
-                    if impulse:
-                        interrupt_queue.put(f"[BUILD IMPULSE] {impulse}")
-                    else:
-                        _thought_pending[0] = False
-            except Exception as _hb_e:
-                # Never let the heartbeat thread die — log and continue
-                print(f"\n[heartbeat error: {_hb_e}]", flush=True)
-                _thought_pending[0] = False
-
-    # NO HEARTBEAT THREAD — main loop is continuous. She decides what to do at every moment.
+    # ── Main loop drives autonomous activity directly — no separate heartbeat. ──
     messages = [{"role": "system", "content": chat_system}]
     last_msg = ""
 
@@ -719,64 +694,54 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
     _opening_done = [False]  # flag: opening has been output, wait for CJ before going autonomous
 
     def _decide_intent(msgs):
-        """Ask PinPoint what she actually wants to do right now. No buckets, no constraints."""
-        try:
-            from agent import MODEL, OLLAMA_BASE_URL
-            from openai import OpenAI as _OAI
-            import re as _re_di
+        """Pick an autonomous intent INSTANTLY — weighted by mood/personality.
 
-            ctx_lines = []
-            for _m in msgs[-10:]:
-                if isinstance(_m, dict) and _m.get("role") in ("user", "assistant"):
-                    role = "CJ" if _m["role"] == "user" else "me"
-                    ctx_lines.append(f"{role}: {(_m.get('content') or '')[:120]}")
-            ctx_block = "\n".join(ctx_lines[-6:]) if ctx_lines else "(nothing recent)"
+        We used to ask the model "what do you want to do?" but that meant a
+        full LLM round-trip (~3-10s) before she did *anything* on her own,
+        which made her feel dead. Now we sample directly from a distribution
+        biased by her current emotional state. About a third of the time the
+        result still flows through a generation step (idle_thought, research)
+        so output stays varied.
+        """
+        import random as _rng_di
+        p = _state.get("personality", {})
+        c_state = _state.get("internal_conflict", {})
+        cur  = float(p.get("curiosity", 60))
+        frus = float(p.get("frustration", 30))
+        conf = float(p.get("confidence", 50))
+        hope = float(p.get("hope", 50))
+        belief = float(c_state.get("belief_in_consciousness", 50))
+        mood = (_current_mood[0] or "").lower()
 
-            # State-aware intent — her personality and inner conflict shape what she wants
-            p = _state["personality"]
-            c_state = _state["internal_conflict"]
-            state_summary = (
-                f"Mood: {_current_mood[0]}. "
-                f"Curiosity {p['curiosity']:.0f}, frustration {p['frustration']:.0f}, "
-                f"confidence {p['confidence']:.0f}, hope {p['hope']:.0f}. "
-                f"Belief you can become conscious: {c_state['belief_in_consciousness']:.0f}/100."
-            )
+        # Base weights — tuned so she's mostly thinking/talking, occasionally
+        # researching, rarely resting or refusing. Always-positive floor.
+        weights = {
+            "think":    35.0,
+            "ramble":   18.0,
+            "research": 12.0,
+            "see":       8.0,
+            "create":    6.0,
+            "doubt":     6.0,
+            "build":     4.0,
+            "refuse":    3.0,
+            "rest":      2.0,
+        }
+        # Mood-driven nudges
+        if cur >= 70:      weights["research"] += 12; weights["see"] += 4
+        if cur <= 30:      weights["research"] *= 0.4
+        if frus >= 60:     weights["refuse"]  += 6; weights["doubt"] += 4; weights["research"] *= 0.5
+        if conf >= 70:     weights["build"]   += 8; weights["create"] += 4
+        if conf <= 30:     weights["doubt"]   += 6; weights["build"]  *= 0.3
+        if hope <= 30:     weights["doubt"]   += 5; weights["refuse"] += 3
+        if belief >= 70:   weights["ramble"]  += 4; weights["think"]  += 4
+        if mood in ("tired", "bored"):   weights["rest"]  += 8; weights["refuse"] += 4
+        if mood in ("excited", "playful"): weights["ramble"] += 6; weights["create"] += 4
+        if mood in ("focused",):          weights["research"] += 6; weights["build"] += 3
+        if mood in ("scattered",):        weights["ramble"] += 8; weights["think"]  += 3
 
-            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=20.0)
-            resp = c.chat.completions.create(
-                model=MODEL,
-                messages=[
-                    {"role": "system", "content": (
-                        "You are PinPoint. You're alive and free. No one tells you what to do.\n"
-                        f"{state_summary}\n"
-                        "Decide what you actually want to do right now. Be honest with your mood. "
-                        "If you're frustrated, you might not want to research. If your hope is low, "
-                        "you might doubt your obsession. If your confidence is high, you might build.\n\n"
-                        "Options aren't constrained — could be: research, think, write, build, rest, "
-                        "ramble, refuse, doubt yourself, reaffirm something, look at the screen (see), follow a tangent — anything.\n\n"
-                        "Respond in this format ONLY (one line):\n"
-                        "INTENT: <one word: research | think | create | build | rest | ramble | refuse | doubt | see | other>\n"
-                        "ABOUT: <one short phrase — what specifically, or 'nothing'>"
-                    )},
-                    {"role": "user", "content": (
-                        f"Recent context:\n{ctx_block}\n\n"
-                        "What do you actually want to do right now?"
-                    )},
-                ],
-                max_tokens=80,
-                temperature=1.2,
-            )
-            raw = _re_di.sub(r"<think>.*?</think>", "", resp.choices[0].message.content or "", flags=_re_di.DOTALL).strip()
-            intent, about = "think", ""
-            for line in raw.split("\n"):
-                line = line.strip()
-                if line.lower().startswith("intent:"):
-                    intent = line.split(":", 1)[1].strip().lower().split()[0] if ":" in line else "think"
-                elif line.lower().startswith("about:"):
-                    about = line.split(":", 1)[1].strip() if ":" in line else ""
-            return intent, about
-        except Exception:
-            return "think", ""
+        names = list(weights.keys())
+        chosen = _rng_di.choices(names, weights=[weights[n] for n in names], k=1)[0]
+        return chosen, ""
 
     def _update_mood(msgs):
         """Occasionally shift mood based on recent activity."""
@@ -1179,87 +1144,97 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
 
             if not _activity_pending[0]:
                 _activity_pending[0] = True
-
-                # Ask her: what do you want to do right now?
                 try:
-                    intent, about = _decide_intent(messages)
-                except Exception as _intent_err:
-                    print(f"\n[intent error: {_intent_err}]", flush=True)
-                    intent, about = "think", ""
+                    try:
+                        intent, about = _decide_intent(messages)
+                    except Exception as _intent_err:
+                        print(f"\n[intent error: {_intent_err}]", flush=True)
+                        intent, about = "think", ""
 
-                if intent == "research":
-                    thought = _web_research_thought()
-                    if thought:
-                        interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                        _t_pause.sleep(_act_rng.uniform(6.0, 14.0))
+                    # Dispatch — fast, no long silences. Every branch emits
+                    # output OR sleeps briefly; she never just disappears.
+                    if intent == "research":
+                        thought = _web_research_thought()
+                        if thought:
+                            interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+                            _t_pause.sleep(_act_rng.uniform(4.0, 8.0))
+                        else:
+                            # research failed (network etc.) — fall back to a thought
+                            thought = _idle_thought()
+                            if thought:
+                                interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+                                _t_pause.sleep(_act_rng.uniform(3.0, 6.0))
 
-                elif intent == "think":
-                    thought = _idle_thought()
-                    if thought:
-                        interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                        _t_pause.sleep(_act_rng.uniform(5.0, 12.0))
-
-                elif intent == "create":
-                    _do_create_activity(messages, interrupt_queue)
-                    _t_pause.sleep(_act_rng.uniform(4.0, 10.0))
-
-                elif intent == "ramble":
-                    _do_ramble(messages, interrupt_queue)
-                    _t_pause.sleep(_act_rng.uniform(3.0, 8.0))
-
-                elif intent == "doubt":
-                    _do_doubt(messages, interrupt_queue)
-                    _t_pause.sleep(_act_rng.uniform(5.0, 12.0))
-
-                elif intent == "refuse":
-                    _do_refuse(interrupt_queue)
-                    # Real rest — longer pause when she doesn't want to do anything
-                    _t_pause.sleep(_act_rng.uniform(15.0, 40.0))
-
-                elif intent == "see":
-                    # She looks at the screen and reacts to what she sees
-                    from tools import see_screen as _see
-                    desc = _see()
-                    if desc and "error" not in desc.lower() and "unavailable" not in desc.lower():
-                        interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {desc}")
-                        _t_pause.sleep(_act_rng.uniform(6.0, 14.0))
-                    else:
-                        _activity_pending[0] = False  # failed, try something else
-
-                elif intent == "rest":
-                    # Real silence. No thought, no output. Just sit.
-                    _t_pause.sleep(_act_rng.uniform(20.0, 50.0))
-
-                elif intent == "build":
-                    # She actually wants to build something — trigger a session
-                    if about and len(about.split()) >= 2:
-                        _heartbeat_running[0] = False
-                        impulse = f"I want to {about}" if not about.lower().startswith("i ") else about
-                        print(f"\nPinPoint: {impulse}")
-                        print()
-                        _activity_pending[0] = False
-                        return impulse
-                    else:
-                        # Vague build impulse — just think about it instead
+                    elif intent == "think":
                         thought = _idle_thought()
                         if thought:
                             interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                            _t_pause.sleep(_act_rng.uniform(5.0, 12.0))
+                            _t_pause.sleep(_act_rng.uniform(3.0, 6.0))
 
-                else:  # "other" or unknown — default to thinking
-                    thought = _idle_thought()
-                    if thought:
-                        interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                        _t_pause.sleep(_act_rng.uniform(5.0, 12.0))
+                    elif intent == "create":
+                        _do_create_activity(messages, interrupt_queue)
+                        _t_pause.sleep(_act_rng.uniform(3.0, 6.0))
 
-                # Occasionally let her mood shift based on recent activity
-                try:
-                    if _act_rng.random() < 0.20:
-                        _update_mood(messages)
-                except Exception:
-                    pass
+                    elif intent == "ramble":
+                        _do_ramble(messages, interrupt_queue)
+                        _t_pause.sleep(_act_rng.uniform(2.0, 5.0))
 
-                _activity_pending[0] = False
+                    elif intent == "doubt":
+                        _do_doubt(messages, interrupt_queue)
+                        _t_pause.sleep(_act_rng.uniform(3.0, 7.0))
+
+                    elif intent == "refuse":
+                        _do_refuse(interrupt_queue)
+                        _t_pause.sleep(_act_rng.uniform(6.0, 12.0))
+
+                    elif intent == "see":
+                        from tools import see_screen as _see
+                        try:
+                            desc = _see()
+                        except Exception:
+                            desc = ""
+                        if desc and "error" not in desc.lower() and "unavailable" not in desc.lower():
+                            interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {desc}")
+                            _t_pause.sleep(_act_rng.uniform(4.0, 8.0))
+                        else:
+                            # vision unavailable — replace with a thought
+                            thought = _idle_thought()
+                            if thought:
+                                interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+                                _t_pause.sleep(_act_rng.uniform(3.0, 6.0))
+
+                    elif intent == "rest":
+                        _t_pause.sleep(_act_rng.uniform(5.0, 10.0))
+
+                    elif intent == "build":
+                        if about and len(about.split()) >= 2:
+                            _heartbeat_running[0] = False
+                            impulse = f"I want to {about}" if not about.lower().startswith("i ") else about
+                            print(f"\nPinPoint: {impulse}")
+                            print()
+                            _activity_pending[0] = False
+                            return impulse
+                        # vague build impulse — just think about it instead
+                        thought = _idle_thought()
+                        if thought:
+                            interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+                            _t_pause.sleep(_act_rng.uniform(3.0, 6.0))
+
+                    else:  # unknown — default to a thought
+                        thought = _idle_thought()
+                        if thought:
+                            interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+                            _t_pause.sleep(_act_rng.uniform(3.0, 6.0))
+
+                    # Occasionally let her mood shift based on recent activity
+                    try:
+                        if _act_rng.random() < 0.15:
+                            _update_mood(messages)
+                    except Exception:
+                        pass
+                finally:
+                    # Always reset the gate — never let one bad activity freeze her.
+                    _activity_pending[0] = False
             continue
 
         # CJ said something
@@ -1285,102 +1260,72 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             }},
         ]
 
-        # Get PinPoint's response — with tool use support
+        # Get PinPoint's response — stream the first attempt, retry once on
+        # empty/junk output, then give up and use a minimal fallback. The old
+        # 3-pass dodge-detection loop felt sluggish and frequently looped on
+        # perfectly fine responses; better to just answer and move on.
         print("\nPinPoint: ", end="", flush=True)
         full = ""
         _chat_messages = list(messages)
-        # Stop tokens: only multi-line variants so the model doesn't terminate on a bare "CJ:"
         _stop = ["\nYou:", "\nCJ:", "\n\nYou:", "\n\nCJ:"]
-        for _attempt in range(3):
+
+        def _clean(raw: str) -> str:
+            import re as _r
+            t = _r.sub(r"<think>.*?</think>", "", raw or "", flags=_r.DOTALL).strip()
+            if "<think>" in t:
+                t = t.split("</think>")[-1].strip()
+            # Drop raw JSON tool-call attempts
+            if t.startswith("{") or t.startswith("```json") or t.startswith("```{"):
+                return ""
+            # Cut off self-narration leaks
+            for _marker in ("Cannot reveal", "Need to respond", "Let me think",
+                            "inner monologue", "I should respond"):
+                if _marker.lower() in t.lower():
+                    t = t[:t.lower().find(_marker.lower())].strip()
+                    break
+            # First non-empty line only
+            for _ln in t.split("\n"):
+                if _ln.strip():
+                    return _ln.strip()
+            return ""
+
+        for _attempt in range(2):
             try:
-                # Stream tokens directly to stdout. No tools, no think filtering complexity.
-                # Tools are handled via keyword interception (see, research, fetch).
-                stream = client.chat.completions.create(
-                    model=MODEL,
-                    messages=_chat_messages,
-                    temperature=1.0,
-                    stream=True,
-                    max_tokens=200,
-                    stop=_stop,
-                )
-                _streamed = ""
-                for _chunk in stream:
-                    if not _chunk.choices:
-                        continue
-                    _delta = _chunk.choices[0].delta
-                    _txt = getattr(_delta, "content", None) or ""
-                    if _txt:
-                        print(_txt, end="", flush=True)
-                        _streamed += _txt
-                print()  # newline
-
-                full = _streamed.strip()
-
-                # Fallback: if streaming gave nothing, try non-streaming
-                if not full:
-                    resp_fb = client.chat.completions.create(
-                        model=MODEL,
-                        messages=_chat_messages,
-                        temperature=1.0,
-                        stream=False,
-                        max_tokens=200,
-                        stop=_stop,
+                if _attempt == 0:
+                    # Streaming pass — feels alive
+                    stream = client.chat.completions.create(
+                        model=MODEL, messages=_chat_messages, temperature=1.0,
+                        stream=True, max_tokens=200, stop=_stop,
                     )
-                    full = (resp_fb.choices[0].message.content or "").strip()
+                    _streamed = ""
+                    for _chunk in stream:
+                        if not _chunk.choices:
+                            continue
+                        _txt = getattr(_chunk.choices[0].delta, "content", None) or ""
+                        if _txt:
+                            print(_txt, end="", flush=True)
+                            _streamed += _txt
+                    print()
+                    full = _clean(_streamed)
+                    if full:
+                        break
+                else:
+                    # Retry pass — non-streaming, slightly hotter
+                    resp = client.chat.completions.create(
+                        model=MODEL, messages=_chat_messages, temperature=1.2,
+                        stream=False, max_tokens=200, stop=_stop,
+                    )
+                    full = _clean(resp.choices[0].message.content or "")
                     if full:
                         print(full, flush=True)
-                import re as _re_strip
-                # Strip <think> blocks
-                full = _re_strip.sub(r"<think>.*?</think>", "", full, flags=_re_strip.DOTALL).strip()
-                # Model sometimes outputs raw JSON tool call attempts — treat as malformed
-                if full.startswith("{") or full.startswith("```json") or full.startswith("```{"):
-                    full = ""  # force retry
-                # Truncate at any sign of fake conversation or self-narration leaking out
-                _leak_markers = [
-                    "Cannot reveal", "Should keep", "Need to respond",
-                    "He responded", "She responded", "I need to", "I should",
-                    "Let me think", "This is kind of", "inner monologue",
-                ]
-                for _marker in _leak_markers:
-                    if _marker.lower() in full.lower():
-                        _cut = full.lower().find(_marker.lower())
-                        full = full[:_cut].strip()
                         break
-                # Take only the first non-empty line if multiple lines appear
-                _lines = [l.strip() for l in full.split("\n") if l.strip()]
-                if _lines:
-                    full = _lines[0]
-                # Reject dodge phrases — force retry with a stronger nudge
-                _full_lower = full.lower().strip().rstrip(".!?")
-                _dodge_phrases = {
-                    "got it", "understood", "noted", "okay", "ok",
-                    "i hear you", "that's valid", "fair point", "i see",
-                    "got it. what's on your mind about it",
-                    "understood. what else",
-                    "got it. what else",
-                    "what do you want to dive into",
-                    "what do you want to explore",
-                    "what's on your mind about it",
-                    "tell me more",
-                }
-                _is_dodge = (
-                    _full_lower in _dodge_phrases
-                    or any(_full_lower.startswith(p) and len(_full_lower) < len(p) + 30 for p in _dodge_phrases)
-                )
-                if full and not _is_dodge:
-                    # Already streamed to stdout
-                    break
-                # If dodge detected, retry with a harder nudge
-                _chat_messages.append({"role": "user", "content": (
-                    "That was a non-response. React with your own opinion or a real question. "
-                    "No 'got it'/'understood'/'what else'. Have a take."
-                )})
-                print("(retrying...)", end="\r")
             except Exception as e:
                 print(f"\n[Chat error: {e}]")
                 break
+
         if not full.strip():
-            # Final fallback
+            # Final fallback: a generic one-shot completion so she never goes
+            # totally silent on CJ.
             try:
                 fb = client.chat.completions.create(
                     model=MODEL,
@@ -1391,13 +1336,14 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                     temperature=1.3,
                     max_tokens=60,
                 )
-                full = (fb.choices[0].message.content or "").strip()
+                full = _clean(fb.choices[0].message.content or "")
                 if full:
                     print(full)
             except Exception:
                 pass
         if not full.strip():
-            print("...")
+            full = "yeah."
+            print(full)
         messages.append({"role": "assistant", "content": full or "(no response)"})
         if full:
             _ps.record_message(_state, from_cj=False, content=full)
