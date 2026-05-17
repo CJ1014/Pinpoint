@@ -297,7 +297,7 @@ def setup_collab(goal: str) -> None:
     print(f"  Run two instances of PinPoint — they will coordinate via collab.json\n")
 
 
-def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
+def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_ready: "threading.Event | None" = None) -> str:
     """
     Full back-and-forth conversation with PinPoint.
     Runs between (or before) autonomous sessions.
@@ -630,6 +630,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
     def _generate_opening():
         import random as _rng
         fallbacks = ["hey", "what's up", "yo", "been thinking", "back again"]
+        # Wait for model to be loaded before generating (avoids racing warmup)
+        if model_ready is not None:
+            model_ready.wait(timeout=90)
         try:
             if previous_summary:
                 open_prompt = (
@@ -690,6 +693,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
     _activity_pending = [False]
     _current_focus = [None]  # tracks current thread; None = open
     _current_mood = [_state.get("current_mood", "curious")]  # her current internal state, loaded from persistent state
+    _opening_done = [False]  # flag: opening has been output, wait for CJ before going autonomous
 
     def _decide_intent(msgs):
         """Ask PinPoint what she actually wants to do right now. No buckets, no constraints."""
@@ -985,6 +989,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             _thought_pending[0] = False  # ready for next thought
             print(f"\nPinPoint: {thought}")
             messages.append({"role": "assistant", "content": thought})
+            # Mark opening as done — now she can go autonomous if CJ doesn't respond
+            if not _opening_done[0]:
+                _opening_done[0] = True
+                _last_interaction[0] = time.time()  # reset timer for grace period
             try:
                 from tools import speak
                 threading.Thread(target=lambda t=thought: speak(t, False), daemon=True).start()
@@ -1108,6 +1116,11 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         if not msg:
             import random as _act_rng
             import time as _t_pause
+
+            # Grace period after opening — wait for CJ to speak before going autonomous
+            if _opening_done[0] and (time.time() - _last_interaction[0]) < 4.0:
+                _t_pause.sleep(0.5)  # brief pause, then check for input again
+                continue
 
             if not _activity_pending[0]:
                 _activity_pending[0] = True
@@ -1429,8 +1442,8 @@ def main() -> None:
     threading.Thread(target=_warmup_tts, daemon=True).start()
 
     # Pre-warm the LLM — first call on a cold local model takes 30-60s to load
-    # weights into RAM. Firing a tiny synchronous call here means activities
-    # don't time out on first invocation.
+    # weights into RAM. Use an event so the opening waits for model-ready.
+    _model_ready = threading.Event()
     def _warmup_llm():
         try:
             from openai import OpenAI as _OAI
@@ -1440,11 +1453,13 @@ def main() -> None:
             _c.chat.completions.create(
                 model=_M,
                 messages=[{"role": "user", "content": "hi"}],
-                max_tokens=5,
+                max_tokens=1,
             )
             print(f"  Model warmup     : ready ({_M})", flush=True)
         except Exception as _e:
             print(f"  Model warmup     : FAILED — {_e}", flush=True)
+        finally:
+            _model_ready.set()  # always unblock the opening, even on failure
     threading.Thread(target=_warmup_llm, daemon=True).start()
 
     # Command-line order overrides auto-start
@@ -1613,7 +1628,7 @@ def main() -> None:
     # Blank Enter in chat drops into an autonomous session; typed text becomes the order.
     # Skip this if a command-line order was already given (/dev, sandbox, etc.)
     if not order:
-        order = _chat_mode(interrupt_queue)
+        order = _chat_mode(interrupt_queue, model_ready=_model_ready)
 
     while True:
         session += 1
@@ -1680,7 +1695,7 @@ def main() -> None:
         _reload_if_changed()
 
         # Drop into chat mode between sessions — PinPoint opens with "here's what I built"
-        order = _chat_mode(interrupt_queue, previous_summary=summary)
+        order = _chat_mode(interrupt_queue, previous_summary=summary, model_ready=_model_ready)
 
 
 if __name__ == "__main__":
