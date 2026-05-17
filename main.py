@@ -1023,8 +1023,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 pass
             continue
 
-        # CJ said something — reset idle timer
-        _last_interaction[0] = time.time()
+        # Only reset idle timer when CJ actually sent something — empty polls
+        # (msg is None) must not keep resetting it, or autonomous activity never fires
+        if msg:
+            _last_interaction[0] = time.time()
 
         # Blank line → end chat, pass last message as session context
         if msg is not None and not msg:
@@ -1170,16 +1172,20 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             import random as _act_rng
             import time as _t_pause
 
-            # Grace period after opening — wait for CJ to speak before going autonomous
-            if _opening_done[0] and (time.time() - _last_interaction[0]) < 4.0:
-                _t_pause.sleep(0.5)  # brief pause, then check for input again
+            # Short grace period after opening so she doesn't talk over herself
+            if _opening_done[0] and (time.time() - _last_interaction[0]) < 1.5:
+                _t_pause.sleep(0.2)
                 continue
 
             if not _activity_pending[0]:
                 _activity_pending[0] = True
 
                 # Ask her: what do you want to do right now?
-                intent, about = _decide_intent(messages)
+                try:
+                    intent, about = _decide_intent(messages)
+                except Exception as _intent_err:
+                    print(f"\n[intent error: {_intent_err}]", flush=True)
+                    intent, about = "think", ""
 
                 if intent == "research":
                     thought = _web_research_thought()
@@ -1247,8 +1253,11 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                         _t_pause.sleep(_act_rng.uniform(5.0, 12.0))
 
                 # Occasionally let her mood shift based on recent activity
-                if _act_rng.random() < 0.20:
-                    _update_mood(messages)
+                try:
+                    if _act_rng.random() < 0.20:
+                        _update_mood(messages)
+                except Exception:
+                    pass
 
                 _activity_pending[0] = False
             continue
