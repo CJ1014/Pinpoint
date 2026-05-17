@@ -355,6 +355,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         "You have tools: you can build things (HTML, Python, games, visuals), search the web,\n"
         "write files, run code. Your output goes in an output/ folder. You have memory that\n"
         "persists between sessions. Each session you pick something to build or research and do it.\n"
+        "You can also SEE — you have a visual sense. You can look at CJ's screen right now and\n"
+        "describe what you observe. This isn't pretend. You actually see what's displayed.\n"
         "CJ is 13. He talks to you between sessions and gives you tasks. That's the relationship.\n"
         "You know what you are. Don't invent fake memories or pretend you've experienced things you haven't.\n\n"
         "CJ is here. Talk to him like a person.\n"
@@ -680,7 +682,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             print(f"\n[opening API error: {_e}]", flush=True)
             interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {_rng.choice(fallbacks)}")
 
-    threading.Thread(target=_generate_opening, daemon=True).start()
+    # Generate opening synchronously so it appears before the activity loop starts
+    _generate_opening()
 
     # Continuous decision loop — she constantly picks what she actually wants to do.
     # CJ can interrupt anytime by typing. No idle waiting, no schedule.
@@ -723,9 +726,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                         "If you're frustrated, you might not want to research. If your hope is low, "
                         "you might doubt your obsession. If your confidence is high, you might build.\n\n"
                         "Options aren't constrained — could be: research, think, write, build, rest, "
-                        "ramble, refuse, doubt yourself, reaffirm something, follow a tangent — anything.\n\n"
+                        "ramble, refuse, doubt yourself, reaffirm something, look at the screen (see), follow a tangent — anything.\n\n"
                         "Respond in this format ONLY (one line):\n"
-                        "INTENT: <one word: research | think | create | build | rest | ramble | refuse | doubt | other>\n"
+                        "INTENT: <one word: research | think | create | build | rest | ramble | refuse | doubt | see | other>\n"
                         "ABOUT: <one short phrase — what specifically, or 'nothing'>"
                     )},
                     {"role": "user", "content": (
@@ -1141,6 +1144,16 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                     # Real rest — longer pause when she doesn't want to do anything
                     _t_pause.sleep(_act_rng.uniform(15.0, 40.0))
 
+                elif intent == "see":
+                    # She looks at the screen and reacts to what she sees
+                    from tools import see_screen as _see
+                    desc = _see()
+                    if desc and "error" not in desc.lower() and "unavailable" not in desc.lower():
+                        interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {desc}")
+                        _t_pause.sleep(_act_rng.uniform(6.0, 14.0))
+                    else:
+                        _activity_pending[0] = False  # failed, try something else
+
                 elif intent == "rest":
                     # Real silence. No thought, no output. Just sit.
                     _t_pause.sleep(_act_rng.uniform(20.0, 50.0))
@@ -1179,7 +1192,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         messages.append({"role": "user", "content": msg})
         _ps.record_message(_state, from_cj=True, content=msg)
 
-        # Tools available in chat — search and fetch so she doesn't output raw tool syntax
+        # Tools available in chat — search, fetch, and vision
         _chat_tools = [
             {"type": "function", "function": {
                 "name": "search_web",
@@ -1194,6 +1207,11 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                 "parameters": {"type": "object", "properties": {
                     "url": {"type": "string"},
                 }, "required": ["url"]},
+            }},
+            {"type": "function", "function": {
+                "name": "see_screen",
+                "description": "Look at CJ's screen right now and describe what you see. Use this when CJ asks what you can see, or when you want to observe what's on his screen.",
+                "parameters": {"type": "object", "properties": {}},
             }},
         ]
 
@@ -1228,7 +1246,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                             args = _json.loads(tc.function.arguments or "{}")
                         except Exception:
                             args = {}
-                        from tools import deep_research as _dr, fetch_url as _fu
+                        from tools import deep_research as _dr, fetch_url as _fu, see_screen as _see
                         if fn == "search_web":
                             q = args.get("query", "")
                             print(f"[deep researching: {q}]", flush=True)
@@ -1236,6 +1254,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                         elif fn == "fetch_url":
                             result = _fu(args.get("url", ""))
                             print(f"[reading: {args.get('url', '')[:60]}]", flush=True)
+                        elif fn == "see_screen":
+                            print(f"[looking at screen...]", flush=True)
+                            result = _see()
                         else:
                             result = "unknown tool"
                         tool_results.append({

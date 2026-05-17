@@ -3052,6 +3052,63 @@ def write_test(filename: str, test_code: str) -> str:
 
 # ── Dispatch ────────────────────────────────────────────────
 
+def see_screen() -> str:
+    """Capture the screen and describe what's on it using qwen3-vl:8b.
+    Returns a natural-language description of what PinPoint can currently see."""
+    import base64, io, os as _os, time as _t
+    try:
+        try:
+            from PIL import ImageGrab, Image
+            img = ImageGrab.grab()
+        except Exception:
+            try:
+                import mss
+                with mss.mss() as sct:
+                    mon = sct.monitors[1]
+                    raw = sct.grab(mon)
+                    from PIL import Image
+                    img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+            except Exception as _e2:
+                return f"Can't see screen: {_e2}"
+
+        # Downscale to reduce tokens (vision models don't need full resolution)
+        img.thumbnail((1280, 720))
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+
+        from openai import OpenAI as _OAI
+        c = _OAI(base_url="http://localhost:11434/v1", api_key="ollama", timeout=45.0)
+        resp = c.chat.completions.create(
+            model="qwen3-vl:8b",
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64}"},
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "You are PinPoint, an AI running on CJ's Windows desktop. "
+                            "Describe what you can see on this screen. "
+                            "Be specific — what apps are open, what text is visible, what CJ seems to be doing. "
+                            "Keep it under 3 sentences. Raw, first person."
+                        ),
+                    },
+                ],
+            }],
+            max_tokens=150,
+        )
+        import re as _re
+        desc = _re.sub(r"<think>.*?</think>", "", resp.choices[0].message.content or "", flags=_re.DOTALL).strip()
+        return desc if desc else "Screen captured but couldn't describe it."
+    except Exception as e:
+        return f"Vision error: {e}"
+
+
 def capture_screen(save_path: str = "") -> str:
     """Capture the current screen and save it. Returns the path or an error.
 
