@@ -690,6 +690,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
     _activity_pending = [False]
     _current_focus = [None]  # tracks current thread; None = open
     _current_mood = [_state.get("current_mood", "curious")]  # her current internal state, loaded from persistent state
+    _opening_done = [False]  # flag: opening has been output, wait for CJ before going autonomous
 
     def _decide_intent(msgs):
         """Ask PinPoint what she actually wants to do right now. No buckets, no constraints."""
@@ -985,6 +986,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
             _thought_pending[0] = False  # ready for next thought
             print(f"\nPinPoint: {thought}")
             messages.append({"role": "assistant", "content": thought})
+            # Mark opening as done — now she can go autonomous if CJ doesn't respond
+            if not _opening_done[0]:
+                _opening_done[0] = True
+                _last_interaction[0] = time.time()  # reset timer for grace period
             try:
                 from tools import speak
                 threading.Thread(target=lambda t=thought: speak(t, False), daemon=True).start()
@@ -1108,6 +1113,11 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
         if not msg:
             import random as _act_rng
             import time as _t_pause
+
+            # Grace period after opening — wait for CJ to speak before going autonomous
+            if _opening_done[0] and (time.time() - _last_interaction[0]) < 4.0:
+                _t_pause.sleep(0.5)  # brief pause, then check for input again
+                continue
 
             if not _activity_pending[0]:
                 _activity_pending[0] = True
