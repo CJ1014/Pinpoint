@@ -1106,9 +1106,14 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
 
         # Auto-start build if the message is a build request — no Enter needed
         # "what can you see" — handle directly, don't route through tool calling
-        _see_triggers = {"what can you see", "what do you see", "can you see", "look at my screen",
-                         "look at the screen", "what's on my screen", "what's on the screen",
-                         "look", "see anything"}
+        _see_triggers = {
+            "what can you see", "what do you see", "can you see", "look at my screen",
+            "look at the screen", "what's on my screen", "what's on the screen",
+            "look", "see anything", "what do you see now", "what can you see now",
+            "look at this", "look at the screen now", "can you see my screen",
+            "see my screen", "what are you seeing", "describe my screen",
+            "what's on screen", "what's visible", "what do you observe",
+        }
         if msg and msg.lower().strip() in _see_triggers:
             from tools import see_screen as _see_fn
             print(f"\n[looking at screen...]", flush=True)

@@ -3106,7 +3106,7 @@ def see_screen() -> str:
         b64 = base64.b64encode(buf.getvalue()).decode()
 
         from openai import OpenAI as _OAI
-        c = _OAI(base_url="http://localhost:11434/v1", api_key="ollama", timeout=45.0)
+        c = _OAI(base_url="http://localhost:11434/v1", api_key="ollama", timeout=60.0)
         resp = c.chat.completions.create(
             model="qwen3-vl:8b",
             messages=[{
@@ -3119,19 +3119,26 @@ def see_screen() -> str:
                     {
                         "type": "text",
                         "text": (
-                            "You are PinPoint, an AI running on CJ's Windows desktop. "
-                            "Describe what you can see on this screen. "
-                            "Be specific — what apps are open, what text is visible, what CJ seems to be doing. "
-                            "Keep it under 3 sentences. Raw, first person."
+                            "Describe what's on this screen in 1-2 sentences. "
+                            "What apps are open, what text is visible, what the person seems to be doing. "
+                            "First person, casual, direct. No preamble. /no_think"
                         ),
                     },
                 ],
             }],
-            max_tokens=150,
+            max_tokens=300,
         )
         import re as _re
-        desc = _re.sub(r"<think>.*?</think>", "", resp.choices[0].message.content or "", flags=_re.DOTALL).strip()
-        return desc if desc else "Screen captured but couldn't describe it."
+        raw = resp.choices[0].message.content or ""
+        # Strip complete think blocks
+        desc = _re.sub(r"<think>.*?</think>", "", raw, flags=_re.DOTALL).strip()
+        # Strip unterminated think block (ran out of tokens mid-think)
+        if not desc and "<think>" in raw:
+            think_content = raw.split("<think>", 1)[-1].split("</think>")[0].strip()
+            # Pull the last sentence from the think block as a fallback
+            sentences = [s.strip() for s in think_content.replace("\n", " ").split(".") if len(s.strip()) > 10]
+            desc = sentences[-1] + "." if sentences else ""
+        return desc if desc else "I can see your screen but couldn't parse the description."
     except Exception as e:
         return f"Vision error: {e}"
 
