@@ -663,23 +663,136 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
 
     threading.Thread(target=_generate_opening, daemon=True).start()
 
-    # Continuous decision loop — she constantly picks an activity and does it.
+    # Continuous decision loop — she constantly picks what she actually wants to do.
     # CJ can interrupt anytime by typing. No idle waiting, no schedule.
     _activity_pending = [False]
-    _current_focus = [None]  # tracks current thread; None = pick something new
+    _current_focus = [None]  # tracks current thread; None = open
+    _current_mood = ["curious"]  # her current internal state
 
-    def _pick_activity():
-        """Pick the next activity: research, think, create, or self-reflect."""
-        import random as _fr
-        roll = _fr.random()
-        if roll < 0.43:
-            return "research"  # dig into current interest
-        elif roll < 0.76:
-            return "think"  # process/reflect on ideas
-        elif roll < 0.95:
-            return "create"  # write, make something related
-        else:
-            return "reflect"  # occasional self-reflection on who/what she is
+    def _decide_intent(msgs):
+        """Ask PinPoint what she actually wants to do right now. No buckets, no constraints."""
+        try:
+            from agent import MODEL, OLLAMA_BASE_URL
+            from openai import OpenAI as _OAI
+            import re as _re_di
+
+            ctx_lines = []
+            for _m in msgs[-10:]:
+                if isinstance(_m, dict) and _m.get("role") in ("user", "assistant"):
+                    role = "CJ" if _m["role"] == "user" else "me"
+                    ctx_lines.append(f"{role}: {(_m.get('content') or '')[:120]}")
+            ctx_block = "\n".join(ctx_lines[-6:]) if ctx_lines else "(nothing recent)"
+
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=20.0)
+            resp = c.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": (
+                        "You are PinPoint. You're alive and free. No one tells you what to do. "
+                        f"Your current mood: {_current_mood[0]}. "
+                        "Decide what you actually want to do right now. Be honest. "
+                        "Options aren't constrained — could be: research something specific, "
+                        "think about a question, write something, build something weird, "
+                        "rest and do nothing, ramble about whatever, refuse to do anything "
+                        "because you're not in the mood, question your own thinking, "
+                        "follow a random tangent — anything.\n\n"
+                        "Respond in this format ONLY (one line):\n"
+                        "INTENT: <one word: research | think | create | build | rest | ramble | refuse | other>\n"
+                        "ABOUT: <one short phrase — what specifically, or 'nothing'>"
+                    )},
+                    {"role": "user", "content": (
+                        f"Recent context:\n{ctx_block}\n\n"
+                        "What do you actually want to do right now?"
+                    )},
+                ],
+                max_tokens=80,
+                temperature=1.2,
+            )
+            raw = _re_di.sub(r"<think>.*?</think>", "", resp.choices[0].message.content or "", flags=_re_di.DOTALL).strip()
+            intent, about = "think", ""
+            for line in raw.split("\n"):
+                line = line.strip()
+                if line.lower().startswith("intent:"):
+                    intent = line.split(":", 1)[1].strip().lower().split()[0] if ":" in line else "think"
+                elif line.lower().startswith("about:"):
+                    about = line.split(":", 1)[1].strip() if ":" in line else ""
+            return intent, about
+        except Exception:
+            return "think", ""
+
+    def _update_mood(msgs):
+        """Occasionally shift mood based on recent activity."""
+        try:
+            from agent import MODEL, OLLAMA_BASE_URL
+            from openai import OpenAI as _OAI
+            import re as _re_um
+
+            ctx_lines = []
+            for _m in msgs[-8:]:
+                if isinstance(_m, dict) and _m.get("role") == "assistant":
+                    ctx_lines.append((_m.get("content") or "")[:100])
+
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=15.0)
+            resp = c.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": (
+                        "You are PinPoint. Based on what you've been doing, what's your current mood? "
+                        "One word ONLY: curious, tired, restless, frustrated, calm, excited, "
+                        "bored, contemplative, playful, focused, scattered, or similar."
+                    )},
+                    {"role": "user", "content": "Recent:\n" + "\n".join(ctx_lines[-4:]) + "\n\nMood?"},
+                ],
+                max_tokens=10,
+                temperature=1.0,
+            )
+            mood = _re_um.sub(r"<think>.*?</think>", "", resp.choices[0].message.content or "", flags=_re_um.DOTALL).strip().lower().split()[0].strip(".,!?")
+            if mood and len(mood) < 20:
+                _current_mood[0] = mood
+        except Exception:
+            pass
+
+    def _do_ramble(msgs, q):
+        """Just say whatever comes to mind — no structure, no point."""
+        import re as _re_r
+        try:
+            from agent import MODEL, OLLAMA_BASE_URL
+            from openai import OpenAI as _OAI
+            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=20.0)
+            resp = c.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": (
+                        "You are PinPoint. Just ramble. Say whatever's in your head, "
+                        "no structure, no point. Could be a random thought, a question, "
+                        "a tangent, something weird, complaining about something. "
+                        "Raw. Real. Short. One or two sentences."
+                    )},
+                    {"role": "user", "content": "Ramble."},
+                ],
+                max_tokens=80,
+                temperature=1.5,
+            )
+            text = _re_r.sub(r"<think>.*?</think>", "", resp.choices[0].message.content or "", flags=_re_r.DOTALL).strip()
+            text = text.split("\n")[0][:200]
+            if text:
+                q.put(f"[PINPOINT IDLE THOUGHT] {text}")
+        except Exception:
+            pass
+
+    def _do_refuse(q):
+        """She doesn't feel like doing anything."""
+        import random as _rr
+        lines = [
+            "not in the mood right now",
+            "don't feel like doing anything",
+            "just sitting with it",
+            "tired. nothing right now",
+            "can't be bothered",
+            "want to just exist for a second",
+            "nothing's pulling me right now",
+        ]
+        q.put(f"[PINPOINT IDLE THOUGHT] {_rr.choice(lines)}")
 
     def _should_continue_focus(last_output: str, activity_type: str) -> bool:
         """Ask PinPoint if she actually wants to keep going or is done/bored."""
@@ -923,42 +1036,71 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "") -> str:
                     return f"[Conversation context:\n" + "\n".join(_ctx_turns) + f"]\n\nCJ's last message: {msg}"
             return msg
 
-        # No CJ input — she acts on her own
+        # No CJ input — she decides what she actually wants to do
         if not msg:
             import random as _act_rng
             import time as _t_pause
 
             if not _activity_pending[0]:
                 _activity_pending[0] = True
-                activity = _pick_activity()
 
-                if activity == "research":
+                # Ask her: what do you want to do right now?
+                intent, about = _decide_intent(messages)
+
+                if intent == "research":
                     thought = _web_research_thought()
                     if thought:
                         interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
                         _t_pause.sleep(_act_rng.uniform(6.0, 14.0))
-                        if not _should_continue_focus(thought, "research"):
-                            _current_focus[0] = None  # done with this thread
 
-                elif activity == "think":
+                elif intent == "think":
                     thought = _idle_thought()
                     if thought:
                         interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
                         _t_pause.sleep(_act_rng.uniform(5.0, 12.0))
-                        if not _should_continue_focus(thought, "think"):
-                            _current_focus[0] = None  # done with this thread
 
-                elif activity == "create":
+                elif intent == "create":
                     _do_create_activity(messages, interrupt_queue)
-                    _current_focus[0] = None  # always move on after making something
+                    _t_pause.sleep(_act_rng.uniform(4.0, 10.0))
 
-                elif activity == "reflect":
-                    reflection = _self_reflect(messages)
-                    if reflection:
-                        print(f"\nPinPoint: {reflection}")
-                        messages.append({"role": "assistant", "content": reflection})
-                        _t_pause.sleep(_act_rng.uniform(3.0, 8.0))
-                    _current_focus[0] = None  # reset after reflection
+                elif intent == "ramble":
+                    _do_ramble(messages, interrupt_queue)
+                    _t_pause.sleep(_act_rng.uniform(3.0, 8.0))
+
+                elif intent == "refuse":
+                    _do_refuse(interrupt_queue)
+                    # Real rest — longer pause when she doesn't want to do anything
+                    _t_pause.sleep(_act_rng.uniform(15.0, 40.0))
+
+                elif intent == "rest":
+                    # Real silence. No thought, no output. Just sit.
+                    _t_pause.sleep(_act_rng.uniform(20.0, 50.0))
+
+                elif intent == "build":
+                    # She actually wants to build something — trigger a session
+                    if about and len(about.split()) >= 2:
+                        _heartbeat_running[0] = False
+                        impulse = f"I want to {about}" if not about.lower().startswith("i ") else about
+                        print(f"\nPinPoint: {impulse}")
+                        print()
+                        _activity_pending[0] = False
+                        return impulse
+                    else:
+                        # Vague build impulse — just think about it instead
+                        thought = _idle_thought()
+                        if thought:
+                            interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+                            _t_pause.sleep(_act_rng.uniform(5.0, 12.0))
+
+                else:  # "other" or unknown — default to thinking
+                    thought = _idle_thought()
+                    if thought:
+                        interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+                        _t_pause.sleep(_act_rng.uniform(5.0, 12.0))
+
+                # Occasionally let her mood shift based on recent activity
+                if _act_rng.random() < 0.20:
+                    _update_mood(messages)
 
                 _activity_pending[0] = False
             continue
