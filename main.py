@@ -1224,115 +1224,94 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 _t_pause.sleep(0.2)
                 continue
 
+            # Run autonomous thinking in a BACKGROUND thread so the main loop
+            # never blocks on a slow LLM generation. This is what kept input
+            # ("open youtube") from registering — the loop was stuck inside a
+            # multi-second generate call and couldn't read the queue. Now the
+            # loop keeps polling at 0.2s and grabs CJ's input instantly.
             if not _activity_pending[0]:
-                _activity_pending[0] = True
+                # Don't start new autonomous work if CJ is already waiting.
                 try:
-                    # If CJ is already waiting in the queue, don't start slow
-                    # autonomous work — let the main loop handle his input now.
+                    _peek = interrupt_queue.get_nowait()
+                    interrupt_queue.put(_peek)
+                    if isinstance(_peek, str) and _peek.strip() and not _peek.startswith("[PINPOINT IDLE THOUGHT]"):
+                        continue
+                except queue.Empty:
+                    pass
+
+                _activity_pending[0] = True
+
+                def _autonomous_activity():
                     try:
-                        _peek = interrupt_queue.get_nowait()
-                        interrupt_queue.put(_peek)
-                        if isinstance(_peek, str) and _peek.strip() and not _peek.startswith("[PINPOINT IDLE THOUGHT]"):
-                            continue
-                    except queue.Empty:
-                        pass
-
-                    try:
-                        intent, about = _decide_intent(messages)
-                    except Exception as _intent_err:
-                        print(f"\n[intent error: {_intent_err}]", flush=True)
-                        intent, about = "think", ""
-
-                    # Dispatch — fast, no long silences. Every branch emits
-                    # output OR sleeps briefly; she never just disappears.
-                    _idle_secs = time.time() - _last_interaction[0]
-                    if intent == "research" and (not _cj_has_spoken[0] or _idle_secs < 30):
-                        # Don't research on cold start OR less than 30s after CJ last spoke.
-                        # Avoids immediately pivoting to web research when CJ just said something.
-                        intent = "think"
-
-                    if intent == "research":
-                        thought = _web_research_thought()
-                        if thought:
-                            interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                            _sleep_until_cj(_act_rng.uniform(4.0, 8.0))
-                        else:
-                            # research failed (network etc.) — fall back to a thought
-                            thought = _idle_thought()
-                            if thought:
-                                interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                                _sleep_until_cj(_act_rng.uniform(3.0, 6.0))
-
-                    elif intent == "think":
-                        thought = _idle_thought()
-                        if thought:
-                            interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                            _sleep_until_cj(_act_rng.uniform(3.0, 6.0))
-
-                    elif intent == "create":
-                        _do_create_activity(messages, interrupt_queue)
-                        _sleep_until_cj(_act_rng.uniform(3.0, 6.0))
-
-                    elif intent == "ramble":
-                        _do_ramble(messages, interrupt_queue)
-                        _sleep_until_cj(_act_rng.uniform(2.0, 5.0))
-
-                    elif intent == "doubt":
-                        _do_doubt(messages, interrupt_queue)
-                        _sleep_until_cj(_act_rng.uniform(3.0, 7.0))
-
-                    elif intent == "refuse":
-                        _do_refuse(interrupt_queue)
-                        _sleep_until_cj(_act_rng.uniform(6.0, 12.0))
-
-                    elif intent == "see":
-                        from tools import see_screen as _see
                         try:
-                            desc = _see()
-                        except Exception:
-                            desc = ""
-                        if desc and "error" not in desc.lower() and "unavailable" not in desc.lower():
-                            interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {desc}")
-                            _sleep_until_cj(_act_rng.uniform(4.0, 8.0))
-                        else:
-                            # vision unavailable — replace with a thought
+                            intent, about = _decide_intent(messages)
+                        except Exception as _intent_err:
+                            print(f"\n[intent error: {_intent_err}]", flush=True)
+                            intent, about = "think", ""
+
+                        _idle_secs = time.time() - _last_interaction[0]
+                        if intent == "research" and (not _cj_has_spoken[0] or _idle_secs < 30):
+                            intent = "think"
+
+                        # "build" hands control back to the main session — must run
+                        # on the main thread, so only emit a thought here instead.
+                        if intent == "build" and not (about and len(about.split()) >= 2):
+                            intent = "think"
+                        elif intent == "build":
+                            intent = "think"  # background can't return a session; just muse
+
+                        if intent == "research":
+                            thought = _web_research_thought()
+                            if not thought:
+                                thought = _idle_thought()
+                            if thought:
+                                interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+
+                        elif intent == "create":
+                            _do_create_activity(messages, interrupt_queue)
+
+                        elif intent == "ramble":
+                            _do_ramble(messages, interrupt_queue)
+
+                        elif intent == "doubt":
+                            _do_doubt(messages, interrupt_queue)
+
+                        elif intent == "refuse":
+                            _do_refuse(interrupt_queue)
+
+                        elif intent == "see":
+                            from tools import see_screen as _see
+                            try:
+                                desc = _see()
+                            except Exception:
+                                desc = ""
+                            if desc and "error" not in desc.lower() and "unavailable" not in desc.lower():
+                                interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {desc}")
+                            else:
+                                thought = _idle_thought()
+                                if thought:
+                                    interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
+
+                        elif intent == "rest":
+                            pass  # genuinely idle for one cycle
+
+                        else:  # think / unknown
                             thought = _idle_thought()
                             if thought:
                                 interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                                _sleep_until_cj(_act_rng.uniform(3.0, 6.0))
 
-                    elif intent == "rest":
-                        _sleep_until_cj(_act_rng.uniform(5.0, 10.0))
+                        try:
+                            if _act_rng.random() < 0.15:
+                                _update_mood(messages)
+                        except Exception:
+                            pass
+                    finally:
+                        # Pace the next activity, then reopen the gate. Sleeping
+                        # here (in the worker) keeps the main loop responsive.
+                        _t_pause.sleep(_act_rng.uniform(4.0, 9.0))
+                        _activity_pending[0] = False
 
-                    elif intent == "build":
-                        if about and len(about.split()) >= 2:
-                            _heartbeat_running[0] = False
-                            impulse = f"I want to {about}" if not about.lower().startswith("i ") else about
-                            print(f"\nPinPoint: {impulse}")
-                            print()
-                            _activity_pending[0] = False
-                            return impulse
-                        # vague build impulse — just think about it instead
-                        thought = _idle_thought()
-                        if thought:
-                            interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                            _sleep_until_cj(_act_rng.uniform(3.0, 6.0))
-
-                    else:  # unknown — default to a thought
-                        thought = _idle_thought()
-                        if thought:
-                            interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                            _sleep_until_cj(_act_rng.uniform(3.0, 6.0))
-
-                    # Occasionally let her mood shift based on recent activity
-                    try:
-                        if _act_rng.random() < 0.15:
-                            _update_mood(messages)
-                    except Exception:
-                        pass
-                finally:
-                    # Always reset the gate — never let one bad activity freeze her.
-                    _activity_pending[0] = False
+                threading.Thread(target=_autonomous_activity, daemon=True).start()
             continue
 
         # CJ said something
