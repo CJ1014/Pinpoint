@@ -1393,6 +1393,47 @@ def main() -> None:
     input_thread = threading.Thread(target=_input_listener, args=(interrupt_queue,), daemon=True)
     input_thread.start()
 
+    # Stage 3: human-on-the-loop approval for dangerous actions. Routes through the
+    # existing input queue so it never fights the listener thread for stdin.
+    # Timeout or any non-affirmative answer = denied (safe default for unattended runs).
+    def _approval_hook(desc: str, risk: str, preview: str, two_step: bool) -> bool:
+        def _ask(prompt_label: str, window: float = 60.0) -> bool:
+            print("\n" + "=" * 60)
+            print(f"  APPROVAL NEEDED ({risk.upper()}): PinPoint wants to {desc}")
+            if preview:
+                print("  --- preview ---")
+                for ln in preview.splitlines()[:30]:
+                    print("  | " + ln)
+                print("  --- end preview ---")
+            print(f"  {prompt_label}  Type 'y' to approve, anything else to deny.")
+            print("=" * 60, flush=True)
+            deadline = time.time() + window
+            while time.time() < deadline:
+                try:
+                    ans = interrupt_queue.get(timeout=deadline - time.time())
+                except queue.Empty:
+                    break
+                if not isinstance(ans, str):
+                    continue
+                a = ans.strip().lower()
+                if a.startswith("[") or not a:
+                    continue  # ignore idle thoughts / ambient blanks
+                return a in ("y", "yes", "approve", "ok", "do it")
+            print("  [approval timed out — denied]", flush=True)
+            return False
+
+        if not _ask("Approve this action?"):
+            return False
+        if two_step:
+            return _ask("SECOND confirmation required (self-edit). Execute?")
+        return True
+
+    try:
+        import tools as _tools_guard
+        _tools_guard.set_approval_hook(_approval_hook)
+    except Exception:
+        pass
+
     # Start microphone voice listener
     from tools import start_voice_listener
     voice_ok = start_voice_listener(interrupt_queue)

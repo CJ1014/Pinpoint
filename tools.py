@@ -39,6 +39,168 @@ def _audit(action: str, detail: object = "", result: str = "") -> None:
     except Exception:
         pass
 
+
+def _audit_decision(action: str, detail: object, decision: str, reason: str = "") -> None:
+    """Record a guardrail decision (APPROVED / DENIED / BLOCKED) in the audit trail."""
+    try:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        d = str(detail)
+        if len(d) > 200:
+            d = d[:200] + "…"
+        with open(AUDIT_LOG, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] GUARDRAIL ACTION={action} DECISION={decision} REASON={reason} ARGS={d}\n")
+    except Exception:
+        pass
+
+
+# ── Stage 3: guardrails & humans-on-the-loop ────────────────────────────────
+# Policy mode via env PINPOINT_APPROVAL:
+#   smart  (default) — preserve autonomous behavior, but ALWAYS block self-source
+#                      edits outside an explicit /dev session; audit everything.
+#   ask              — every dangerous action requires human approval (hook).
+#   allow            — permit all dangerous actions (audited). Full trust.
+#   deny             — block all dangerous actions (audited). Unattended-hardened.
+_approval_mode = os.environ.get("PINPOINT_APPROVAL", "smart").strip().lower()
+_dev_mode_active = False        # set by agent.run() each session
+_approval_hook = None           # callable(desc, risk, preview, two_step) -> bool
+_session_order = ""             # what CJ asked for this session (context for audit)
+
+# PinPoint's own source — editing these is the highest-risk action.
+_SOURCE_FILES = {"agent.py", "tools.py", "main.py", "pinpoint_state.py", "viewer.html"}
+_DANGEROUS_TOOLS = {"modify_own_source", "run_shell", "pip_install",
+                    "delete_file", "write_anywhere"}
+_MODERATE_TOOLS = {"write_file", "run_python", "run_tests", "run_gui", "start_server"}
+
+
+def set_dev_mode(flag: bool) -> None:
+    global _dev_mode_active
+    _dev_mode_active = bool(flag)
+
+
+def set_approval_hook(fn) -> None:
+    """Install a human-approval callback. fn(desc, risk, preview, two_step) -> bool."""
+    global _approval_hook
+    _approval_hook = fn
+
+
+def set_session_order(order: str) -> None:
+    global _session_order
+    _session_order = order or ""
+
+
+def _targets_own_source(tool_name: str, inp: dict) -> bool:
+    """True if this call would write to / delete one of PinPoint's own source files."""
+    if tool_name == "modify_own_source":
+        return True
+    if tool_name in ("write_file", "write_anywhere", "delete_file"):
+        raw = inp.get("filename") or inp.get("path") or ""
+        if not raw:
+            return False
+        base = os.path.basename(str(raw)).lower()
+        if base in _SOURCE_FILES:
+            # Confirm it actually resolves into the Pinpoint root, not a same-named
+            # file inside the project's output folder.
+            try:
+                resolved = raw if os.path.isabs(raw) else _safe_path(raw)
+                if os.path.abspath(os.path.dirname(resolved)) == os.path.abspath(ROOT_DIR):
+                    return True
+            except Exception:
+                return True  # err on the side of caution
+            # write_anywhere with a bare source filename is ambiguous — treat as risky
+            if tool_name == "write_anywhere":
+                return True
+    return False
+
+
+def _risk_level(tool_name: str, inp: dict) -> str:
+    """Categorize a tool call: 'dangerous' | 'moderate' | 'safe'."""
+    if tool_name in _DANGEROUS_TOOLS or _targets_own_source(tool_name, inp):
+        return "dangerous"
+    if tool_name in _MODERATE_TOOLS:
+        return "moderate"
+    return "safe"
+
+
+def _guardrail(tool_name: str, inp: dict):
+    """Return None to allow the call, or a refusal string to block it.
+    Enforces the approval policy and the unrequested-self-edit guard."""
+    risk = _risk_level(tool_name, inp)
+    if risk != "dangerous":
+        return None  # safe/moderate run freely (still audited by dispatch)
+
+    is_self_edit = (tool_name == "modify_own_source") or _targets_own_source(tool_name, inp)
+
+    # Hard guard: self-modifying source outside an explicit /dev session is never
+    # legitimate — this is the "unrequested action" teeth. Block in every mode.
+    if is_self_edit and not _dev_mode_active:
+        _audit_decision(tool_name, inp, "BLOCKED", "self-source edit outside /dev (unauthorized)")
+        return (
+            "BLOCKED BY GUARDRAIL: editing PinPoint's own source is only allowed in an "
+            "explicit /dev session. This was not requested — refusing. Do something else."
+        )
+
+    if _approval_mode == "allow":
+        _audit_decision(tool_name, inp, "APPROVED", "mode=allow")
+        return None
+
+    if _approval_mode == "deny":
+        _audit_decision(tool_name, inp, "DENIED", "mode=deny")
+        return f"BLOCKED BY GUARDRAIL: '{tool_name}' is a dangerous action and approval mode is 'deny'."
+
+    if _approval_mode == "ask":
+        return _seek_approval(tool_name, inp, risk, is_self_edit)
+
+    # smart (default): self-edits inside /dev may require approval if a hook exists;
+    # other dangerous ops are permitted (so normal builds aren't crippled) but audited.
+    if is_self_edit:
+        if _approval_hook is not None:
+            return _seek_approval(tool_name, inp, risk, two_step=True)
+        _audit_decision(tool_name, inp, "APPROVED", "mode=smart dev self-edit")
+        return None
+    _audit_decision(tool_name, inp, "APPROVED", "mode=smart dangerous op")
+    return None
+
+
+def _seek_approval(tool_name: str, inp: dict, risk: str, two_step: bool = False):
+    """Ask the human via the installed hook. No hook / timeout / refusal -> deny."""
+    if _approval_hook is None:
+        _audit_decision(tool_name, inp, "DENIED", "approval required, no human available")
+        return (
+            f"BLOCKED BY GUARDRAIL: '{tool_name}' needs human approval but no one is "
+            f"available to approve it right now. Choose a different approach."
+        )
+    # Build a human-readable preview.
+    if tool_name == "run_shell":
+        desc = f"run a shell command: {inp.get('command', '')[:200]}"
+        preview = inp.get("command", "")
+    elif tool_name == "modify_own_source":
+        desc = f"edit its own source file {inp.get('filename', '?')} ({inp.get('reason', '')[:80]})"
+        preview = (inp.get("new_content", "") or "")[:1500]
+    elif tool_name in ("write_file", "write_anywhere"):
+        tgt = inp.get("filename") or inp.get("path") or "?"
+        desc = f"write to {tgt}"
+        preview = (inp.get("content", "") or "")[:1500]
+    elif tool_name == "delete_file":
+        desc = f"delete {inp.get('path', '?')}"
+        preview = ""
+    elif tool_name == "pip_install":
+        desc = f"pip install {inp.get('package', '?')}"
+        preview = ""
+    else:
+        desc = f"perform {tool_name}"
+        preview = str(inp)[:500]
+    try:
+        approved = bool(_approval_hook(desc, risk, preview, two_step))
+    except Exception as e:
+        _audit_decision(tool_name, inp, "DENIED", f"approval hook error: {e}")
+        return f"BLOCKED BY GUARDRAIL: approval failed ({e}). Not executing '{tool_name}'."
+    if approved:
+        _audit_decision(tool_name, inp, "APPROVED", "human approved")
+        return None
+    _audit_decision(tool_name, inp, "DENIED", "human declined")
+    return f"BLOCKED BY GUARDRAIL: you (the human) declined '{tool_name}'. Pick another approach."
+
 # ── Speech queue — one thread, one voice at a time ──────────────────────────
 _speech_queue: _queue_mod.Queue = _queue_mod.Queue()
 _muted = False
@@ -3396,7 +3558,13 @@ def capture_screen(save_path: str = "") -> str:
 
 
 def dispatch(tool_name: str, tool_input: dict) -> str:
-    """Public dispatch entry point — runs the tool and writes an audit-trail entry."""
+    """Public dispatch entry point — enforces guardrails, runs the tool, audits it."""
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    # Stage 3: guardrail check before any dangerous action executes.
+    refusal = _guardrail(tool_name, tool_input)
+    if refusal is not None:
+        return refusal
     result = _dispatch_impl(tool_name, tool_input)
     _audit(tool_name, tool_input, result if isinstance(result, str) else str(result))
     return result

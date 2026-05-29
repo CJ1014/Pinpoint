@@ -1147,6 +1147,15 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         # In normal mode, remove modify_own_source to prevent accidental self-corruption
         active_tools = [t for t in TOOLS if t.get("function", {}).get("name") != "modify_own_source"]
 
+    # Stage 3 guardrails: tell tools.py whether self-source edits are authorized this
+    # session (only in /dev) and what CJ actually asked for (audit context).
+    try:
+        import tools as _tools_mod
+        _tools_mod.set_dev_mode(dev_mode)
+        _tools_mod.set_session_order(order)
+    except Exception:
+        pass
+
     if logger is None:
         logger = logging.getLogger("agent")
 
