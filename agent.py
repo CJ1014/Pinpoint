@@ -36,7 +36,8 @@ def _load_knowledge() -> str:
 #                            fast); more RAM offload. Set OLLAMA_MODEL to use it.
 #   qwen2.5-coder:14b ~9GB   previous default — fastest, but blurts/fabricates more.
 if LLM_PROVIDER == "claude":
-    MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+    # Default to a current, fast, very-human Sonnet. Override with ANTHROPIC_MODEL.
+    MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
 else:
     MODEL = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b")
 
