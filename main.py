@@ -689,7 +689,17 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             if "<think>" in line:
                 line = line.split("</think>")[-1].strip()
             line = line.strip('"').strip("'").strip()
-            interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {line if line else _rng.choice(fallbacks)}")
+            # Reject robotic AI-assistant filler — fall back to a real greeting.
+            _robotic = (
+                "processing", "analyzing language", "making connections",
+                "forming responses", "as an ai", "i am an ai", "language model",
+                "how can i assist", "how can i help", "ready to assist",
+                "what's next?", "let me know how",
+            )
+            _ll = line.lower()
+            if not line or any(_r in _ll for _r in _robotic):
+                line = _rng.choice(["hey CJ", "hey, what's up?", "yo", "hey — what are we doing today?"])
+            interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {line}")
         except Exception as _e:
             print(f"\n[opening API error: {_e}]", flush=True)
             interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {_rng.choice(fallbacks)}")
