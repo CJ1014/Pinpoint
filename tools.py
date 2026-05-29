@@ -18,6 +18,27 @@ MEMORY_FILE = os.path.join(os.path.dirname(__file__), "memory.json")
 MEMORY_CATEGORIES = ("skills", "lessons", "mistakes", "ideas", "projects", "preferences", "dislikes", "experiments", "reflections")
 MAX_PER_CATEGORY = 20
 
+# ── Audit trail + self-verification state (Mythos-inspired agentic upgrade) ──
+AUDIT_LOG = os.path.join(OUTPUT_DIR, "pinpoint_audit.log")
+MAX_VERIFY_RETRIES = 3          # cap so verification can't "grind" forever
+_verify_fail_count = 0          # consecutive done() blocks this session
+
+
+def _audit(action: str, detail: object = "", result: str = "") -> None:
+    """Append-only audit trail of every tool call. Best-effort; never raises."""
+    try:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        detail_str = str(detail)
+        if len(detail_str) > 300:
+            detail_str = detail_str[:300] + "…"
+        rlen = len(result) if isinstance(result, str) else 0
+        rhead = (result[:120].replace("\n", " ") + "…") if isinstance(result, str) and rlen > 120 else (result or "")
+        with open(AUDIT_LOG, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] ACTION={action} ARGS={detail_str} RESULT_LEN={rlen} RESULT={rhead}\n")
+    except Exception:
+        pass
+
 # ── Speech queue — one thread, one voice at a time ──────────────────────────
 _speech_queue: _queue_mod.Queue = _queue_mod.Queue()
 _muted = False
@@ -794,9 +815,151 @@ GENRE_CATEGORIES = [
     "3d", "story", "animation", "utility", "interactive", "other",
 ]
 
+# ── Stage 1: self-verification loop ─────────────────────────
+# Blocking patterns: scripts that never exit on their own (games, GUIs, servers,
+# scripts waiting on input). We syntax-check these instead of full-running them.
+_BLOCKING_SIGNALS = (
+    "pygame", "tkinter", "mainloop(", "while true", "app.run(", "serve_forever",
+    "input(", "http.server", "flask", "uvicorn", "asyncio.run", "turtle",
+    "cv2.imshow", "plt.show(", "root.mainloop", "pyglet", "arcade.run",
+)
+
+
+def _verify_run_file(path: str) -> tuple:
+    """Smart-execute a single file for verification. Returns (ran, ok, report).
+    Long-running apps (games/servers/GUIs) get a syntax check instead of a full run."""
+    ext = os.path.splitext(path)[1].lower()
+    name = os.path.basename(path)
+
+    if ext == ".py":
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                src = f.read()
+        except Exception as e:
+            return True, False, f"{name}: could not read file ({e})"
+
+        # Always syntax-check first — fast and catches the most common failure.
+        import py_compile
+        try:
+            py_compile.compile(path, doraise=True)
+        except py_compile.PyCompileError as e:
+            return True, False, f"{name}: SYNTAX ERROR\n{str(e)[:400]}"
+
+        # If it looks long-running, don't block on a full run — syntax is our signal.
+        if any(sig in src.lower() for sig in _BLOCKING_SIGNALS):
+            return True, True, f"{name}: syntax OK (long-running app — not fully executed)"
+
+        # Otherwise run it with a short verification timeout.
+        try:
+            result = subprocess.run(
+                [sys.executable, path], capture_output=True, text=True,
+                timeout=20, cwd=os.path.dirname(path) or OUTPUT_DIR,
+            )
+            err = (result.stderr or "").strip()
+            if result.returncode != 0 and err:
+                first = next((l for l in err.splitlines() if l.strip()), err[:200])
+                return True, False, f"{name}: exited {result.returncode}\n{first[:300]}"
+            return True, True, f"{name}: ran clean (exit 0)"
+        except subprocess.TimeoutExpired:
+            return True, True, f"{name}: still running after 20s (likely long-running — syntax OK)"
+        except Exception as e:
+            return True, False, f"{name}: failed to run ({e})"
+
+    if ext in (".html", ".htm"):
+        report = []
+        ok = True
+        try:
+            html_res = validate_html(name)
+            report.append(html_res)
+            if "error" in html_res.lower() or "unclosed" in html_res.lower() or "missing <!doctype" in html_res.lower():
+                ok = False
+        except Exception as e:
+            report.append(f"html validate failed: {e}")
+        try:
+            js_res = check_js(name)
+            report.append(js_res)
+            if "syntax error" in js_res.lower() or "unbalanced" in js_res.lower():
+                ok = False
+        except Exception:
+            pass
+        return True, ok, f"{name}:\n" + "\n".join(report)
+
+    # Not auto-runnable (css, json, txt, md, advice, etc.)
+    return False, True, ""
+
+
+def _verify_project(summary: str, files: str) -> tuple:
+    """Stage 1 self-verification. Runs/validates the project's main artifacts,
+    then asks the model to critique the result. Returns (passed: bool, critique: str)."""
+    proj = get_project_dir()
+
+    # Collect candidate files: explicit `files` arg first, then scan project dir.
+    candidates = []
+    for f in (files or "").replace(",", " ").split():
+        f = f.strip()
+        if f:
+            candidates.append(_safe_path(f))
+    if not candidates and os.path.isdir(proj):
+        for root, _dirs, fnames in os.walk(proj):
+            for fn in fnames:
+                if fn.lower().endswith((".py", ".html", ".htm")):
+                    candidates.append(os.path.join(root, fn))
+    # De-dupe, keep only existing
+    seen, files_to_check = set(), []
+    for c in candidates:
+        cp = os.path.abspath(c)
+        if cp not in seen and os.path.exists(cp):
+            seen.add(cp)
+            files_to_check.append(cp)
+
+    # Execute / validate
+    exec_reports, any_ran, any_failed = [], False, False
+    for path in files_to_check[:6]:  # cap to avoid huge sweeps
+        ran, ok, report = _verify_run_file(path)
+        if ran:
+            any_ran = True
+            if not ok:
+                any_failed = True
+            if report:
+                exec_reports.append(report)
+
+    # Hard fail: something runnable clearly broke → block immediately, no LLM needed.
+    if any_failed:
+        return False, "EXECUTION FAILED:\n" + "\n\n".join(exec_reports)
+
+    exec_block = "\n\n".join(exec_reports) if exec_reports else "(nothing auto-runnable; judging completeness only)"
+
+    # Ask the model: is this correct and complete?
+    try:
+        from agent import get_llm_client, chat_completion
+        client = get_llm_client(timeout=45.0)
+        prompt = (
+            "You are reviewing your own finished work before declaring it done.\n\n"
+            f"TASK / SUMMARY:\n{summary}\n\n"
+            f"VERIFICATION RESULTS (what happened when I ran/validated it):\n{exec_block}\n\n"
+            "Be honest and strict. Is this correct and complete? What could be wrong or missing? "
+            "If it genuinely works and satisfies the task, end with exactly 'VERDICT: PASS'. "
+            "If it is broken, incomplete, or unconvincing, end with exactly 'VERDICT: FAIL' "
+            "and give one concrete next fix."
+        )
+        resp = chat_completion(
+            client,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300, temperature=0.3,
+        )
+        critique = (resp.choices[0].message.content or "").strip()
+    except Exception as e:
+        # Fail open — never block completion just because the critique call broke.
+        return True, f"(verification critique unavailable: {e})"
+
+    passed = "VERDICT: FAIL" not in critique.upper()
+    return passed, critique
+
+
 def done(summary: str, satisfaction: int = 3, files: str = "",
          creativity: int = 3, genre: str = "", libraries_used: str = "") -> str:
     """Mark session complete."""
+    global _verify_fail_count
     satisfaction = max(1, min(5, int(satisfaction)))
     creativity = max(1, min(5, int(creativity)))
 
@@ -815,6 +978,27 @@ def done(summary: str, satisfaction: int = 3, files: str = "",
             f"(If the user explicitly asked for something intentionally simple, start your "
             f"summary with 'User requested' to bypass this check.)"
         )
+
+    # Stage 1: self-verification gate — auto-run/validate, then critique.
+    # Caps at MAX_VERIFY_RETRIES so a stubborn failure can't loop forever.
+    if _verify_fail_count < MAX_VERIFY_RETRIES:
+        passed, critique = _verify_project(summary, files)
+        if not passed:
+            _verify_fail_count += 1
+            remaining = MAX_VERIFY_RETRIES - _verify_fail_count
+            return (
+                f"BLOCKED BY SELF-VERIFICATION (attempt {_verify_fail_count}/{MAX_VERIFY_RETRIES}): "
+                f"I ran/checked the work and it isn't convincing yet.\n\n{critique}\n\n"
+                f"Fix the issue above, then call done() again. "
+                f"({remaining} verification attempt(s) left before it's accepted with warnings.)"
+            )
+        # Passed — reset the counter for the next session/task.
+        _verify_fail_count = 0
+    else:
+        # Hit the retry cap — accept but record that verification never cleared.
+        save_memory("mistakes", f"Marked done after {MAX_VERIFY_RETRIES} failed verifications: {summary[:120]}", 4)
+        _verify_fail_count = 0
+
     save_memory("projects", summary, satisfaction)
 
     data = _load_memory()
@@ -946,6 +1130,8 @@ def _now() -> str:
 
 
 def increment_session() -> int:
+    global _verify_fail_count
+    _verify_fail_count = 0  # fresh verification budget each session
     data = _load_memory()
     data["meta"]["session_count"] = data["meta"].get("session_count", 0) + 1
     _save_memory_file(data)
@@ -3210,6 +3396,13 @@ def capture_screen(save_path: str = "") -> str:
 
 
 def dispatch(tool_name: str, tool_input: dict) -> str:
+    """Public dispatch entry point — runs the tool and writes an audit-trail entry."""
+    result = _dispatch_impl(tool_name, tool_input)
+    _audit(tool_name, tool_input, result if isinstance(result, str) else str(result))
+    return result
+
+
+def _dispatch_impl(tool_name: str, tool_input: dict) -> str:
     if tool_name == "capture_screen":
         return capture_screen(tool_input.get("save_path", ""))
     if tool_name == "write_file":

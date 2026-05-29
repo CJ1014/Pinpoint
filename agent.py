@@ -1400,6 +1400,7 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
     iteration = 0
     final_summary = ""
     last_tool_calls = []  # Track previous calls to detect loops
+    recent_call_sigs = []  # Sliding window of recent tool-call signatures (grind detection)
     chat_only_turns = 0   # Consecutive turns with text but no tool calls
 
     # 3D viewer state — updated after every tool call
@@ -1683,6 +1684,26 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             print("[STOPPING] This session is stuck. Moving to next session.\n")
             logger.warning("Loop detected: identical tool calls repeated. Ending session.")
             break
+
+        # Grind detection: same call signature recurring across a sliding window,
+        # even when not strictly back-to-back (Mythos "grind" failure mode).
+        for tc in raw_tool_calls:
+            recent_call_sigs.append(str(_tc_key(tc)))
+        recent_call_sigs = recent_call_sigs[-8:]  # keep last 8 signatures
+        for sig in set(recent_call_sigs):
+            # Ignore benign reasoning calls that legitimately repeat.
+            if sig.startswith("('think'") or sig.startswith("('speak'"):
+                continue
+            if recent_call_sigs.count(sig) >= 3:
+                print("\n[GRIND DETECTED] Same action attempted 3+ times in a short window.")
+                print("[STOPPING] Breaking out to avoid an unproductive loop.\n")
+                logger.warning("Grind detected: %s repeated %d times in window.", sig, recent_call_sigs.count(sig))
+                messages.append({"role": "user", "content": (
+                    "[You've attempted the same action 3+ times without progress. "
+                    "Stop repeating it. Either try a genuinely different approach or call done().]"
+                )})
+                recent_call_sigs.clear()
+                break
 
         last_tool_calls = raw_tool_calls
         chat_only_turns = 0  # Reset: PinPoint is doing something
