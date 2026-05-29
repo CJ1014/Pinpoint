@@ -1499,12 +1499,14 @@ def main() -> None:
     _deploy_viewer()
     start_web_server(8888)
 
-    # Open the 3D viewer in the default browser
-    try:
-        import webbrowser
-        webbrowser.open("http://localhost:8888/viewer.html")
-    except Exception:
-        pass
+    # Live viewer no longer auto-opens — it's still served at the URL above if
+    # you want it. Set PINPOINT_OPEN_VIEWER=1 to restore auto-open on startup.
+    if os.environ.get("PINPOINT_OPEN_VIEWER", "") == "1":
+        try:
+            import webbrowser
+            webbrowser.open("http://localhost:8888/viewer.html")
+        except Exception:
+            pass
 
     print()
 
