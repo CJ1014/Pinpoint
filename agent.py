@@ -1406,6 +1406,18 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         {"role": "user", "content": opening},
     ]
 
+    # ── Stage 4: long-horizon checkpointing ──────────────────────────────────
+    import pinpoint_checkpoint as _ckpt
+    _task_id = _ckpt.new_task_id(session_num)
+    _completed_steps = []          # running log of tool steps for the checkpoint
+    _CHECKPOINT_EVERY = 8          # save every N tool calls
+    # Resume an unfinished build from a previous run when starting a free session.
+    if not order:
+        _prev = _ckpt.latest_incomplete()
+        if _prev:
+            print(f"\n[RESUMING] Picking up unfinished build: {_prev.get('goal','?')[:60]}")
+            messages.append({"role": "user", "content": _ckpt.resume_prompt(_prev)})
+
     iteration = 0
     final_summary = ""
     last_tool_calls = []  # Track previous calls to detect loops
@@ -1820,6 +1832,21 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 "content": result,
             })
 
+            # Stage 4: record this step and checkpoint periodically.
+            if name not in ("think", "speak"):
+                _completed_steps.append({
+                    "step": len(_completed_steps) + 1,
+                    "action": name,
+                    "result": result[:120],
+                })
+                if len(_completed_steps) % _CHECKPOINT_EVERY == 0:
+                    _ctx = "\n".join(
+                        (m.get("content") or "")[:200]
+                        for m in messages[-3:] if isinstance(m, dict)
+                    )
+                    _ckpt.save_checkpoint(_task_id, len(_completed_steps), _current_goal,
+                                          _completed_steps, _ctx)
+
             if name == "done":
                 final_summary = inp.get("summary", "")
                 finished = True
@@ -1860,6 +1887,14 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
 
     else:
         print(f"\n[Max iterations ({MAX_ITERATIONS}) reached — stopping.]\n")
+
+    # Stage 4: close out the checkpoint. Finished → complete; otherwise leave it
+    # in_progress so the next free session can resume it.
+    if finished:
+        _ckpt.mark_complete(_task_id, final_summary)
+    elif _completed_steps:
+        _ctx = "\n".join((m.get("content") or "")[:200] for m in messages[-3:] if isinstance(m, dict))
+        _ckpt.save_checkpoint(_task_id, len(_completed_steps), _current_goal, _completed_steps, _ctx)
 
     # Post-session reflection — extract structured lessons from what actually happened
     if final_summary:
