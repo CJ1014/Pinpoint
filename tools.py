@@ -2416,7 +2416,7 @@ def deep_think(problem: str, passes: int = 4) -> str:
     try:
         from agent import MODEL as _default_model  # keep in sync with the main model
     except Exception:
-        _default_model = "gpt-oss:20b"
+        _default_model = "gemma2:9b"
     model = os.environ.get("OLLAMA_MODEL", _default_model)
     client = OpenAI(base_url=base_url, api_key="ollama", timeout=120.0)
 
