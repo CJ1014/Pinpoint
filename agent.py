@@ -115,15 +115,19 @@ def _free_thought() -> str:
     except Exception:
         return ""
 
-def chat_completion(client, messages: list, temperature: float = 1.0, max_tokens: int = 200, stream: bool = False, stop=None, system: str = ""):
+def chat_completion(client, messages: list, temperature: float = 1.0, max_tokens: int = 200,
+                    stream: bool = False, stop=None, system: str = "", model: str = None, **_ignored):
     """Unified chat completion function for both Ollama (OpenAI API) and Claude API.
 
     Automatically extracts system message from messages list if present.
+    Accepts (and uses) an optional `model`; any other stray kwargs are ignored so
+    legacy call sites that still pass create()-style arguments keep working.
 
     Returns:
         - If stream=False: response object with .choices[0].message.content
         - If stream=True: iterator yielding chunks with .choices[0].delta.content
     """
+    _model = model or MODEL
     # Extract system message from messages if not already provided
     extracted_system = system
     filtered_messages = messages
@@ -138,7 +142,7 @@ def chat_completion(client, messages: list, temperature: float = 1.0, max_tokens
         if stream:
             # Claude streaming returns events, we need to adapt them to OpenAI format
             response = client.messages.stream(
-                model=MODEL,
+                model=_model,
                 messages=filtered_messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -159,7 +163,7 @@ def chat_completion(client, messages: list, temperature: float = 1.0, max_tokens
             return _claude_stream_adapter()
         else:
             response = client.messages.create(
-                model=MODEL,
+                model=_model,
                 messages=filtered_messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -182,7 +186,7 @@ def chat_completion(client, messages: list, temperature: float = 1.0, max_tokens
         # Standard OpenAI API (Ollama)
         if stream:
             return client.chat.completions.create(
-                model=MODEL,
+                model=_model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -191,7 +195,7 @@ def chat_completion(client, messages: list, temperature: float = 1.0, max_tokens
             )
         else:
             return client.chat.completions.create(
-                model=MODEL,
+                model=_model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
