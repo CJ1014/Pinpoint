@@ -442,6 +442,18 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         "Your real material is: this conversation, code, ideas, things CJ said, genuine curiosity. "
     )
 
+    # Rejects robotic AI-assistant filler so her unprompted talk sounds human.
+    def _is_robotic(text: str) -> bool:
+        t = (text or "").lower()
+        _robotic = (
+            "processing", "analyzing language", "making connections between ideas",
+            "forming responses", "as an ai", "i am an ai", "language model",
+            "how can i assist", "how can i help", "ready to assist",
+            "what's next?", "let me know how i can", "i'm here to help",
+            "analyzing", "computing", "executing", "initializing", "standing by",
+        )
+        return any(_r in t for _r in _robotic)
+
     def _idle_thought() -> str:
         """Generate an inner-monologue fragment grounded in the actual conversation."""
         import random as _rng
@@ -528,10 +540,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             if "<think>" in result:
                 result = result.split("</think>")[-1].strip()
             result = result.strip('"').strip("'").strip()
-            # Reject empty, single-word, or placeholder responses
-            if result and len(result.split()) >= 2 and len(result) < 200:
+            # Reject empty, single-word, placeholder, or robotic AI-assistant filler
+            if result and len(result.split()) >= 2 and len(result) < 200 and not _is_robotic(result):
                 return result
-            print(f"\n[idle thought returned unusable output: {result[:80]!r}]", flush=True)
             return _rng.choice(fallbacks)
         except Exception as _e:
             print(f"\n[idle thought API error: {_e}]", flush=True)
@@ -1202,12 +1213,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                     _t_pause.sleep(0.1)
                 return False
 
-            # Quiet by default: no unprompted idle thoughts/research/rambling.
-            # She greets once, then waits for CJ. The constant self-talk was
-            # producing robotic filler ("Processing...", "Analyzing language
-            # patterns") and made-up nonsense. Set PINPOINT_AUTONOMOUS=1 to
-            # bring back the always-on inner-monologue behavior.
-            if os.environ.get("PINPOINT_AUTONOMOUS", "") != "1":
+            # She talks on her own (human, not robotic). Set PINPOINT_AUTONOMOUS=0
+            # to silence unprompted talk if it ever gets annoying.
+            if os.environ.get("PINPOINT_AUTONOMOUS", "1") == "0":
                 _t_pause.sleep(0.2)
                 continue
 
