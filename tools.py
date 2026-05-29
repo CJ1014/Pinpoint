@@ -70,7 +70,8 @@ _session_order = ""             # what CJ asked for this session (context for au
 _SOURCE_FILES = {"agent.py", "tools.py", "main.py", "pinpoint_state.py", "viewer.html"}
 _DANGEROUS_TOOLS = {"modify_own_source", "run_shell", "pip_install",
                     "delete_file", "write_anywhere"}
-_MODERATE_TOOLS = {"write_file", "run_python", "run_tests", "run_gui", "start_server"}
+_MODERATE_TOOLS = {"write_file", "run_python", "run_tests", "run_gui", "start_server",
+                   "type_text", "press_key"}
 
 
 def set_dev_mode(flag: bool) -> None:
@@ -970,6 +971,98 @@ def open_html(filename: str) -> str:
         f"A screenshot will be saved to output/screenshot.png in ~3 seconds. "
         f"Call take_screenshot later to see what your creation actually looks like."
     )
+
+
+def open_app(name: str) -> str:
+    """Open an application or file on CJ's computer by name.
+
+    On Windows uses the Start-menu / shell search so natural names like
+    'Chrome', 'Spotify', 'Notepad', 'Instagram' (opens in browser) all work.
+    """
+    import webbrowser, subprocess as _sp, sys as _sys
+
+    # Map common social/web names directly to URLs
+    _url_shortcuts = {
+        "instagram": "https://www.instagram.com",
+        "twitter": "https://www.twitter.com",
+        "x": "https://www.x.com",
+        "youtube": "https://www.youtube.com",
+        "gmail": "https://mail.google.com",
+        "google": "https://www.google.com",
+        "reddit": "https://www.reddit.com",
+        "discord": "https://discord.com/app",
+        "spotify web": "https://open.spotify.com",
+        "netflix": "https://www.netflix.com",
+        "github": "https://github.com",
+    }
+    key = name.strip().lower()
+    if key in _url_shortcuts:
+        webbrowser.open(_url_shortcuts[key])
+        return f"Opened {name} in your browser."
+
+    # Windows: use 'start' shell command — resolves app names from PATH / Start menu
+    if _sys.platform == "win32":
+        try:
+            _sp.Popen(
+                ["cmd", "/c", "start", "", name],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                creationflags=_sp.CREATE_NO_WINDOW,
+            )
+            return f"Launched '{name}'."
+        except Exception as e:
+            pass
+        # Fallback: os.startfile
+        try:
+            import os as _os
+            _os.startfile(name)
+            return f"Opened '{name}'."
+        except Exception as e:
+            return f"Couldn't open '{name}': {e}"
+    else:
+        # macOS / Linux
+        cmd = ["open", name] if _sys.platform == "darwin" else ["xdg-open", name]
+        try:
+            _sp.Popen(cmd, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+            return f"Launched '{name}'."
+        except Exception as e:
+            return f"Couldn't open '{name}': {e}"
+
+
+def open_url(url: str) -> str:
+    """Open a URL in the default browser."""
+    import webbrowser
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    webbrowser.open(url)
+    return f"Opened {url} in your browser."
+
+
+def type_text(text: str) -> str:
+    """Type text at the current cursor position using the keyboard."""
+    try:
+        import pyautogui
+        pyautogui.typewrite(text, interval=0.03)
+        return f"Typed: {text[:60]}"
+    except ImportError:
+        return "pyautogui not installed. Run: pip install pyautogui"
+    except Exception as e:
+        return f"Error typing text: {e}"
+
+
+def press_key(key: str) -> str:
+    """Press a keyboard key or key combo (e.g. 'enter', 'ctrl+c', 'win', 'alt+tab')."""
+    try:
+        import pyautogui
+        keys = [k.strip() for k in key.lower().split("+")]
+        if len(keys) == 1:
+            pyautogui.press(keys[0])
+        else:
+            pyautogui.hotkey(*keys)
+        return f"Pressed: {key}"
+    except ImportError:
+        return "pyautogui not installed. Run: pip install pyautogui"
+    except Exception as e:
+        return f"Error pressing key: {e}"
 
 
 GENRE_CATEGORIES = [
@@ -3816,5 +3909,13 @@ def _dispatch_impl(tool_name: str, tool_input: dict) -> str:
         return abandon_goal(tool_input["goal_id"], tool_input.get("reason", ""))
     elif tool_name == "update_knowledge":
         return _update_knowledge(tool_input["note"])
+    elif tool_name == "open_app":
+        return open_app(tool_input["name"])
+    elif tool_name == "open_url":
+        return open_url(tool_input["url"])
+    elif tool_name == "type_text":
+        return type_text(tool_input["text"])
+    elif tool_name == "press_key":
+        return press_key(tool_input["key"])
     else:
         return f"Unknown tool: {tool_name}"
