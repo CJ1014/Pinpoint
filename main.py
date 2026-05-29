@@ -1202,6 +1202,15 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                     _t_pause.sleep(0.1)
                 return False
 
+            # Quiet by default: no unprompted idle thoughts/research/rambling.
+            # She greets once, then waits for CJ. The constant self-talk was
+            # producing robotic filler ("Processing...", "Analyzing language
+            # patterns") and made-up nonsense. Set PINPOINT_AUTONOMOUS=1 to
+            # bring back the always-on inner-monologue behavior.
+            if os.environ.get("PINPOINT_AUTONOMOUS", "") != "1":
+                _t_pause.sleep(0.2)
+                continue
+
             # Short grace period after opening so she doesn't talk over herself
             if _opening_done[0] and (time.time() - _last_interaction[0]) < 1.5:
                 _t_pause.sleep(0.2)
