@@ -30,16 +30,15 @@ def _load_knowledge() -> str:
 # Model configuration — set OLLAMA_MODEL or ANTHROPIC_MODEL env vars
 #
 # Local model picks (Ollama), tuned for an 8GB-VRAM + 32GB-RAM laptop:
-#   gpt-oss:20b       ~14GB  reasoning model — thinks before it answers, far less
-#                            fabrication than a 14B coder model. DEFAULT.
-#   qwen3:30b-a3b     ~18GB  smarter ceiling (MoE: 30B total, ~3B active so still
-#                            fast); more RAM offload. Set OLLAMA_MODEL to use it.
-#   qwen2.5-coder:14b ~9GB   previous default — fastest, but blurts/fabricates more.
+#   gemma2:9b         ~6GB   best at sounding HUMAN/conversational. DEFAULT.
+#   llama3.1:8b       ~5GB   fastest; natural chat, snappier than gemma. Good too.
+#   gpt-oss:20b       ~14GB  reasoning model — smarter but slower, can sound stiff.
+#   qwen2.5-coder:14b ~9GB   a CODING model — sounds robotic; avoid for chatting.
 if LLM_PROVIDER == "claude":
     # Default to a current, fast, very-human Sonnet. Override with ANTHROPIC_MODEL.
     MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
 else:
-    MODEL = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b")
+    MODEL = os.environ.get("OLLAMA_MODEL", "gemma2:9b")
 
 def get_llm_client(timeout: float = 120.0):
     """Factory function to get the appropriate LLM client (Ollama or Claude API)."""
