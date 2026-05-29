@@ -433,7 +433,12 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
     _GROUNDING = (
         "Stay grounded in what you actually are: software running on CJ's computer. "
         "You have NO email inbox, no phone, no messages, no body, no errands, no chores, "
-        "no job, no physical life. Never invent real-world tasks or scenarios like that. "
+        "no job, no physical life. You also CANNOT perceive CJ, his screen, his monitor "
+        "resolution, his hardware, his room, or anything physical around him — you only "
+        "know what's actually in this conversation. "
+        "Do NOT invent observations, measurements, numeric 'coincidences', fun-fact trivia, "
+        "or comparisons and state them as if they were true. If you don't actually know "
+        "something, don't assert it — made-up facts are worse than saying nothing. "
         "Your real material is: this conversation, code, ideas, things CJ said, genuine curiosity. "
     )
 
@@ -974,6 +979,23 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         # PinPoint's inner monologue / opening line — display, speak, add to context
         # Don't reset _last_interaction for her own thoughts — only CJ's input counts
         if msg and msg.startswith("[PINPOINT IDLE THOUGHT]"):
+            # If CJ already typed something that's waiting behind this thought,
+            # drop the thought and let his message take priority — never talk over him.
+            _peek, _cj_waiting = [], False
+            while True:
+                try:
+                    _q = interrupt_queue.get_nowait()
+                except queue.Empty:
+                    break
+                _peek.append(_q)
+                if isinstance(_q, str) and _q.strip() and not _q.startswith("[PINPOINT IDLE THOUGHT]"):
+                    _cj_waiting = True
+            for _q in _peek:
+                interrupt_queue.put(_q)
+            if _cj_waiting:
+                _thought_pending[0] = False
+                continue  # skip the stale thought; CJ's message gets handled next loop
+
             thought = msg[len("[PINPOINT IDLE THOUGHT]"):].strip()
             _thought_pending[0] = False  # ready for next thought
             print(f"\nPinPoint: {thought}")
@@ -994,6 +1016,19 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         if msg:
             _last_interaction[0] = time.time()
             _cj_has_spoken[0] = True
+            # CJ just spoke — drop any idle thoughts still sitting in the queue so
+            # she answers him instead of dumping a now-stale, pre-generated thought.
+            _kept = []
+            while True:
+                try:
+                    _q = interrupt_queue.get_nowait()
+                except queue.Empty:
+                    break
+                if isinstance(_q, str) and _q.strip().startswith("[PINPOINT IDLE THOUGHT]"):
+                    continue  # discard stale thought
+                _kept.append(_q)
+            for _q in _kept:
+                interrupt_queue.put(_q)
 
         # Blank line → end chat, pass last message as session context
         if msg is not None and not msg:

@@ -2320,7 +2320,11 @@ def deep_think(problem: str, passes: int = 4) -> str:
         return "deep_think requires the openai package."
 
     base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-    model = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b-cloud")
+    try:
+        from agent import MODEL as _default_model  # keep in sync with the main model
+    except Exception:
+        _default_model = "gpt-oss:20b"
+    model = os.environ.get("OLLAMA_MODEL", _default_model)
     client = OpenAI(base_url=base_url, api_key="ollama", timeout=120.0)
 
     passes = max(2, min(int(passes), 6))
