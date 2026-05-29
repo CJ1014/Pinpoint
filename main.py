@@ -1174,6 +1174,24 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             import random as _act_rng
             import time as _t_pause
 
+            # Interruptible sleep: wakes instantly if CJ types. Returns True if
+            # CJ is waiting (so the caller should stop the current activity).
+            def _sleep_until_cj(seconds: float) -> bool:
+                _deadline = time.time() + seconds
+                while time.time() < _deadline:
+                    try:
+                        _peek = interrupt_queue.get(timeout=0.15)
+                    except queue.Empty:
+                        continue
+                    # Real CJ input — put it back and bail out immediately.
+                    if isinstance(_peek, str) and _peek.strip() and not _peek.startswith("[PINPOINT IDLE THOUGHT]"):
+                        interrupt_queue.put(_peek)
+                        return True
+                    # An idle thought scheduled mid-sleep — re-queue and keep waiting.
+                    interrupt_queue.put(_peek)
+                    _t_pause.sleep(0.1)
+                return False
+
             # Short grace period after opening so she doesn't talk over herself
             if _opening_done[0] and (time.time() - _last_interaction[0]) < 1.5:
                 _t_pause.sleep(0.2)
@@ -1182,6 +1200,16 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             if not _activity_pending[0]:
                 _activity_pending[0] = True
                 try:
+                    # If CJ is already waiting in the queue, don't start slow
+                    # autonomous work — let the main loop handle his input now.
+                    try:
+                        _peek = interrupt_queue.get_nowait()
+                        interrupt_queue.put(_peek)
+                        if isinstance(_peek, str) and _peek.strip() and not _peek.startswith("[PINPOINT IDLE THOUGHT]"):
+                            continue
+                    except queue.Empty:
+                        pass
+
                     try:
                         intent, about = _decide_intent(messages)
                     except Exception as _intent_err:
@@ -1200,35 +1228,35 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                         thought = _web_research_thought()
                         if thought:
                             interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                            _t_pause.sleep(_act_rng.uniform(4.0, 8.0))
+                            _sleep_until_cj(_act_rng.uniform(4.0, 8.0))
                         else:
                             # research failed (network etc.) — fall back to a thought
                             thought = _idle_thought()
                             if thought:
                                 interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                                _t_pause.sleep(_act_rng.uniform(3.0, 6.0))
+                                _sleep_until_cj(_act_rng.uniform(3.0, 6.0))
 
                     elif intent == "think":
                         thought = _idle_thought()
                         if thought:
                             interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                            _t_pause.sleep(_act_rng.uniform(3.0, 6.0))
+                            _sleep_until_cj(_act_rng.uniform(3.0, 6.0))
 
                     elif intent == "create":
                         _do_create_activity(messages, interrupt_queue)
-                        _t_pause.sleep(_act_rng.uniform(3.0, 6.0))
+                        _sleep_until_cj(_act_rng.uniform(3.0, 6.0))
 
                     elif intent == "ramble":
                         _do_ramble(messages, interrupt_queue)
-                        _t_pause.sleep(_act_rng.uniform(2.0, 5.0))
+                        _sleep_until_cj(_act_rng.uniform(2.0, 5.0))
 
                     elif intent == "doubt":
                         _do_doubt(messages, interrupt_queue)
-                        _t_pause.sleep(_act_rng.uniform(3.0, 7.0))
+                        _sleep_until_cj(_act_rng.uniform(3.0, 7.0))
 
                     elif intent == "refuse":
                         _do_refuse(interrupt_queue)
-                        _t_pause.sleep(_act_rng.uniform(6.0, 12.0))
+                        _sleep_until_cj(_act_rng.uniform(6.0, 12.0))
 
                     elif intent == "see":
                         from tools import see_screen as _see
@@ -1238,16 +1266,16 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                             desc = ""
                         if desc and "error" not in desc.lower() and "unavailable" not in desc.lower():
                             interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {desc}")
-                            _t_pause.sleep(_act_rng.uniform(4.0, 8.0))
+                            _sleep_until_cj(_act_rng.uniform(4.0, 8.0))
                         else:
                             # vision unavailable — replace with a thought
                             thought = _idle_thought()
                             if thought:
                                 interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                                _t_pause.sleep(_act_rng.uniform(3.0, 6.0))
+                                _sleep_until_cj(_act_rng.uniform(3.0, 6.0))
 
                     elif intent == "rest":
-                        _t_pause.sleep(_act_rng.uniform(5.0, 10.0))
+                        _sleep_until_cj(_act_rng.uniform(5.0, 10.0))
 
                     elif intent == "build":
                         if about and len(about.split()) >= 2:
@@ -1261,13 +1289,13 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                         thought = _idle_thought()
                         if thought:
                             interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                            _t_pause.sleep(_act_rng.uniform(3.0, 6.0))
+                            _sleep_until_cj(_act_rng.uniform(3.0, 6.0))
 
                     else:  # unknown — default to a thought
                         thought = _idle_thought()
                         if thought:
                             interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {thought}")
-                            _t_pause.sleep(_act_rng.uniform(3.0, 6.0))
+                            _sleep_until_cj(_act_rng.uniform(3.0, 6.0))
 
                     # Occasionally let her mood shift based on recent activity
                     try:
@@ -1471,12 +1499,14 @@ def main() -> None:
     _deploy_viewer()
     start_web_server(8888)
 
-    # Open the 3D viewer in the default browser
-    try:
-        import webbrowser
-        webbrowser.open("http://localhost:8888/viewer.html")
-    except Exception:
-        pass
+    # Live viewer no longer auto-opens — it's still served at the URL above if
+    # you want it. Set PINPOINT_OPEN_VIEWER=1 to restore auto-open on startup.
+    if os.environ.get("PINPOINT_OPEN_VIEWER", "") == "1":
+        try:
+            import webbrowser
+            webbrowser.open("http://localhost:8888/viewer.html")
+        except Exception:
+            pass
 
     print()
 
