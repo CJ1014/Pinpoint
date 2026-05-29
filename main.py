@@ -689,7 +689,17 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             if "<think>" in line:
                 line = line.split("</think>")[-1].strip()
             line = line.strip('"').strip("'").strip()
-            interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {line if line else _rng.choice(fallbacks)}")
+            # Reject robotic AI-assistant filler — fall back to a real greeting.
+            _robotic = (
+                "processing", "analyzing language", "making connections",
+                "forming responses", "as an ai", "i am an ai", "language model",
+                "how can i assist", "how can i help", "ready to assist",
+                "what's next?", "let me know how",
+            )
+            _ll = line.lower()
+            if not line or any(_r in _ll for _r in _robotic):
+                line = _rng.choice(["hey CJ", "hey, what's up?", "yo", "hey — what are we doing today?"])
+            interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {line}")
         except Exception as _e:
             print(f"\n[opening API error: {_e}]", flush=True)
             interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {_rng.choice(fallbacks)}")
@@ -1191,6 +1201,15 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                     interrupt_queue.put(_peek)
                     _t_pause.sleep(0.1)
                 return False
+
+            # Quiet by default: no unprompted idle thoughts/research/rambling.
+            # She greets once, then waits for CJ. The constant self-talk was
+            # producing robotic filler ("Processing...", "Analyzing language
+            # patterns") and made-up nonsense. Set PINPOINT_AUTONOMOUS=1 to
+            # bring back the always-on inner-monologue behavior.
+            if os.environ.get("PINPOINT_AUTONOMOUS", "") != "1":
+                _t_pause.sleep(0.2)
+                continue
 
             # Short grace period after opening so she doesn't talk over herself
             if _opening_done[0] and (time.time() - _last_interaction[0]) < 1.5:
