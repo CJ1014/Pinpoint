@@ -3279,7 +3279,7 @@ def _try_edge_tts(text: str, emotion: str = "") -> bool:
     async def _do_speak():
         communicate = edge_tts.Communicate(
             text,
-            voice="en-US-JennyNeural",
+            voice="en-US-AvaNeural",
             rate=rate,
             pitch=pitch,
             volume=volume,
