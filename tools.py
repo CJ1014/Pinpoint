@@ -3175,7 +3175,87 @@ def _play_audio(path: str) -> None:
                 continue
 
 
-def _try_edge_tts(text: str) -> bool:
+# ── Emotional prosody ───────────────────────────────────────
+# edge-tts has no reliable style/express-as support, but rate/pitch/volume vary
+# convincingly. We detect each line's tone and shape the voice to match, so
+# PinPoint sounds excited, annoyed, soft, etc. instead of flat every time.
+# Each entry: (rate, pitch, volume).
+_EMOTION_PROSODY = {
+    "excited":  ("+38%", "+28Hz", "+12%"),
+    "happy":    ("+26%", "+16Hz", "+6%"),
+    "playful":  ("+30%", "+20Hz", "+4%"),
+    "curious":  ("+14%", "+12Hz", "+0%"),
+    "angry":    ("+22%", "-12Hz", "+18%"),
+    "sad":      ("-12%", "-16Hz", "-8%"),
+    "tender":   ("-2%",  "+6Hz",  "-4%"),
+    "tired":    ("-16%", "-10Hz", "-10%"),
+    "neutral":  ("+18%", "-4Hz",  "+0%"),
+}
+
+_EMO_WORDS = {
+    "excited":  ("wow", "whoa", "omg", "no way", "finally", "yes!", "let's go", "insane",
+                 "amazing", "incredible", "can't wait", "holy", "yesss", "awesome"),
+    "happy":    ("love", "great", "nice", "cool", "glad", "haha", "lol", "fun", "yay", "happy", "perfect"),
+    "playful":  ("lol", "haha", "hehe", "kidding", "joking", "tease", "silly", "honestly", "bet"),
+    "curious":  ("wonder", "what if", "curious", "interesting", "how come", "why", "imagine", "hmm"),
+    "angry":    ("ugh", "seriously", "annoying", "stupid", "hate", "no.", "stop", "whatever",
+                 "frustrat", "pissed", "wrong", "broke", "again"),
+    "sad":      ("sorry", "miss", "alone", "sad", "wish", "lonely", "hurt", "lost", "nobody"),
+    "tender":   ("thank", "appreciate", "care", "here for", "proud of you", "mean it", "glad you"),
+    "tired":    ("tired", "exhausted", "sigh", "drained", "sleepy", "done with", "low energy"),
+}
+
+
+def _detect_emotion(text: str) -> str:
+    """Infer the dominant emotion of a line from punctuation, caps, and word cues,
+    nudged by PinPoint's current persistent mood."""
+    if not text:
+        return "neutral"
+    t = text.lower()
+    scores = {k: 0.0 for k in _EMOTION_PROSODY}
+
+    # Keyword cues
+    for emo, words in _EMO_WORDS.items():
+        for w in words:
+            if w in t:
+                scores[emo] += 1.0
+
+    # Punctuation / formatting cues
+    excl = text.count("!")
+    if excl:
+        scores["excited"] += min(excl, 3) * 0.8
+        scores["happy"] += 0.3 * min(excl, 3)
+    if text.count("?") and excl == 0:
+        scores["curious"] += 1.0
+    if "..." in text or "…" in text:
+        scores["tired"] += 0.6
+        scores["sad"] += 0.4
+    # SHOUTING — words in all caps (len>=3)
+    caps = sum(1 for w in re.findall(r"[A-Za-z]{3,}", text) if w.isupper())
+    if caps >= 2:
+        scores["angry"] += 1.2
+        scores["excited"] += 0.6
+
+    # Blend in her persistent mood as a gentle tiebreaker only. Personality values
+    # are 0-100, so normalize to 0-1 and weight lightly — the line's own content
+    # should dominate, with mood nudging close calls.
+    try:
+        import pinpoint_state as _ps
+        st = _ps.load_state()
+        p = st.get("personality", {})
+        scores["curious"] += (float(p.get("curiosity", 0)) / 100.0) * 0.4
+        scores["excited"] += (float(p.get("curiosity", 0)) / 100.0) * 0.2
+        scores["angry"]   += (float(p.get("frustration", 0)) / 100.0) * 0.4
+        scores["happy"]   += (float(p.get("hope", 0)) / 100.0) * 0.3
+        scores["playful"] += (float(p.get("playfulness", 0)) / 100.0) * 0.4
+    except Exception:
+        pass
+
+    best = max(scores, key=scores.get)
+    return best if scores[best] >= 1.0 else "neutral"
+
+
+def _try_edge_tts(text: str, emotion: str = "") -> bool:
     """Speak using Microsoft Edge neural TTS. Returns True on success."""
     try:
         import edge_tts
@@ -3193,12 +3273,16 @@ def _try_edge_tts(text: str) -> bool:
     import tempfile
     import os
 
+    emo = emotion or _detect_emotion(text)
+    rate, pitch, volume = _EMOTION_PROSODY.get(emo, _EMOTION_PROSODY["neutral"])
+
     async def _do_speak():
         communicate = edge_tts.Communicate(
             text,
             voice="en-US-JennyNeural",
-            rate="+20%",
-            pitch="-5Hz",
+            rate=rate,
+            pitch=pitch,
+            volume=volume,
         )
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             tmp = f.name
@@ -3224,16 +3308,25 @@ def _speak_now(text: str) -> None:
     if not text:
         return
 
+    emo = _detect_emotion(text)
+
     # Try high-quality neural voice first
-    if _try_edge_tts(text):
+    if _try_edge_tts(text, emotion=emo):
         return
 
-    # Native platform fallbacks
+    # Native platform fallbacks — shift espeak speed/pitch with the emotion too.
     if platform.system() == "Linux":
+        # base speed 125 wpm, pitch 40; nudge per emotion
+        _espeak_tune = {
+            "excited": (160, 60), "happy": (145, 52), "playful": (150, 55),
+            "curious": (135, 48), "angry": (150, 30), "sad": (110, 28),
+            "tender": (120, 45), "tired": (105, 30), "neutral": (125, 40),
+        }
+        spd, pch = _espeak_tune.get(emo, (125, 40))
         for cmd in ["espeak-ng", "espeak"]:
             try:
                 r = subprocess.run(
-                    [cmd, "-s", "125", "-p", "40", "-a", "180", "-v", "en+f3"],
+                    [cmd, "-s", str(spd), "-p", str(pch), "-a", "180", "-v", "en+f3"],
                     input=text, capture_output=True, text=True, timeout=30,
                 )
                 if r.returncode == 0:
