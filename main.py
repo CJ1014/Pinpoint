@@ -1190,9 +1190,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
 
                     # Dispatch — fast, no long silences. Every branch emits
                     # output OR sleeps briefly; she never just disappears.
-                    if intent == "research" and not _cj_has_spoken[0]:
-                        # Don't launch into autonomous web research on a cold start —
-                        # wait until CJ has actually said something this session.
+                    _idle_secs = time.time() - _last_interaction[0]
+                    if intent == "research" and (not _cj_has_spoken[0] or _idle_secs < 30):
+                        # Don't research on cold start OR less than 30s after CJ last spoke.
+                        # Avoids immediately pivoting to web research when CJ just said something.
                         intent = "think"
 
                     if intent == "research":
@@ -1281,6 +1282,29 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
 
         # CJ said something
         last_msg = msg
+
+        # Direct computer-control commands — handle before hitting the LLM
+        import re as _re_ctrl
+        _open_match = _re_ctrl.match(
+            r"^(?:open|launch|start|go\s+to|pull\s+up|show\s+me)\s+(.+)$",
+            msg.strip(), _re_ctrl.IGNORECASE,
+        )
+        if _open_match:
+            _target = _open_match.group(1).strip().rstrip(".")
+            from tools import open_app as _open_app
+            _result = _open_app(_target)
+            print(f"\nPinPoint: {_result}", flush=True)
+            messages.append({"role": "user", "content": msg})
+            messages.append({"role": "assistant", "content": _result})
+            _ps.record_message(_state, from_cj=True, content=msg)
+            _ps.record_message(_state, from_cj=False, content=_result)
+            try:
+                from tools import speak
+                threading.Thread(target=lambda t=_result: speak(t, False), daemon=True).start()
+            except Exception:
+                pass
+            continue
+
         messages.append({"role": "user", "content": msg})
         _ps.record_message(_state, from_cj=True, content=msg)
 
@@ -1296,6 +1320,20 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             {"type": "function", "function": {
                 "name": "fetch_url",
                 "description": "Read a single webpage in full when you have a specific URL.",
+                "parameters": {"type": "object", "properties": {
+                    "url": {"type": "string"},
+                }, "required": ["url"]},
+            }},
+            {"type": "function", "function": {
+                "name": "open_app",
+                "description": "Open an application or website on CJ's computer. Works for desktop apps like Spotify, Chrome, Notepad, VS Code, and social/web apps like Instagram, YouTube, Discord (opens in browser).",
+                "parameters": {"type": "object", "properties": {
+                    "name": {"type": "string", "description": "App name or site (e.g. 'Spotify', 'Instagram', 'Chrome')."},
+                }, "required": ["name"]},
+            }},
+            {"type": "function", "function": {
+                "name": "open_url",
+                "description": "Open a specific URL in CJ's default browser.",
                 "parameters": {"type": "object", "properties": {
                     "url": {"type": "string"},
                 }, "required": ["url"]},

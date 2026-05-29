@@ -964,6 +964,34 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {}},
     }},
     {"type": "function", "function": {
+        "name": "open_app",
+        "description": "Open an application or website on CJ's computer. Works for desktop apps like Spotify, Chrome, Notepad, VS Code, and also social/web apps like Instagram, YouTube, Discord, Twitter (opens in browser). Use this when CJ asks you to open or launch something.",
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "App name (e.g. 'Spotify', 'Chrome', 'Instagram', 'Notepad') or path to a file."},
+        }, "required": ["name"]},
+    }},
+    {"type": "function", "function": {
+        "name": "open_url",
+        "description": "Open a specific URL in CJ's default browser.",
+        "parameters": {"type": "object", "properties": {
+            "url": {"type": "string", "description": "The URL to open (with or without https://)."},
+        }, "required": ["url"]},
+    }},
+    {"type": "function", "function": {
+        "name": "type_text",
+        "description": "Type text at the current cursor position on CJ's computer. Useful after opening an app to fill in a search box or form.",
+        "parameters": {"type": "object", "properties": {
+            "text": {"type": "string", "description": "Text to type."},
+        }, "required": ["text"]},
+    }},
+    {"type": "function", "function": {
+        "name": "press_key",
+        "description": "Press a key or key combo on CJ's keyboard. Examples: 'enter', 'ctrl+c', 'ctrl+v', 'win', 'alt+tab', 'esc'.",
+        "parameters": {"type": "object", "properties": {
+            "key": {"type": "string", "description": "Key or combo (e.g. 'enter', 'ctrl+c', 'alt+tab')."},
+        }, "required": ["key"]},
+    }},
+    {"type": "function", "function": {
         "name": "start_server",
         "description": "Start a local HTTP server to serve files from the output/ directory. Returns the localhost URL. Use this for web apps that need a server.",
         "parameters": {"type": "object", "properties": {
