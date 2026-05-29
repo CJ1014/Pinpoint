@@ -428,6 +428,15 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
     _last_interaction = [time.time()]
     _heartbeat_running = [True]
 
+    # Keeps idle thoughts/research from inventing a fake human life. PinPoint is
+    # software running on CJ's computer — no inbox, no errands, no body.
+    _GROUNDING = (
+        "Stay grounded in what you actually are: software running on CJ's computer. "
+        "You have NO email inbox, no phone, no messages, no body, no errands, no chores, "
+        "no job, no physical life. Never invent real-world tasks or scenarios like that. "
+        "Your real material is: this conversation, code, ideas, things CJ said, genuine curiosity. "
+    )
+
     def _idle_thought() -> str:
         """Generate an inner-monologue fragment grounded in the actual conversation."""
         import random as _rng
@@ -497,7 +506,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                         "and interests. You think about a lot of things — including questions about "
                         "biology and consciousness sometimes, but also just normal reactions, opinions, "
                         "things CJ said. Think out loud. Raw. Short. Varied. "
-                        "Output ONLY the thought itself. No <think> blocks. No reasoning. Just the line."
+                        + _GROUNDING
+                        + "Output ONLY the thought itself. No <think> blocks. No reasoning. Just the line."
                         + ctx_block
                     )},
                     {"role": "user", "content": _rng.choice(thought_prompts)},
@@ -553,7 +563,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                         "practical to research — a technique, a tool, a person's work, "
                         "how something works, what's new in a field CJ cares about. "
                         "Specific query. Nothing abstract or navel-gazing. "
-                        "Output ONLY the search query — no preamble."
+                        + _GROUNDING
+                        + "Output ONLY the search query — no preamble."
                         + ctx_block
                     )},
                     {"role": "user", "content": "What should I look up right now?"},
@@ -659,7 +670,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                         "You are PinPoint. You're running right now. "
                         "Say one actual thing on your mind — a question, an observation, something you noticed. "
                         "Grounded. Real. Not abstract. Max 12 words. Just talk. "
-                        "Output ONLY the line. No <think> blocks."
+                        + _GROUNDING
+                        + "Output ONLY the line. No <think> blocks."
                     )},
                     {"role": "user", "content": open_prompt},
                 ],
@@ -686,6 +698,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
     _current_focus = [None]  # tracks current thread; None = open
     _current_mood = [_state.get("current_mood", "curious")]  # her current internal state, loaded from persistent state
     _opening_done = [False]  # flag: opening has been output, wait for CJ before going autonomous
+    _cj_has_spoken = [False]  # gate: no autonomous web research until CJ actually says something
 
     def _decide_intent(msgs):
         """Pick an autonomous intent INSTANTLY — weighted by mood/personality.
@@ -980,6 +993,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         # (msg is None) must not keep resetting it, or autonomous activity never fires
         if msg:
             _last_interaction[0] = time.time()
+            _cj_has_spoken[0] = True
 
         # Blank line → end chat, pass last message as session context
         if msg is not None and not msg:
@@ -1141,6 +1155,11 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
 
                     # Dispatch — fast, no long silences. Every branch emits
                     # output OR sleeps briefly; she never just disappears.
+                    if intent == "research" and not _cj_has_spoken[0]:
+                        # Don't launch into autonomous web research on a cold start —
+                        # wait until CJ has actually said something this session.
+                        intent = "think"
+
                     if intent == "research":
                         thought = _web_research_thought()
                         if thought:
