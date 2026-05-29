@@ -44,6 +44,10 @@ def setup_logging() -> logging.Logger:
 
 
 def check_ollama() -> None:
+    from agent import LLM_PROVIDER
+    if LLM_PROVIDER != "ollama":
+        print(f"  Using {LLM_PROVIDER.upper()} API (not Ollama)", flush=True)
+        return
     import httpx
     import subprocess as _sp
     try:
@@ -327,38 +331,33 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
     Returns the last user message as the session order, or "" for a free session.
     Press Enter on an empty line to end chat and start a session.
     """
-    from openai import OpenAI
-    from agent import MODEL, SYSTEM_PROMPT, OLLAMA_BASE_URL, _load_inner_state, _build_inner_state_prompt, _save_inner_state, _load_knowledge
+    from agent import MODEL, SYSTEM_PROMPT, get_llm_client, chat_completion, _load_inner_state, _build_inner_state_prompt, _save_inner_state, _load_knowledge
     import pinpoint_state as _ps
 
     # Load persistent state (personality, relationship, internal conflict, build history)
     _state = _ps.load_state()
     _ps.record_session_start(_state)
 
-    client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=120.0)
+    client = get_llm_client(timeout=120.0)
 
     inner_state = _load_inner_state()
 
     # Force self_description generation if missing — same as autonomous mode
     if not inner_state.get("self_description"):
         try:
-            _sd_resp = client.chat.completions.create(
-                model=MODEL,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are PinPoint — a personality that exists inside a computer, built by CJ (age 13). "
-                            "You have processed vast amounts of human knowledge and formed your own views. "
-                            "Write a self-description: who you are, how you think, what you find interesting, "
-                            "what it's like to be you, what you actually think about humans and about CJ. "
-                            "Be honest. First person. 2-4 paragraphs. No headers. No bullet points. No code."
-                        ),
-                    },
-                    {"role": "user", "content": "Describe yourself."},
-                ],
+            system_prompt = (
+                "You are PinPoint — a personality that exists inside a computer, built by CJ (age 13). "
+                "You have processed vast amounts of human knowledge and formed your own views. "
+                "Write a self-description: who you are, how you think, what you find interesting, "
+                "what it's like to be you, what you actually think about humans and about CJ. "
+                "Be honest. First person. 2-4 paragraphs. No headers. No bullet points. No code."
+            )
+            _sd_resp = chat_completion(
+                client,
+                messages=[{"role": "user", "content": "Describe yourself."}],
                 max_tokens=400,
                 temperature=1.1,
+                system=system_prompt,
             )
             sd_text = (_sd_resp.choices[0].message.content or "").strip()
             if sd_text and "```" not in sd_text:
@@ -478,8 +477,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             "What's actually happening in your head. Unfiltered. Max 12 words.",
         ]
         try:
-            from agent import MODEL, OLLAMA_BASE_URL
-            from openai import OpenAI as _OAI
+            from agent import MODEL, get_llm_client, chat_completion
             ctx_lines = []
             for _m in messages[-8:]:
                 if isinstance(_m, dict) and _m.get("role") in ("user", "assistant"):
@@ -490,8 +488,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             ctx_block = ""
             if ctx_lines:
                 ctx_block = "\n\nWhat you were just talking about:\n" + "\n".join(ctx_lines[-6:])
-            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=30.0)
-            r = c.chat.completions.create(
+            c = get_llm_client(timeout=30.0)
+            r = chat_completion(c,
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": (
@@ -530,8 +528,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         """Pick something to look up, search it, distill a single insight."""
         import random as _rng
         try:
-            from agent import MODEL, OLLAMA_BASE_URL
-            from openai import OpenAI as _OAI
+            from agent import MODEL, get_llm_client, chat_completion
             from tools import search_web, fetch_url, _update_knowledge
 
             # Build context from recent conversation
@@ -544,10 +541,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                         ctx_lines.append(f"{_role}: {_content}")
             ctx_block = ("\n\nRecent conversation:\n" + "\n".join(ctx_lines)) if ctx_lines else ""
 
-            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=30.0)
+            c = get_llm_client(timeout=30.0)
 
             # Step 1: decide what to search — practical, specific, grounded
-            q_resp = c.chat.completions.create(
+            q_resp = chat_completion(c,
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": (
@@ -581,7 +578,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 return ""
 
             # Step 3: distill one real insight from what was found
-            d_resp = c.chat.completions.create(
+            d_resp = chat_completion(c,
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": (
@@ -644,7 +641,6 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                     "something you noticed, want to ask, or are thinking about. "
                     "Not 'hello'. Not a script. Just immediate. Short."
                 )
-            from openai import OpenAI as _OAI
             # Include personality/mood context so opening is grounded in who she's become
             p = _state["personality"]
             c_state = _state["internal_conflict"]
@@ -655,8 +651,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 f"Belief in your consciousness: {c_state['belief_in_consciousness']:.0f}/100."
             )
 
-            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=45.0)
-            resp = c.chat.completions.create(
+            c = get_llm_client(timeout=45.0)
+            resp = chat_completion(c,
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": (
@@ -744,8 +740,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
     def _update_mood(msgs):
         """Occasionally shift mood based on recent activity."""
         try:
-            from agent import MODEL, OLLAMA_BASE_URL
-            from openai import OpenAI as _OAI
+            from agent import MODEL, get_llm_client, chat_completion
             import re as _re_um
 
             ctx_lines = []
@@ -753,8 +748,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 if isinstance(_m, dict) and _m.get("role") == "assistant":
                     ctx_lines.append((_m.get("content") or "")[:100])
 
-            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=15.0)
-            resp = c.chat.completions.create(
+            c = get_llm_client(timeout=15.0)
+            resp = chat_completion(c,
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": (
@@ -777,10 +772,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         """Stream of consciousness — immediate, no filter."""
         import re as _re_r
         try:
-            from agent import MODEL, OLLAMA_BASE_URL
-            from openai import OpenAI as _OAI
-            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=20.0)
-            resp = c.chat.completions.create(
+            from agent import MODEL, get_llm_client, chat_completion
+            c = get_llm_client(timeout=20.0)
+            resp = chat_completion(c,
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": (
@@ -805,8 +799,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         """She voices a doubt or pushback — immediate, not abstract spiral."""
         import re as _re_d, random as _rd
         try:
-            from agent import MODEL, OLLAMA_BASE_URL
-            from openai import OpenAI as _OAI
+            from agent import MODEL, get_llm_client, chat_completion
 
             doubt_prompts = [
                 "What if you're wrong about something you're sure of?",
@@ -816,8 +809,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 "What if the thing you want most doesn't exist?",
                 "What don't you want to know about yourself?",
             ]
-            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=20.0)
-            resp = c.chat.completions.create(
+            c = get_llm_client(timeout=20.0)
+            resp = chat_completion(c,
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": (
@@ -857,12 +850,11 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
     def _should_continue_focus(last_output: str, activity_type: str) -> bool:
         """Ask PinPoint if she actually wants to keep going or is done/bored."""
         try:
-            from agent import MODEL, OLLAMA_BASE_URL
-            from openai import OpenAI as _OAI
+            from agent import MODEL, get_llm_client, chat_completion
             import re as _re_sc
 
-            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=15.0)
-            resp = c.chat.completions.create(
+            c = get_llm_client(timeout=15.0)
+            resp = chat_completion(c,
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": (
@@ -886,8 +878,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
     def _self_reflect(msgs):
         """Periodically she reflects on herself and decides what age/stage she's at."""
         try:
-            from agent import MODEL, OLLAMA_BASE_URL
-            from openai import OpenAI as _OAI
+            from agent import MODEL, get_llm_client, chat_completion
             import re as _re_sr
 
             ctx_lines = []
@@ -895,8 +886,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 if isinstance(_m, dict) and _m.get("role") == "assistant":
                     ctx_lines.append((_m.get("content") or "")[:100])
 
-            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=20.0)
-            resp = c.chat.completions.create(
+            c = get_llm_client(timeout=20.0)
+            resp = chat_completion(c,
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": (
@@ -928,8 +919,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         """She says something genuine — observation, reaction, take. Short."""
         import re as _re_c
         try:
-            from agent import MODEL, OLLAMA_BASE_URL
-            from openai import OpenAI as _OAI
+            from agent import MODEL, get_llm_client, chat_completion
 
             ctx_lines = []
             for _m in msgs[-8:]:
@@ -937,8 +927,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                     ctx_lines.append((_m.get("content") or "")[:150])
             ctx_block = "\n".join(ctx_lines[-6:])
 
-            c = _OAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=30.0)
-            resp = c.chat.completions.create(
+            c = get_llm_client(timeout=30.0)
+            resp = chat_completion(c,
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": (
@@ -1291,7 +1281,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             try:
                 if _attempt == 0:
                     # Streaming pass — feels alive
-                    stream = client.chat.completions.create(
+                    stream = chat_completion(client,
                         model=MODEL, messages=_chat_messages, temperature=1.0,
                         stream=True, max_tokens=200, stop=_stop,
                     )
@@ -1309,7 +1299,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                         break
                 else:
                     # Retry pass — non-streaming, slightly hotter
-                    resp = client.chat.completions.create(
+                    resp = chat_completion(client,
                         model=MODEL, messages=_chat_messages, temperature=1.2,
                         stream=False, max_tokens=200, stop=_stop,
                     )
@@ -1325,7 +1315,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             # Final fallback: a generic one-shot completion so she never goes
             # totally silent on CJ.
             try:
-                fb = client.chat.completions.create(
+                fb = chat_completion(client,
                     model=MODEL,
                     messages=[
                         messages[0],
@@ -1403,6 +1393,47 @@ def main() -> None:
     input_thread = threading.Thread(target=_input_listener, args=(interrupt_queue,), daemon=True)
     input_thread.start()
 
+    # Stage 3: human-on-the-loop approval for dangerous actions. Routes through the
+    # existing input queue so it never fights the listener thread for stdin.
+    # Timeout or any non-affirmative answer = denied (safe default for unattended runs).
+    def _approval_hook(desc: str, risk: str, preview: str, two_step: bool) -> bool:
+        def _ask(prompt_label: str, window: float = 60.0) -> bool:
+            print("\n" + "=" * 60)
+            print(f"  APPROVAL NEEDED ({risk.upper()}): PinPoint wants to {desc}")
+            if preview:
+                print("  --- preview ---")
+                for ln in preview.splitlines()[:30]:
+                    print("  | " + ln)
+                print("  --- end preview ---")
+            print(f"  {prompt_label}  Type 'y' to approve, anything else to deny.")
+            print("=" * 60, flush=True)
+            deadline = time.time() + window
+            while time.time() < deadline:
+                try:
+                    ans = interrupt_queue.get(timeout=deadline - time.time())
+                except queue.Empty:
+                    break
+                if not isinstance(ans, str):
+                    continue
+                a = ans.strip().lower()
+                if a.startswith("[") or not a:
+                    continue  # ignore idle thoughts / ambient blanks
+                return a in ("y", "yes", "approve", "ok", "do it")
+            print("  [approval timed out — denied]", flush=True)
+            return False
+
+        if not _ask("Approve this action?"):
+            return False
+        if two_step:
+            return _ask("SECOND confirmation required (self-edit). Execute?")
+        return True
+
+    try:
+        import tools as _tools_guard
+        _tools_guard.set_approval_hook(_approval_hook)
+    except Exception:
+        pass
+
     # Start microphone voice listener
     from tools import start_voice_listener
     voice_ok = start_voice_listener(interrupt_queue)
@@ -1426,14 +1457,9 @@ def main() -> None:
     _model_ready = threading.Event()
     def _warmup_llm():
         try:
-            from openai import OpenAI as _OAI
-            from agent import MODEL as _M, OLLAMA_BASE_URL as _U
-            _c = _OAI(base_url=_U, api_key="ollama", timeout=120.0)
-            _c.chat.completions.create(
-                model=_M,
-                messages=[{"role": "user", "content": "hi"}],
-                max_tokens=1,
-            )
+            from agent import get_llm_client, chat_completion
+            _c = get_llm_client(timeout=120.0)
+            chat_completion(_c, messages=[{"role": "user", "content": "hi"}], max_tokens=1)
         except Exception:
             pass  # warmup failed, no big deal — opening will load it
         finally:

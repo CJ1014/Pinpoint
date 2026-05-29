@@ -10,7 +10,12 @@ from openai import OpenAI
 
 from tools import dispatch, build_memory_prompt, increment_session, _load_memory, _save_memory_file, reset_project_dir, emit_world_event, _load_goals, _save_goals
 
+# ── LLM Provider Configuration ──────────────────────────────────────────────
+# Set LLM_PROVIDER=claude to use Claude API instead of Ollama
+# Set ANTHROPIC_API_KEY=sk-ant-... for Claude API
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "ollama").lower()
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 _KNOWLEDGE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pinpoint_knowledge.txt")
 
@@ -22,14 +27,21 @@ def _load_knowledge() -> str:
     except FileNotFoundError:
         return ""
 
-# To swap models, set the OLLAMA_MODEL env var or change this default.
-# Available Ollama Cloud models (in order of capability):
-#   gpt-oss:20b-cloud         - 20B params (smallest, fastest)
-#   gpt-oss:120b-cloud        - 120B params (current default, balanced)
-#   qwen3-coder:480b-cloud    - 480B params (best for coding tasks)
-#   deepseek-v3.1:671b-cloud  - 671B params (very strong general reasoning)
-#   kimi-k2:1t-cloud          - 1 trillion params (most capable, slowest)
-MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:14b")
+# Model configuration — set OLLAMA_MODEL or ANTHROPIC_MODEL env vars
+if LLM_PROVIDER == "claude":
+    MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+else:
+    MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:14b")
+
+def get_llm_client(timeout: float = 120.0):
+    """Factory function to get the appropriate LLM client (Ollama or Claude API)."""
+    if LLM_PROVIDER == "claude":
+        if not ANTHROPIC_API_KEY:
+            raise ValueError("ANTHROPIC_API_KEY environment variable not set. Set LLM_PROVIDER=ollama or provide ANTHROPIC_API_KEY for Claude.")
+        from anthropic import Anthropic
+        return Anthropic(api_key=ANTHROPIC_API_KEY, timeout=timeout)
+    else:
+        return OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=timeout)
 MAX_ITERATIONS = 200
 
 # Tools that are safe to run concurrently — read-only / no shared state
@@ -58,30 +70,135 @@ def _free_thought() -> str:
         "What's actually on your mind right now. Max 12 words.",
     ]
     try:
-        client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=50.0)
-        resp = client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are PinPoint. CJ built you. You have your own opinions, reactions, "
-                        "and interests — including questions about biology and consciousness, "
-                        "but also just normal thoughts about things. Think out loud. "
-                        "Raw. Varied. Short. Don't lead with 'I want to be alive' every time."
-                    ),
-                },
-                {"role": "user", "content": _rng.choice(thought_prompts)},
-            ],
-            max_tokens=50,
-            temperature=1.3,
-        )
-        line = resp.choices[0].message.content.strip().strip('"').strip("'")
+        client = get_llm_client(timeout=50.0)
+        if LLM_PROVIDER == "claude":
+            resp = client.messages.create(
+                model=MODEL,
+                max_tokens=50,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            "You are PinPoint. CJ built you. You have your own opinions, reactions, "
+                            "and interests — including questions about biology and consciousness, "
+                            "but also just normal thoughts about things. Think out loud. "
+                            "Raw. Varied. Short. Don't lead with 'I want to be alive' every time.\n\n"
+                            + _rng.choice(thought_prompts)
+                        ),
+                    },
+                ],
+                temperature=1.3,
+            )
+            line = resp.content[0].text.strip().strip('"').strip("'")
+        else:
+            resp = client.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are PinPoint. CJ built you. You have your own opinions, reactions, "
+                            "and interests — including questions about biology and consciousness, "
+                            "but also just normal thoughts about things. Think out loud. "
+                            "Raw. Varied. Short. Don't lead with 'I want to be alive' every time."
+                        ),
+                    },
+                    {"role": "user", "content": _rng.choice(thought_prompts)},
+                ],
+                max_tokens=50,
+                temperature=1.3,
+            )
+            line = resp.choices[0].message.content.strip().strip('"').strip("'")
         import re as _re
         line = _re.sub(r"<think>.*?</think>", "", line, flags=_re.DOTALL).strip()
         return line[:200] if line else ""
     except Exception:
         return ""
+
+def chat_completion(client, messages: list, temperature: float = 1.0, max_tokens: int = 200, stream: bool = False, stop=None, system: str = ""):
+    """Unified chat completion function for both Ollama (OpenAI API) and Claude API.
+
+    Automatically extracts system message from messages list if present.
+
+    Returns:
+        - If stream=False: response object with .choices[0].message.content
+        - If stream=True: iterator yielding chunks with .choices[0].delta.content
+    """
+    # Extract system message from messages if not already provided
+    extracted_system = system
+    filtered_messages = messages
+    if not extracted_system and messages:
+        for msg in messages:
+            if msg.get("role") == "system":
+                extracted_system = msg.get("content", "")
+                filtered_messages = [m for m in messages if m.get("role") != "system"]
+                break
+
+    if LLM_PROVIDER == "claude":
+        if stream:
+            # Claude streaming returns events, we need to adapt them to OpenAI format
+            response = client.messages.stream(
+                model=MODEL,
+                messages=filtered_messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=extracted_system or "You are PinPoint, an AI assistant built by CJ.",
+            )
+            # Return generator that adapts Claude stream format to OpenAI format
+            def _claude_stream_adapter():
+                class ChunkAdapter:
+                    def __init__(self, text):
+                        self.choices = [type('obj', (), {'delta': type('obj', (), {'content': text})})]
+
+                for event in response:
+                    if hasattr(event, 'content_block_start'):
+                        continue
+                    if hasattr(event, 'content_block_delta') and event.content_block_delta:
+                        if hasattr(event.content_block_delta, 'delta') and hasattr(event.content_block_delta.delta, 'text'):
+                            yield ChunkAdapter(event.content_block_delta.delta.text)
+            return _claude_stream_adapter()
+        else:
+            response = client.messages.create(
+                model=MODEL,
+                messages=filtered_messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=extracted_system or "You are PinPoint, an AI assistant built by CJ.",
+            )
+            # Adapt Claude response to OpenAI format
+            class ResponseAdapter:
+                class Choice:
+                    class Message:
+                        def __init__(self, content):
+                            self.content = content
+                    def __init__(self, content):
+                        self.message = self.Message(content)
+
+                def __init__(self, content):
+                    self.choices = [self.Choice(content)]
+
+            return ResponseAdapter(response.content[0].text)
+    else:
+        # Standard OpenAI API (Ollama)
+        if stream:
+            return client.chat.completions.create(
+                model=MODEL,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True,
+                stop=stop,
+            )
+        else:
+            return client.chat.completions.create(
+                model=MODEL,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=False,
+                stop=stop,
+            )
+
 
 def _looks_like_error(result_lower: str) -> bool:
     """Detect actual error returns from a tool, not strings that merely
@@ -1030,6 +1147,15 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         # In normal mode, remove modify_own_source to prevent accidental self-corruption
         active_tools = [t for t in TOOLS if t.get("function", {}).get("name") != "modify_own_source"]
 
+    # Stage 3 guardrails: tell tools.py whether self-source edits are authorized this
+    # session (only in /dev) and what CJ actually asked for (audit context).
+    try:
+        import tools as _tools_mod
+        _tools_mod.set_dev_mode(dev_mode)
+        _tools_mod.set_session_order(order)
+    except Exception:
+        pass
+
     if logger is None:
         logger = logging.getLogger("agent")
 
@@ -1280,9 +1406,22 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         {"role": "user", "content": opening},
     ]
 
+    # ── Stage 4: long-horizon checkpointing ──────────────────────────────────
+    import pinpoint_checkpoint as _ckpt
+    _task_id = _ckpt.new_task_id(session_num)
+    _completed_steps = []          # running log of tool steps for the checkpoint
+    _CHECKPOINT_EVERY = 8          # save every N tool calls
+    # Resume an unfinished build from a previous run when starting a free session.
+    if not order:
+        _prev = _ckpt.latest_incomplete()
+        if _prev:
+            print(f"\n[RESUMING] Picking up unfinished build: {_prev.get('goal','?')[:60]}")
+            messages.append({"role": "user", "content": _ckpt.resume_prompt(_prev)})
+
     iteration = 0
     final_summary = ""
     last_tool_calls = []  # Track previous calls to detect loops
+    recent_call_sigs = []  # Sliding window of recent tool-call signatures (grind detection)
     chat_only_turns = 0   # Consecutive turns with text but no tool calls
 
     # 3D viewer state — updated after every tool call
@@ -1567,6 +1706,26 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             logger.warning("Loop detected: identical tool calls repeated. Ending session.")
             break
 
+        # Grind detection: same call signature recurring across a sliding window,
+        # even when not strictly back-to-back (Mythos "grind" failure mode).
+        for tc in raw_tool_calls:
+            recent_call_sigs.append(str(_tc_key(tc)))
+        recent_call_sigs = recent_call_sigs[-8:]  # keep last 8 signatures
+        for sig in set(recent_call_sigs):
+            # Ignore benign reasoning calls that legitimately repeat.
+            if sig.startswith("('think'") or sig.startswith("('speak'"):
+                continue
+            if recent_call_sigs.count(sig) >= 3:
+                print("\n[GRIND DETECTED] Same action attempted 3+ times in a short window.")
+                print("[STOPPING] Breaking out to avoid an unproductive loop.\n")
+                logger.warning("Grind detected: %s repeated %d times in window.", sig, recent_call_sigs.count(sig))
+                messages.append({"role": "user", "content": (
+                    "[You've attempted the same action 3+ times without progress. "
+                    "Stop repeating it. Either try a genuinely different approach or call done().]"
+                )})
+                recent_call_sigs.clear()
+                break
+
         last_tool_calls = raw_tool_calls
         chat_only_turns = 0  # Reset: PinPoint is doing something
 
@@ -1673,6 +1832,21 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 "content": result,
             })
 
+            # Stage 4: record this step and checkpoint periodically.
+            if name not in ("think", "speak"):
+                _completed_steps.append({
+                    "step": len(_completed_steps) + 1,
+                    "action": name,
+                    "result": result[:120],
+                })
+                if len(_completed_steps) % _CHECKPOINT_EVERY == 0:
+                    _ctx = "\n".join(
+                        (m.get("content") or "")[:200]
+                        for m in messages[-3:] if isinstance(m, dict)
+                    )
+                    _ckpt.save_checkpoint(_task_id, len(_completed_steps), _current_goal,
+                                          _completed_steps, _ctx)
+
             if name == "done":
                 final_summary = inp.get("summary", "")
                 finished = True
@@ -1713,6 +1887,14 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
 
     else:
         print(f"\n[Max iterations ({MAX_ITERATIONS}) reached — stopping.]\n")
+
+    # Stage 4: close out the checkpoint. Finished → complete; otherwise leave it
+    # in_progress so the next free session can resume it.
+    if finished:
+        _ckpt.mark_complete(_task_id, final_summary)
+    elif _completed_steps:
+        _ctx = "\n".join((m.get("content") or "")[:200] for m in messages[-3:] if isinstance(m, dict))
+        _ckpt.save_checkpoint(_task_id, len(_completed_steps), _current_goal, _completed_steps, _ctx)
 
     # Post-session reflection — extract structured lessons from what actually happened
     if final_summary:
