@@ -632,12 +632,10 @@ def start_voice_listener(interrupt_queue) -> bool:
                                 if stripped:
                                     if not cleaned or len(cleaned.split()) < 2:
                                         return
-                                    sys.stdout.write(f"\n[YOU] {cleaned}\n")
-                                    sys.stdout.flush()
+                                    # No [YOU] write here — main loop prints it to avoid
+                                    # colliding with PinPoint's concurrent stdout writes.
                                     interrupt_queue.put(cleaned)
                                     return
-                                sys.stdout.write(f"\n[YOU] {text.strip()}\n")
-                                sys.stdout.flush()
                                 interrupt_queue.put(text.strip())
                             except Exception:
                                 pass
