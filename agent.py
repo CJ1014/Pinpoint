@@ -43,8 +43,9 @@ else:
 # Autonomous agent sessions use a SEPARATE model because gemma2:9b doesn't support
 # Ollama's function-calling (tools) API — it returns a 400 error when tools= is passed.
 # AGENT_MODEL must support tool use: llama3.1/3.2, qwen2.5, mistral, etc.
-# llama3.2:3b is only ~2 GB and supports tools. Pull it: ollama pull llama3.2:3b
-AGENT_MODEL = os.environ.get("AGENT_MODEL", "llama3.2:3b" if LLM_PROVIDER == "ollama" else MODEL)
+# qwen2.5-coder:14b was the previous default — likely already installed.
+# If not: ollama pull llama3.1:8b  (~5 GB, very reliable tool use)
+AGENT_MODEL = os.environ.get("AGENT_MODEL", "qwen2.5-coder:14b" if LLM_PROVIDER == "ollama" else MODEL)
 
 def get_llm_client(timeout: float = 120.0):
     """Factory function to get the appropriate LLM client (Ollama or Claude API)."""
@@ -1572,7 +1573,7 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                     print(f"  AGENT MODEL NOT FOUND: '{AGENT_MODEL}'")
                     print(f"  Download it by opening a new terminal and running:")
                     print(f"      ollama pull {AGENT_MODEL}")
-                    print(f"  (~2 GB, under a minute). Then restart PinPoint.")
+                    print(f"  Then restart PinPoint.")
                     print(f"{'='*60}\n")
                     return ""
                 if attempt < 4:
