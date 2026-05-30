@@ -40,6 +40,12 @@ if LLM_PROVIDER == "claude":
 else:
     MODEL = os.environ.get("OLLAMA_MODEL", "gemma2:9b")
 
+# Autonomous agent sessions use a SEPARATE model because gemma2:9b doesn't support
+# Ollama's function-calling (tools) API — it returns a 400 error when tools= is passed.
+# AGENT_MODEL must support tool use: llama3.1/3.2, qwen2.5, mistral, etc.
+# llama3.2:3b is only ~2 GB and supports tools. Pull it: ollama pull llama3.2:3b
+AGENT_MODEL = os.environ.get("AGENT_MODEL", "llama3.2:3b" if LLM_PROVIDER == "ollama" else MODEL)
+
 def get_llm_client(timeout: float = 120.0):
     """Factory function to get the appropriate LLM client (Ollama or Claude API)."""
     if LLM_PROVIDER == "claude":
@@ -1486,7 +1492,11 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
 
     print("\n" + "=" * 60)
     print("  AUTONOMOUS AI AGENT — starting up  [v2 — update test ✓]")
-    print(f"  Model: {MODEL} (local Ollama)")
+    if MODEL != AGENT_MODEL:
+        print(f"  Chat model  : {MODEL}")
+        print(f"  Agent model : {AGENT_MODEL} (tool use)")
+    else:
+        print(f"  Model: {AGENT_MODEL}")
     print(f"  Session: #{session_num}")
     print("  Memory: " + ("loaded from previous sessions" if memory_context else "fresh start"))
     if order:
@@ -1507,7 +1517,7 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         for attempt in range(5):
             try:
                 stream_kwargs = dict(
-                    model=MODEL,
+                    model=AGENT_MODEL,  # gemma2:9b lacks tool support; use AGENT_MODEL here
                     messages=messages,
                     temperature=0.85,
                     stream=True,
@@ -1556,6 +1566,15 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 break
             except Exception as e:
                 err = str(e)
+                # 400 with "registry.ollama.ai" = model not downloaded — no point retrying
+                if "400" in err and ("registry.ollama" in err or "does not exist" in err or "pull" in err.lower()):
+                    print(f"\n{'='*60}")
+                    print(f"  AGENT MODEL NOT FOUND: '{AGENT_MODEL}'")
+                    print(f"  Download it by opening a new terminal and running:")
+                    print(f"      ollama pull {AGENT_MODEL}")
+                    print(f"  (~2 GB, under a minute). Then restart PinPoint.")
+                    print(f"{'='*60}\n")
+                    return ""
                 if attempt < 4:
                     wait = 5 * (attempt + 1)
                     print(f"\n[RETRYING] {err[:80]} — waiting {wait}s...")

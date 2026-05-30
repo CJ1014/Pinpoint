@@ -83,16 +83,21 @@ def check_ollama() -> None:
             print("  Start manually with: ollama serve", flush=True)
             return
 
-    # Check if the model is downloaded
+    # Check if required models are downloaded
     try:
-        from agent import MODEL
+        from agent import MODEL, AGENT_MODEL
         _list_result = _sp.run(["ollama", "list"], capture_output=True, text=True, timeout=10)
-        if MODEL not in _list_result.stdout:
-            print(f"\n  !! Model '{MODEL}' is not downloaded yet.")
-            print(f"     Fix: open a terminal and run:")
-            print(f"         ollama pull {MODEL}")
-            print(f"     (~6 GB download, a few minutes)")
-            print(f"     Then restart PinPoint.\n", flush=True)
+        _installed = _list_result.stdout
+        _missing = []
+        if MODEL not in _installed:
+            _missing.append((MODEL, "chat model", "~6 GB"))
+        if AGENT_MODEL not in _installed:
+            _missing.append((AGENT_MODEL, "agent model", "~2 GB"))
+        for _name, _role, _size in _missing:
+            print(f"\n  !! Missing {_role} '{_name}' ({_size}). Run:")
+            print(f"         ollama pull {_name}")
+        if _missing:
+            print(flush=True)
     except Exception:
         pass
 
