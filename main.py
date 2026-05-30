@@ -72,13 +72,29 @@ def check_ollama() -> None:
                 try:
                     httpx.get("http://localhost:11434", timeout=1)
                     print("  Ollama started.", flush=True)
-                    return
+                    break
                 except Exception:
                     pass
-            print("  Ollama failed to start. Run manually: ollama serve", flush=True)
+            else:
+                print("  Ollama failed to start. Run manually: ollama serve", flush=True)
+                return
         except Exception as _e:
             print(f"  Could not auto-start Ollama: {_e}", flush=True)
             print("  Start manually with: ollama serve", flush=True)
+            return
+
+    # Check if the model is downloaded
+    try:
+        from agent import MODEL
+        _list_result = _sp.run(["ollama", "list"], capture_output=True, text=True, timeout=10)
+        if MODEL not in _list_result.stdout:
+            print(f"\n  !! Model '{MODEL}' is not downloaded yet.")
+            print(f"     Fix: open a terminal and run:")
+            print(f"         ollama pull {MODEL}")
+            print(f"     (~6 GB download, a few minutes)")
+            print(f"     Then restart PinPoint.\n", flush=True)
+    except Exception:
+        pass
 
 
 def get_user_order() -> str:
@@ -130,11 +146,11 @@ def _input_listener(interrupt_queue: queue.Queue) -> None:
                     if ch in ("\r", "\n"):
                         line = buf.strip()
                         buf = ""
-                        sys.stdout.write("\n")
-                        sys.stdout.flush()
                         if line.lower() in ("/error", "/paste"):
                             # Switch to multiline paste collection
                             label = "ERROR" if line.lower() == "/error" else "PASTE"
+                            sys.stdout.write("\n")
+                            sys.stdout.flush()
                             content = _collect_paste(label)
                             if content.strip():
                                 tag = "/error" if label == "ERROR" else "/paste"
@@ -142,7 +158,9 @@ def _input_listener(interrupt_queue: queue.Queue) -> None:
                                 sys.stdout.write(f"[{label} sent to PinPoint]\n")
                                 sys.stdout.flush()
                         elif line:
-                            sys.stdout.write(f"[INPUT] {line}\n")
+                            # No [INPUT] echo here — main loop prints [YOU] to avoid
+                            # colliding with PinPoint's concurrent stdout writes.
+                            sys.stdout.write("\n")
                             sys.stdout.flush()
                             interrupt_queue.put(line)
                         else:
@@ -155,8 +173,6 @@ def _input_listener(interrupt_queue: queue.Queue) -> None:
                             except queue.Empty:
                                 pass
                             interrupt_queue.put("")
-                            sys.stdout.write("[ENTER pressed — starting session]\n")
-                            sys.stdout.flush()
                     elif ch == "\x08":  # Backspace
                         if buf:
                             buf = buf[:-1]
@@ -1316,6 +1332,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
 
         # CJ said something
         last_msg = msg
+        # Print [YOU] on the main thread — keeps stdout clean by serialising all
+        # output through one thread instead of racing with background threads.
+        print(f"\n[YOU] {msg}", flush=True)
 
         # Direct computer-control commands — handle before hitting the LLM
         import re as _re_ctrl
