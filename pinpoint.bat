@@ -7,8 +7,9 @@ set OLLAMA_MODEL=gemma2:9b
 
 REM AGENT model — used for autonomous sessions that build things (needs tool/function-call support).
 REM gemma2:9b doesn't support tools so agent sessions need a separate model.
-REM llama3.2:3b is only 2 GB. Download it once: ollama pull llama3.2:3b
-set AGENT_MODEL=llama3.2:3b
+REM qwen2.5-coder:14b was the previous default (likely already installed).
+REM If missing run: ollama pull qwen2.5-coder:14b   OR   ollama pull llama3.1:8b
+set AGENT_MODEL=qwen2.5-coder:14b
 
 set OLLAMA_KEEP_ALIVE=-1
 set OLLAMA_FLASH_ATTENTION=1
