@@ -1556,6 +1556,15 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 break
             except Exception as e:
                 err = str(e)
+                # 400 with "registry.ollama.ai" = model not downloaded — no point retrying
+                if "400" in err and ("registry.ollama" in err or "does not exist" in err or "pull" in err.lower()):
+                    print(f"\n{'='*60}")
+                    print(f"  MODEL NOT FOUND: '{MODEL}'")
+                    print(f"  Download it by opening a new terminal and running:")
+                    print(f"      ollama pull {MODEL}")
+                    print(f"  (~6 GB, a few minutes). Then restart PinPoint.")
+                    print(f"{'='*60}\n")
+                    return ""
                 if attempt < 4:
                     wait = 5 * (attempt + 1)
                     print(f"\n[RETRYING] {err[:80]} — waiting {wait}s...")
