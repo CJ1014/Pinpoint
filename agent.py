@@ -1464,6 +1464,20 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             print(f"\n[RESUMING] Picking up unfinished build: {_prev.get('goal','?')[:60]}")
             messages.append({"role": "user", "content": _ckpt.resume_prompt(_prev)})
 
+    # Drain any idle thoughts queued by the background chat thread before we start —
+    # they must not appear as "human is talking to you" during the agent session.
+    if interrupt_queue is not None:
+        _kept = []
+        while True:
+            try:
+                _q = interrupt_queue.get_nowait()
+                if isinstance(_q, str) and not _q.startswith("[PINPOINT IDLE THOUGHT]"):
+                    _kept.append(_q)
+            except queue.Empty:
+                break
+        for _q in _kept:
+            interrupt_queue.put(_q)
+
     iteration = 0
     final_summary = ""
     last_tool_calls = []  # Track previous calls to detect loops
@@ -1532,7 +1546,11 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                     if interrupt_queue is not None and not interrupt_queue.empty():
                         try:
                             user_input = interrupt_queue.get_nowait()
-                            if user_input:
+                            # Silently discard idle thoughts from the background chat thread —
+                            # they're not from CJ and must not derail an agent session.
+                            if user_input and user_input.startswith("[PINPOINT IDLE THOUGHT]"):
+                                pass  # drop it
+                            elif user_input:
                                 interrupted = True
                                 interrupt_msg = user_input
                                 try:
