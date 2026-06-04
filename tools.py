@@ -510,7 +510,7 @@ def start_voice_listener(interrupt_queue) -> bool:
         speech_chunks = 0          # how many high-energy chunks this utterance
         peak_rms_recent = 0.0      # tracks loudest recent chunk for "still talking" check
         pre_roll: list = []
-        POST_SPEAK_COOLDOWN = 1.2
+        POST_SPEAK_COOLDOWN = 0.4  # was 1.2 — faster mic re-enable after speech
 
         def _drain_audio_q():
             while True:

@@ -1052,11 +1052,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             if not _opening_done[0]:
                 _opening_done[0] = True
                 _last_interaction[0] = time.time()  # reset timer for grace period
-            try:
-                from tools import speak
-                threading.Thread(target=lambda t=thought: speak(t, False), daemon=True).start()
-            except Exception:
-                pass
+            # INTENTIONALLY NOT speaking idle thoughts aloud — TTS pauses the mic,
+            # so vocalising every thought stops CJ from being heard. Only direct
+            # replies get spoken. Thoughts appear as text only.
             continue
 
         # Only reset idle timer when CJ actually sent something — empty polls
@@ -1246,9 +1244,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 _t_pause.sleep(0.2)
                 continue
 
-            # Grace period after opening/last interaction — wait a moment before
-            # autonomous thoughts start so she doesn't flood CJ immediately.
-            if _opening_done[0] and (time.time() - _last_interaction[0]) < 10.0:
+            # Grace period: wait 25s after the opening before autonomous thoughts start.
+            # This gives CJ time to speak first without thoughts cutting in.
+            if _opening_done[0] and (time.time() - _last_interaction[0]) < 25.0:
                 _t_pause.sleep(0.2)
                 continue
 
