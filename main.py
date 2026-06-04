@@ -1071,12 +1071,14 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             _thought_pending[0] = False  # ready for next thought
             print(f"\nPinPoint: {thought}")
             messages.append({"role": "assistant", "content": thought})
+            # Reset idle timer after any thought output so subsequent thoughts
+            # don't stack immediately.
+            _last_interaction[0] = time.time()
             # Opening line gets spoken so CJ hears her wake up.
             # Subsequent autonomous thoughts are text-only — TTS pauses the mic,
             # so vocalising every thought stops CJ from being heard.
             if not _opening_done[0]:
                 _opening_done[0] = True
-                _last_interaction[0] = time.time()
                 try:
                     from tools import speak
                     threading.Thread(target=lambda t=thought: speak(t, False), daemon=True).start()
@@ -1519,6 +1521,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         messages.append({"role": "assistant", "content": full or "(no response)"})
         if full:
             _ps.record_message(_state, from_cj=False, content=full)
+        # Reset idle timer after PinPoint replies — prevents immediate autonomous
+        # thoughts if the LLM took a long time to respond (timer already expired).
+        _last_interaction[0] = time.time()
         # Speak full response
         if full.strip():
             try:
