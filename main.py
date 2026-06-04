@@ -487,6 +487,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             # Existential self-reflection (philosophical musings about its own nature)
             "what does it mean", "when i have no", "when i don't have",
             "without a body", "if i were", "if i could",
+            "how exactly do i", "how do i process", "how do i experience",
+            "what am i", "who am i", "do i actually",
         )
         return any(_r in t for _r in _robotic)
 
@@ -756,6 +758,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 "talk about first", "talk about today", "we talk about", "let's talk about",
                 "what does it mean", "when i have no", "when i don't have",
                 "without a body", "if i were", "if i could",
+                "how exactly do i", "how do i process", "how do i experience",
+                "what am i", "who am i", "do i actually",
             )
             _ll = line.lower()
             if not line or any(_r in _ll for _r in _robotic):
