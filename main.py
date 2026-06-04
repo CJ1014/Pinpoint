@@ -1508,9 +1508,43 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 pass
 
 
+def _archive_old_sessions(max_age_days: int = 30) -> None:
+    """Archive sessions older than max_age_days into output/archives/"""
+    import tarfile
+    import time as _time
+    try:
+        os.makedirs(os.path.join(OUTPUT_DIR, "archives"), exist_ok=True)
+        now = _time.time()
+        cutoff = now - (max_age_days * 86400)
+
+        archived = 0
+        for item in os.listdir(OUTPUT_DIR):
+            path = os.path.join(OUTPUT_DIR, item)
+            if not os.path.isdir(path) or not item.startswith("s"):
+                continue
+            mtime = os.path.getmtime(path)
+            if mtime < cutoff:
+                # Archive this session folder
+                archive_path = os.path.join(OUTPUT_DIR, "archives", f"{item}.tar.gz")
+                try:
+                    with tarfile.open(archive_path, "w:gz") as tar:
+                        tar.add(path, arcname=item)
+                    import shutil
+                    shutil.rmtree(path)
+                    archived += 1
+                except Exception as e:
+                    print(f"  [Warning] Failed to archive {item}: {e}", flush=True)
+
+        if archived > 0:
+            print(f"  Archived {archived} old session(s) to output/archives/", flush=True)
+    except Exception:
+        pass  # silently skip cleanup if anything goes wrong
+
+
 def main() -> None:
     check_ollama()
     logger = setup_logging()
+    _archive_old_sessions()
 
     # ── Highest-priority Ctrl+C handler ──────────────────────
     # os._exit() bypasses all Python exception handling and kills

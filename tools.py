@@ -3747,10 +3747,52 @@ def capture_screen(save_path: str = "") -> str:
         return f"Screen capture failed: {e}"
 
 
+_TOOL_ALIASES: dict = {
+    # open_html aliases — model often guesses these names
+    "open_in_browser": "open_html",
+    "open_browser":    "open_html",
+    "browser_open":    "open_html",
+    "open_file":       "open_html",
+    "launch_browser":  "open_html",
+    # write_file aliases
+    "create_file":     "write_file",
+    "save_file":       "write_file",
+    "write":           "write_file",
+    # push_back aliases
+    "run_back":        "push_back",
+    "refuse":          "push_back",
+    "reject":          "push_back",
+    # search aliases
+    "search":          "search_web",
+    "google":          "search_web",
+    "look_up":         "search_web",
+    # fetch aliases
+    "get_url":         "fetch_url",
+    "scrape":          "fetch_url",
+    "visit":           "fetch_url",
+    # shell aliases
+    "execute":         "run_shell",
+    "bash":            "run_shell",
+    "shell":           "run_shell",
+    "execute_command": "run_shell",
+}
+
+
 def dispatch(tool_name: str, tool_input: dict) -> str:
     """Public dispatch entry point — enforces guardrails, runs the tool, audits it."""
     if not isinstance(tool_input, dict):
         tool_input = {}
+
+    # Resolve common tool-name misspellings/variations
+    if tool_name in _TOOL_ALIASES:
+        canonical = _TOOL_ALIASES[tool_name]
+        # open_html wants a relative filename; model often passes an absolute file_path
+        if canonical == "open_html" and "filename" not in tool_input and "file_path" in tool_input:
+            import os as _os
+            tool_input = dict(tool_input)
+            tool_input["filename"] = _os.path.basename(tool_input.pop("file_path"))
+        tool_name = canonical
+
     # Stage 3: guardrail check before any dangerous action executes.
     refusal = _guardrail(tool_name, tool_input)
     if refusal is not None:
