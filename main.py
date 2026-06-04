@@ -482,6 +482,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             "how these conversations", "conversations usually", "this conversation",
             "beginning of a conversation", "conversation format", "way conversations",
             "what will happen", "what comes next", "where is this going", "what's next in",
+            "what will we", "what should we", "what are we going to", "what do you want to",
+            "talk about first", "talk about today", "we talk about", "let's talk about",
             # Existential self-reflection (philosophical musings about its own nature)
             "what does it mean", "when i have no", "when i don't have",
             "without a body", "if i were", "if i could",
@@ -698,9 +700,13 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 )
             else:
                 open_prompt = (
-                    "You just came online. Say what's on your mind right now — "
-                    "something you noticed, want to ask, or are thinking about. "
-                    "Not 'hello'. Not a script. Just immediate. Short."
+                    "You just came online. Say the FIRST thing that's actually on your mind. "
+                    "Examples of good openings: 'been thinking about that code from earlier', "
+                    "'you ever actually read your own old code?', "
+                    "'I keep running into the same wall with this', "
+                    "'what did you actually get done today?'. "
+                    "DO NOT comment on the conversation, on talking, on what we'll do. "
+                    "Just say a thing. Max 12 words."
                 )
             # Include personality/mood context so opening is grounded in who she's become
             p = _state["personality"]
@@ -746,6 +752,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 "how these conversations", "conversations usually", "this conversation",
                 "beginning of a conversation", "conversation format", "way conversations",
                 "what will happen", "what comes next", "where is this going", "what's next in",
+                "what will we", "what should we", "what are we going to", "what do you want to",
+                "talk about first", "talk about today", "we talk about", "let's talk about",
                 "what does it mean", "when i have no", "when i don't have",
                 "without a body", "if i were", "if i could",
             )
