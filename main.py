@@ -1048,13 +1048,17 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             _thought_pending[0] = False  # ready for next thought
             print(f"\nPinPoint: {thought}")
             messages.append({"role": "assistant", "content": thought})
-            # Mark opening as done — now she can go autonomous if CJ doesn't respond
+            # Opening line gets spoken so CJ hears her wake up.
+            # Subsequent autonomous thoughts are text-only — TTS pauses the mic,
+            # so vocalising every thought stops CJ from being heard.
             if not _opening_done[0]:
                 _opening_done[0] = True
-                _last_interaction[0] = time.time()  # reset timer for grace period
-            # INTENTIONALLY NOT speaking idle thoughts aloud — TTS pauses the mic,
-            # so vocalising every thought stops CJ from being heard. Only direct
-            # replies get spoken. Thoughts appear as text only.
+                _last_interaction[0] = time.time()
+                try:
+                    from tools import speak
+                    threading.Thread(target=lambda t=thought: speak(t, False), daemon=True).start()
+                except Exception:
+                    pass
             continue
 
         # Only reset idle timer when CJ actually sent something — empty polls
