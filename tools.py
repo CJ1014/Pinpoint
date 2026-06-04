@@ -466,11 +466,12 @@ def start_voice_listener(interrupt_queue) -> bool:
     SILENCE_SHORT = 35      # ~2.2 s — short utterance like "yeah" / "stop"
     SILENCE_LONG = 75       # ~4.8 s — long sentence with thinking pauses
     PRE_ROLL_CHUNKS = 12    # ~0.77 s of audio kept before VAD triggers
-    MIN_PHRASE_CHUNKS = 6   # discard captures shorter than ~0.4 s (cough/click)
+    MIN_PHRASE_CHUNKS = 3   # discard captures shorter than ~0.2 s (was 6 — too aggressive)
 
-    # Calibrate energy threshold from 0.5 s of ambient noise
-    energy_threshold = 500.0  # fallback default
-    noise_floor = 200.0       # tracked separately for continuous re-calibration
+    # Calibrate energy threshold from 0.5 s of ambient noise.
+    # Low defaults so quiet/distant voices are picked up.
+    energy_threshold = 250.0  # fallback default (was 500 — too loud required)
+    noise_floor = 100.0       # tracked separately for continuous re-calibration
     _calib_result = [None]    # list so closure can mutate it
 
     def _calibrate():
@@ -481,8 +482,9 @@ def start_voice_listener(interrupt_queue) -> bool:
             sd.wait()
             flat = [int(s) for row in ambient for s in row]
             ambient_rms = (sum(s * s for s in flat) / max(len(flat), 1)) ** 0.5
-            # threshold = floor * 3.5 (or 400, whichever larger); store floor separately
-            _calib_result[0] = (max(ambient_rms * 3.5, 400.0), max(ambient_rms, 80.0))
+            # Multiplier 2.0 (was 3.5) — more sensitive to quiet speech.
+            # Floor cap 200 (was 400) — allows lower thresholds in quiet rooms.
+            _calib_result[0] = (max(ambient_rms * 2.0, 200.0), max(ambient_rms, 60.0))
         except Exception:
             pass
 
@@ -581,7 +583,7 @@ def start_voice_listener(interrupt_queue) -> bool:
                 # so the threshold adapts to changing room noise (fan, AC, etc.)
                 if not recording and rms < nonlocal_thresh[0]:
                     nonlocal_floor[0] = 0.95 * nonlocal_floor[0] + 0.05 * rms
-                    nonlocal_thresh[0] = max(nonlocal_floor[0] * 3.5, 400.0)
+                    nonlocal_thresh[0] = max(nonlocal_floor[0] * 2.0, 200.0)
 
                 if rms > nonlocal_thresh[0]:
                     if not recording:
