@@ -467,11 +467,17 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
     def _is_robotic(text: str) -> bool:
         t = (text or "").lower()
         _robotic = (
+            # Classic AI-assistant filler
             "processing", "analyzing language", "making connections between ideas",
             "forming responses", "as an ai", "i am an ai", "language model",
             "how can i assist", "how can i help", "ready to assist",
             "what's next?", "let me know how i can", "i'm here to help",
             "analyzing", "computing", "executing", "initializing", "standing by",
+            # gemma2 meta-prompt leakage — model sees its own prompt and comments on it
+            "more input", "input coming", "generate different", "types of responses",
+            "based on the prompt", "the prompt", "generate responses",
+            "prompt's context", "asking me", "different responses",
+            "what kind of response", "response based on",
         )
         return any(_r in t for _r in _robotic)
 
@@ -1240,8 +1246,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 _t_pause.sleep(0.2)
                 continue
 
-            # Short grace period after opening so she doesn't talk over herself
-            if _opening_done[0] and (time.time() - _last_interaction[0]) < 1.5:
+            # Grace period after opening/last interaction — wait a moment before
+            # autonomous thoughts start so she doesn't flood CJ immediately.
+            if _opening_done[0] and (time.time() - _last_interaction[0]) < 10.0:
                 _t_pause.sleep(0.2)
                 continue
 
@@ -1329,7 +1336,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                     finally:
                         # Pace the next activity, then reopen the gate. Sleeping
                         # here (in the worker) keeps the main loop responsive.
-                        _t_pause.sleep(_act_rng.uniform(4.0, 9.0))
+                        # 20-40s gap — frequent enough to feel alive, slow enough
+                        # that thoughts feel considered rather than spam.
+                        _t_pause.sleep(_act_rng.uniform(20.0, 40.0))
                         _activity_pending[0] = False
 
                 threading.Thread(target=_autonomous_activity, daemon=True).start()
