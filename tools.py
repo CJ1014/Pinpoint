@@ -687,7 +687,7 @@ _current_project_dir = None  # set by set_session_goal
 def _slugify(text: str) -> str:
     """Turn a goal/title into a safe folder name."""
     slug = re.sub(r'[^a-z0-9]+', '_', text.lower()).strip('_')
-    return slug[:60] if slug else "project"
+    return slug[:40] if slug else "project"
 
 
 def get_project_dir() -> str:
@@ -3787,10 +3787,9 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
     if tool_name in _TOOL_ALIASES:
         canonical = _TOOL_ALIASES[tool_name]
         # open_html wants a relative filename; model often passes an absolute file_path
-        if canonical == "open_html" and "filename" not in tool_input and "file_path" in tool_input:
-            import os as _os
+        if canonical == "open_html" and "file_path" in tool_input and "filename" not in tool_input:
             tool_input = dict(tool_input)
-            tool_input["filename"] = _os.path.basename(tool_input.pop("file_path"))
+            tool_input["filename"] = os.path.basename(tool_input.pop("file_path"))
         tool_name = canonical
 
     # Stage 3: guardrail check before any dangerous action executes.
@@ -3829,7 +3828,10 @@ def _dispatch_impl(tool_name: str, tool_input: dict) -> str:
             tool_input.get("libraries_used", ""),
         )
     elif tool_name == "open_html":
-        return open_html(tool_input["filename"])
+        fname = tool_input.get("filename") or tool_input.get("file_path", "")
+        if not fname:
+            return "open_html: missing filename"
+        return open_html(os.path.basename(fname))
     elif tool_name == "search_web":
         return search_web(tool_input["query"])
     elif tool_name == "deep_research":
