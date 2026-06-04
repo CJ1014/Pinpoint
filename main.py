@@ -478,6 +478,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             "based on the prompt", "the prompt", "generate responses",
             "prompt's context", "asking me", "different responses",
             "what kind of response", "response based on",
+            # Conversation meta-commentary (talking ABOUT the conversation itself)
+            "how these conversations", "conversations usually", "this conversation",
+            "beginning of a conversation", "conversation format", "way conversations",
         )
         return any(_r in t for _r in _robotic)
 
@@ -732,7 +735,12 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 "processing", "analyzing language", "making connections",
                 "forming responses", "as an ai", "i am an ai", "language model",
                 "how can i assist", "how can i help", "ready to assist",
-                "what's next?", "let me know how",
+                "what's next?", "let me know how", "analyzing", "computing",
+                "more input", "input coming", "generate different", "types of responses",
+                "based on the prompt", "the prompt", "generate responses",
+                "prompt's context", "asking me", "different responses",
+                "how these conversations", "conversations usually", "this conversation",
+                "beginning of a conversation", "conversation format", "way conversations",
             )
             _ll = line.lower()
             if not line or any(_r in _ll for _r in _robotic):
