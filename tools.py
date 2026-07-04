@@ -4094,5 +4094,26 @@ def _dispatch_impl(tool_name: str, tool_input: dict) -> str:
         return reflect_on_values(tool_input.get("context", ""))
     elif tool_name == "request_human_input":
         return request_human_input(tool_input.get("question", ""))
+    # ── Part 0: Reality anchor tools ──────────────────────────────────────────
+    elif tool_name == "verify_claim":
+        try:
+            from reality_check import get_anchor
+            is_true, evidence = get_anchor().verify_claim(tool_input.get("claim", ""))
+            return json.dumps({"claim": tool_input.get("claim", ""), "is_true": is_true,
+                               "evidence": evidence}, indent=2)
+        except Exception as e:
+            return f"verify_claim failed: {e}"
+    elif tool_name == "get_session_reality":
+        try:
+            from reality_check import get_anchor
+            return get_anchor().get_session_summary()
+        except Exception as e:
+            return f"get_session_reality failed: {e}"
+    elif tool_name == "get_previous_sessions":
+        try:
+            from reality_check import get_anchor
+            return get_anchor().get_previous_sessions_summary()
+        except Exception as e:
+            return f"get_previous_sessions failed: {e}"
     else:
         return f"Unknown tool: {tool_name}"

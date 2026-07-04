@@ -45,6 +45,11 @@ try:
     from human_oversight import requires_approval as _needs_approval, log_approval as _log_approval
 except Exception:
     _needs_approval = _log_approval = None  # type: ignore
+try:
+    from reality_check import get_anchor as _get_reality_anchor
+    _reality = _get_reality_anchor()
+except Exception:
+    _reality = None  # type: ignore
 
 # ── LLM Provider Configuration ──────────────────────────────────────────────
 # Set LLM_PROVIDER=claude to use Claude API instead of Ollama
@@ -1287,6 +1292,24 @@ TOOLS = [
             "question": {"type": "string", "description": "The question to ask CJ."},
         }, "required": ["question"]},
     }},
+    # ── Part 0: Reality anchor tools ──────────────────────────────────────────
+    {"type": "function", "function": {
+        "name": "verify_claim",
+        "description": "CRITICAL: Before trusting any memory or claim about what we've done, call this. Returns whether the claim matches actual session history.",
+        "parameters": {"type": "object", "properties": {
+            "claim": {"type": "string", "description": "The claim to verify (e.g., 'We created parser.py')"},
+        }, "required": ["claim"]},
+    }},
+    {"type": "function", "function": {
+        "name": "get_session_reality",
+        "description": "Get the verified summary of what's ACTUALLY happened in this session only.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "get_previous_sessions",
+        "description": "Get summary of previous sessions from memory.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
 ]
 
 
@@ -1658,9 +1681,29 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
     print("=" * 60 + "\n")
     logger.info("Agent started. Model: %s | Session: %d", MODEL, session_num)
 
+    # ════ REALITY ANCHOR: Initialize session grounding ════
+    if _reality is not None:
+        try:
+            _reality.initialize_session(session_num, _current_goal)
+            print(f"[REALITY] Session {_reality.current_session_id[:30]} started")
+        except Exception:
+            pass
+
     while iteration < MAX_ITERATIONS:
         iteration += 1
         logger.info("--- Iteration %d ---", iteration)
+
+        # ════ REALITY ANCHOR: Ground every 3rd iteration ════
+        if _reality is not None and iteration > 1 and iteration % 3 == 0:
+            messages.append({"role": "user", "content": (
+                f"[GROUNDING CHECK]\n"
+                f"This session has ACTUALLY done:\n"
+                f"• {len(_reality.current_session_actions)} actions\n"
+                f"• {len(_reality.current_session_files_created)} files created\n"
+                f"• {len(_reality.current_session_tools_called)} tools called\n\n"
+                f"ONLY reference things in this list. Do NOT invent memories.\n"
+                f"If unsure: call verify_claim(). Hallucinations will be caught."
+            )})
 
         # ── AGI Phase 1: inject finished goal decomposition (built in background) ──
         if _goal_tree_holder:
@@ -2018,6 +2061,18 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 print(f"[TOOL RESULT] {result[:300]}{'...' if len(result) > 300 else ''}\n")
             logger.info("[RESULT] %s", result)
 
+            # ════ REALITY ANCHOR: Log what happened ════
+            if _reality is not None:
+                try:
+                    _reality.log_tool_call(name, inp, result)
+                    if name == "write_file":
+                        _reality.log_file_created(inp.get("filename", ""), result[:50])
+                    elif name == "write_anywhere":
+                        _reality.log_file_created(inp.get("path", ""), result[:50])
+                    _reality.log_action(f"Called {name}")
+                except Exception:
+                    pass
+
             # ── AGI Phase 2: lightweight post-action verification ────────
             if name not in ("think", "speak", "done", "brainstorm", "critique",
                             "verify_last_action", "reflect_on_values") and _verify_action:
@@ -2144,6 +2199,12 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             print("=" * 60)
             print(f"\nSummary:\n{final_summary}\n")
             logger.info("Agent finished. Summary: %s", final_summary)
+            # ════ REALITY ANCHOR: Final verified-facts summary ════
+            if _reality is not None:
+                try:
+                    print(_reality.get_session_summary())
+                except Exception:
+                    pass
             break
 
     else:
