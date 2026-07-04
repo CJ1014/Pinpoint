@@ -1378,6 +1378,13 @@ def _save_memory_file(data: dict) -> None:
     data["meta"]["last_updated"] = _now()
     with open(MEMORY_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+    # Mirror into output/ so the web viewer (which serves output/ only) can
+    # poll AGI state — goal tree, verification log, values, checkpoints, etc.
+    try:
+        with open(os.path.join(OUTPUT_DIR, "memory.json"), "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
 
 
 def _now() -> str:
