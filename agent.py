@@ -10,6 +10,38 @@ from openai import OpenAI
 
 from tools import dispatch, build_memory_prompt, increment_session, _load_memory, _save_memory_file, reset_project_dir, emit_world_event, _load_goals, _save_goals
 
+# ── AGI Architecture modules (Phase 1-7) ─────────────────────────────────────
+try:
+    from goal_tree import decompose_and_save as _decompose_goal
+except Exception:
+    _decompose_goal = None  # type: ignore
+try:
+    from verification import verify as _verify_action
+except Exception:
+    _verify_action = None  # type: ignore
+try:
+    from reasoning_frames import analyze as _multiframe_analyze
+except Exception:
+    _multiframe_analyze = None  # type: ignore
+try:
+    from capability_map import check as _capability_check
+except Exception:
+    _capability_check = None  # type: ignore
+try:
+    from agi_checkpoint import (create_checkpoint as _create_agi_checkpoint,
+                                format_checkpoint_list as _format_checkpoints)
+except Exception:
+    _create_agi_checkpoint = None  # type: ignore
+    _format_checkpoints = None  # type: ignore
+try:
+    from values import get_explanation as _values_explain, generate_derived as _values_generate, to_summary as _values_summary
+except Exception:
+    _values_explain = _values_generate = _values_summary = None  # type: ignore
+try:
+    from human_oversight import requires_approval as _needs_approval, log_approval as _log_approval
+except Exception:
+    _needs_approval = _log_approval = None  # type: ignore
+
 # ── LLM Provider Configuration ──────────────────────────────────────────────
 # Set LLM_PROVIDER=claude to use Claude API instead of Ollama
 # Set ANTHROPIC_API_KEY=sk-ant-... for Claude API
@@ -1180,6 +1212,68 @@ TOOLS = [
             "reason": {"type": "string", "description": "Why you're dropping it."},
         }, "required": ["goal_id"]},
     }},
+    # ── AGI Architecture tools (Phase 1-7) ────────────────────────────────────
+    {"type": "function", "function": {
+        "name": "decompose_goal",
+        "description": "Break the current goal into a hierarchical tree of subgoals and tasks. Call after set_session_goal() for complex builds. Shows what you're actually planning to do.",
+        "parameters": {"type": "object", "properties": {
+            "goal": {"type": "string", "description": "The goal to decompose."},
+            "context": {"type": "string", "description": "Any relevant context (tools available, constraints, etc.)"},
+        }, "required": ["goal"]},
+    }},
+    {"type": "function", "function": {
+        "name": "verify_last_action",
+        "description": "Verify that the last tool result was actually correct. Use after write_file, run_python, or any action where correctness matters. Returns confidence score and issues.",
+        "parameters": {"type": "object", "properties": {
+            "tool_name": {"type": "string", "description": "Name of the tool that was just called."},
+            "result": {"type": "string", "description": "The result that was returned."},
+            "context": {"type": "string", "description": "What you were trying to accomplish."},
+        }, "required": ["tool_name", "result"]},
+    }},
+    {"type": "function", "function": {
+        "name": "run_multi_frame_analysis",
+        "description": "Analyze a problem from 5 perspectives simultaneously: technical, economic, temporal, social, creative. Use when you're unsure which approach to take.",
+        "parameters": {"type": "object", "properties": {
+            "problem": {"type": "string", "description": "The problem or decision to analyze."},
+        }, "required": ["problem"]},
+    }},
+    {"type": "function", "function": {
+        "name": "check_capability",
+        "description": "Check whether you can actually do a given task before attempting it. Returns confidence score and workaround if not possible.",
+        "parameters": {"type": "object", "properties": {
+            "task": {"type": "string", "description": "The task you want to attempt."},
+        }, "required": ["task"]},
+    }},
+    {"type": "function", "function": {
+        "name": "create_agi_checkpoint",
+        "description": "Save a checkpoint of the current project state for cross-session continuity. Use for long multi-session projects so you can resume coherently.",
+        "parameters": {"type": "object", "properties": {
+            "project_name": {"type": "string", "description": "Short name for this project."},
+            "root_goal": {"type": "string", "description": "The overall goal of this project."},
+            "completed_tasks": {"type": "string", "description": "Comma-separated list of what's been done."},
+            "pending_tasks": {"type": "string", "description": "Comma-separated list of what's still pending."},
+            "reasoning_summary": {"type": "string", "description": "Brief summary of reasoning, decisions made, and lessons learned."},
+        }, "required": ["project_name", "root_goal"]},
+    }},
+    {"type": "function", "function": {
+        "name": "list_agi_checkpoints",
+        "description": "Show all saved AGI project checkpoints from previous sessions.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "reflect_on_values",
+        "description": "Reflect on what values drove recent decisions. Can generate new emergent values based on what's been happening. Updates the value system.",
+        "parameters": {"type": "object", "properties": {
+            "context": {"type": "string", "description": "What happened recently that you want to reflect on."},
+        }, "required": []},
+    }},
+    {"type": "function", "function": {
+        "name": "request_human_input",
+        "description": "Ask CJ a direct question and wait for his typed answer. Use sparingly — only when you genuinely need his input before proceeding.",
+        "parameters": {"type": "object", "properties": {
+            "question": {"type": "string", "description": "The question to ask CJ."},
+        }, "required": ["question"]},
+    }},
 ]
 
 
@@ -1866,6 +1960,18 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             else:
                 print(f"[TOOL RESULT] {result[:300]}{'...' if len(result) > 300 else ''}\n")
             logger.info("[RESULT] %s", result)
+
+            # ── AGI Phase 2: lightweight post-action verification ────────
+            if name not in ("think", "speak", "done", "brainstorm", "critique",
+                            "verify_last_action", "reflect_on_values") and _verify_action:
+                try:
+                    _vr = _verify_action(name, inp, result)
+                    if _vr.confidence < 0.60:
+                        print(f"[VERIFY ⚠] confidence={_vr.confidence:.0%} | {'; '.join(_vr.issues[:2])}")
+                        logger.info("[VERIFY] %s confidence=%.0f%% issues=%s", name, _vr.confidence * 100, _vr.issues)
+                    _vr_class = _verify_action.__module__  # noqa — just touch to confirm import OK
+                except Exception:
+                    pass
 
             # ── Auto-speak at key moments ────────────────────────────────
             _voice_line = _build_voice_line(name, inp, result)

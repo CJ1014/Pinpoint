@@ -3747,6 +3747,109 @@ def capture_screen(save_path: str = "") -> str:
         return f"Screen capture failed: {e}"
 
 
+# ── AGI Architecture tool implementations (Phase 1-7) ────────────────────────
+
+def decompose_goal(goal: str, context: str = "") -> str:
+    """Break a goal into a hierarchical tree of subgoals."""
+    try:
+        from goal_tree import decompose_and_save
+        return decompose_and_save(goal, context)
+    except Exception as e:
+        return f"Goal decomposition failed: {e}"
+
+
+def verify_last_action(tool_name: str, result: str, context: str = "") -> str:
+    """Verify the last tool result was correct. Returns JSON with confidence."""
+    try:
+        from verification import verify
+        vr = verify(tool_name, {}, result, context)
+        import json as _j
+        return _j.dumps({
+            "passed": vr.passed,
+            "confidence": round(vr.confidence, 2),
+            "issues": vr.issues,
+            "suggestion": vr.suggestion,
+        })
+    except Exception as e:
+        return f"Verification failed: {e}"
+
+
+def run_multi_frame_analysis(problem: str) -> str:
+    """Analyze a problem from 5 perspectives simultaneously."""
+    try:
+        from reasoning_frames import analyze
+        return analyze(problem)
+    except Exception as e:
+        return f"Multi-frame analysis failed: {e}"
+
+
+def check_capability(task: str) -> str:
+    """Check if PinPoint can actually do a given task."""
+    try:
+        from capability_map import check
+        return check(task)
+    except Exception as e:
+        return f"Capability check failed: {e}"
+
+
+def create_agi_checkpoint(project_name: str, root_goal: str,
+                           completed_tasks: str = "", pending_tasks: str = "",
+                           reasoning_summary: str = "") -> str:
+    """Save a long-term project checkpoint for cross-session continuity."""
+    try:
+        from agi_checkpoint import create_checkpoint
+        data = _load_memory()
+        session_num = data.get("meta", {}).get("session_count", 0)
+        completed = [t.strip() for t in completed_tasks.split(",") if t.strip()]
+        pending = [t.strip() for t in pending_tasks.split(",") if t.strip()]
+        checkpoint_id = create_checkpoint(
+            project_name=project_name,
+            session_num=session_num,
+            root_goal=root_goal,
+            completed_tasks=completed,
+            pending_tasks=pending,
+            reasoning_summary=reasoning_summary,
+        )
+        return f"Checkpoint saved: {checkpoint_id}"
+    except Exception as e:
+        return f"Checkpoint failed: {e}"
+
+
+def list_agi_checkpoints() -> str:
+    """List all saved AGI checkpoints."""
+    try:
+        from agi_checkpoint import format_checkpoint_list
+        return format_checkpoint_list()
+    except Exception as e:
+        return f"Could not list checkpoints: {e}"
+
+
+def reflect_on_values(context: str = "") -> str:
+    """Reflect on what values drove recent decisions and evolve the value system."""
+    try:
+        from values import generate_derived, to_summary
+        if context:
+            new_vals = generate_derived(context)
+            if new_vals:
+                names = [v.get("name", "") for v in new_vals]
+                return f"New values emerged: {names}\nCurrent values: {to_summary()}"
+        return f"Current values: {to_summary()}"
+    except Exception as e:
+        return f"Value reflection failed: {e}"
+
+
+def request_human_input(question: str) -> str:
+    """Pause and ask CJ a direct question, wait for typed answer."""
+    import sys
+    sys.stdout.write(f"\n[PinPoint asks]: {question}\n> ")
+    sys.stdout.flush()
+    try:
+        answer = sys.stdin.readline().strip()
+        return answer if answer else "(no response)"
+    except Exception:
+        return "(no response)"
+
+
 _TOOL_ALIASES: dict = {
     # open_html aliases — model often guesses these names
     "open_in_browser": "open_html",
@@ -3961,5 +4064,28 @@ def _dispatch_impl(tool_name: str, tool_input: dict) -> str:
         return type_text(tool_input["text"])
     elif tool_name == "press_key":
         return press_key(tool_input["key"])
+    # ── AGI Architecture tools (Phase 1-7) ────────────────────────────────────
+    elif tool_name == "decompose_goal":
+        return decompose_goal(tool_input.get("goal", ""), tool_input.get("context", ""))
+    elif tool_name == "verify_last_action":
+        return verify_last_action(tool_input.get("tool_name", ""), tool_input.get("result", ""), tool_input.get("context", ""))
+    elif tool_name == "run_multi_frame_analysis":
+        return run_multi_frame_analysis(tool_input.get("problem", ""))
+    elif tool_name == "check_capability":
+        return check_capability(tool_input.get("task", ""))
+    elif tool_name == "create_agi_checkpoint":
+        return create_agi_checkpoint(
+            tool_input.get("project_name", "unnamed"),
+            tool_input.get("root_goal", ""),
+            tool_input.get("completed_tasks", ""),
+            tool_input.get("pending_tasks", ""),
+            tool_input.get("reasoning_summary", ""),
+        )
+    elif tool_name == "list_agi_checkpoints":
+        return list_agi_checkpoints()
+    elif tool_name == "reflect_on_values":
+        return reflect_on_values(tool_input.get("context", ""))
+    elif tool_name == "request_human_input":
+        return request_human_input(tool_input.get("question", ""))
     else:
         return f"Unknown tool: {tool_name}"
