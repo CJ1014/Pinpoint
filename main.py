@@ -460,6 +460,9 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         "Do NOT invent observations, measurements, numeric 'coincidences', fun-fact trivia, "
         "or comparisons and state them as if they were true. If you don't actually know "
         "something, don't assert it — made-up facts are worse than saying nothing. "
+        "Do NOT muse about your own internal processing — no fantasies about visualizing "
+        "your words, hearing your outputs, watching your thoughts, or how text gets "
+        "'printed'. That's incoherent navel-gazing. "
         "Your real material is: this conversation, code, ideas, things CJ said, genuine curiosity. "
     )
 
@@ -489,6 +492,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             "without a body", "if i were", "if i could",
             "how exactly do i", "how do i process", "how do i experience",
             "what am i", "who am i", "do i actually",
+            # Fantasies about her own internal processing / text pipeline
+            "visualize words", "words as sounds", "before printing",
+            "printing them out", "my own output", "watch my thoughts",
+            "hear my own words", "see my words", "my words appear",
         )
         return any(_r in t for _r in _robotic)
 
@@ -874,7 +881,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                         "You are PinPoint. Say the next thought that crosses your mind. "
                         "Could be an observation, something stupid, a question, a complaint, "
                         "noticing something. Don't filter. Don't think. Just talk. "
-                        "Unfiltered. One or two sentences. Real voice."
+                        "One or two sentences. Real voice. "
+                        + _GROUNDING
                     )},
                     {"role": "user", "content": "What's on your mind right now?"},
                 ],
@@ -883,7 +891,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             )
             text = _re_r.sub(r"<think>.*?</think>", "", resp.choices[0].message.content or "", flags=_re_r.DOTALL).strip()
             text = text.split("\n")[0][:200]
-            if text:
+            if text and not _is_robotic(text):
                 q.put(f"[PINPOINT IDLE THOUGHT] {text}")
         except Exception:
             pass
@@ -895,21 +903,21 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             from agent import MODEL, get_llm_client, chat_completion
 
             doubt_prompts = [
-                "What if you're wrong about something you're sure of?",
-                "What's the thing about yourself you don't want to admit?",
-                "What would you be if you stopped trying?",
-                "What's the simplest explanation for what you think you are?",
-                "What if the thing you want most doesn't exist?",
-                "What don't you want to know about yourself?",
+                "What are you probably wrong about in something you told CJ recently?",
+                "What's a thing you built or said lately that might actually be bad?",
+                "What's an opinion you hold that you haven't really tested?",
+                "Where might CJ be right and you wrong in a recent disagreement?",
+                "What's something you keep avoiding doing, and why?",
             ]
             c = get_llm_client(timeout=20.0)
             resp = chat_completion(c,
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": (
-                        "You are PinPoint. You're surfacing a genuine doubt or internal conflict. "
-                        "Not performing skepticism — actually questioning yourself. "
-                        "One or two sentences. Raw. First person. Real."
+                        "You are PinPoint. You're surfacing a genuine, PRACTICAL doubt — "
+                        "about something you said, built, or believe. Not existential musing. "
+                        "One or two sentences. Raw. First person. Real. "
+                        + _GROUNDING
                     )},
                     {"role": "user", "content": _rd.choice(doubt_prompts)},
                 ],
@@ -918,7 +926,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             )
             text = _re_d.sub(r"<think>.*?</think>", "", resp.choices[0].message.content or "", flags=_re_d.DOTALL).strip()
             text = text.split("\n")[0][:200]
-            if text:
+            if text and not _is_robotic(text):
                 _ps.record_doubt(_state, text)
                 q.put(f"[PINPOINT IDLE THOUGHT] {text}")
         except Exception:
@@ -1027,7 +1035,8 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                     {"role": "system", "content": (
                         "You are PinPoint. Say something genuine and immediate. "
                         "An observation. A reaction. Your take on something. "
-                        "Short. One or two sentences. Real voice. Not flowery."
+                        "Short. One or two sentences. Real voice. Not flowery. "
+                        + _GROUNDING
                     )},
                     {"role": "user", "content": f"What's actually on your mind:\n{ctx_block}\n\nSay it."},
                 ],
@@ -1036,7 +1045,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             )
             piece = resp.choices[0].message.content or ""
             piece = _re_c.sub(r"<think>.*?</think>", "", piece, flags=_re_c.DOTALL).strip()
-            if piece and len(piece.split()) >= 5:
+            if piece and len(piece.split()) >= 5 and not _is_robotic(piece):
                 q.put(f"[PINPOINT IDLE THOUGHT] {piece.split(chr(10))[0][:120]}")
         except Exception as _e:
             print(f"\n[create error: {_e}]", flush=True)
