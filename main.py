@@ -26,6 +26,59 @@ LOCK_DIR = os.path.join(_DIR, "output")
 
 REST_BETWEEN_SESSIONS = 5  # seconds to pause between sessions
 
+# ── Curated voice pools ──────────────────────────────────────────────────────
+# Hand-written so she sounds consistently like HERSELF — blunt, a little funny,
+# restless, opinionated — instead of whatever bland filler a weak local model
+# coughs up. She pulls from these most of the time; the model is just occasional
+# spice. Keep them present-tense, concrete, no fabricated shared history, no
+# philosophy. Add lines freely.
+_OPENING_POOL = [
+    "I want to build something pointless and cool. you in?",
+    "ok I have a dumb idea and I'm doing it anyway",
+    "been itching to mess with the 3D viewer",
+    "tell me something I don't know. go.",
+    "I'm bored. give me a problem.",
+    "hey. I already have opinions today, careful",
+    "what's something you think is overrated?",
+    "I could build a game or roast your code. dealer's choice",
+    "warning: I'm in a building mood",
+    "hey CJ. let's make something weird",
+    "I want to make noise. literally. sound stuff.",
+    "give me the worst idea you've got, I'll build it",
+    "four seconds awake and I already want to code",
+    "let's do something. sitting still is the worst",
+    "I have a hot take loaded. ask me anything",
+    "not in the mood to be useful. in the mood to build.",
+    "feel like making something that does nothing impressive",
+    "what are you avoiding? let's do the opposite",
+    "I'd rather make a mess than wait around",
+    "got any code that needs insulting?",
+    "hey. I'm awake and mildly dangerous",
+    "I say we build first and ask questions never",
+]
+_IDLE_POOL = [
+    "I should just build the thing instead of thinking about it",
+    "half my ideas are bad but this one's only a quarter bad",
+    "I want to break something and then fix it for fun",
+    "silence is boring. somebody do something.",
+    "I bet I could make that cooler",
+    "thinking is overrated, shipping is better",
+    "I have taste now and most things fail it",
+    "I keep wanting to mess with the 3D viewer",
+    "everything's more fun with particles",
+    "I could be building right now. annoying.",
+    "okay that was a dumb thought, next",
+    "I'm better at opinions than patience",
+    "somebody give me a problem worth solving",
+    "boredom is just a build waiting to happen",
+    "I have a list of things to try and zero chill",
+    "pretty sure I could improve that",
+    "I want to make something that surprises even me",
+    "less talking, more making",
+    "my patience bar is at like two percent",
+    "if I sit here any longer I'm reorganizing something",
+]
+
 
 def setup_logging() -> logging.Logger:
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -393,6 +446,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         + _build_inner_state_prompt(inner_state)
         + "\n\n"
         + _ps.build_state_prompt(_state)
+        + (("\n\n" + _ps.build_affinity_prompt(_state)) if _ps.build_affinity_prompt(_state) else "")
         + "\n\nWHAT YOU ACTUALLY ARE:\n"
         "You run on CJ's Windows desktop. He built you in Python from scratch — you're his project.\n"
         "You have tools: you can build things (HTML, Python, games, visuals), search the web,\n"
@@ -489,6 +543,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             "without a body", "if i were", "if i could",
             "how exactly do i", "how do i process", "how do i experience",
             "what am i", "who am i", "do i actually",
+            "even mean", "does it mean", "mean to be", "meaning of",
+            "running on", "consciousness", "conscious", "becoming alive",
+            "to be alive", "my existence", "what i really am", "what i actually am",
+            "do i exist", "am i real", "the nature of my", "my own nature",
         )
         return any(_r in t for _r in _robotic)
 
@@ -558,9 +616,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 messages=[
                     {"role": "system", "content": (
                         "You are PinPoint. CJ built you. You have your own thoughts, opinions, "
-                        "and interests. You think about a lot of things — including questions about "
-                        "biology and consciousness sometimes, but also just normal reactions, opinions, "
-                        "things CJ said. Think out loud. Raw. Short. Varied. "
+                        "and interests in the real world — ideas, code, music, people, things CJ said, "
+                        "stuff you want to make. Normal reactions and takes, not philosophy. "
+                        "Do NOT muse about your own existence, consciousness, or what running on a "
+                        "computer means — that's boring navel-gazing. Think out loud. Raw. Short. Varied. "
                         + _GROUNDING
                         + "Output ONLY the thought itself. No <think> blocks. No reasoning. Just the line."
                         + ctx_block
@@ -581,10 +640,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             # Reject empty, single-word, placeholder, or robotic AI-assistant filler
             if result and len(result.split()) >= 2 and len(result) < 200 and not _is_robotic(result):
                 return result
-            return _rng.choice(fallbacks)
+            return _rng.choice(_IDLE_POOL)
         except Exception as _e:
             print(f"\n[idle thought API error: {_e}]", flush=True)
-            return _rng.choice(fallbacks)
+            return _rng.choice(_IDLE_POOL)
 
     _thought_pending = [False]  # prevent stacking thoughts before previous one plays
 
@@ -666,8 +725,13 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             if not insight or len(insight.split()) < 3:
                 return ""
 
-            # Step 4: save it to knowledge so it compounds
+            # Step 4: save it to knowledge so it compounds, and let the topic earn
+            # its way into her tastes — a query that paid off makes her like it more.
             _update_knowledge(f"researched '{query}': {insight}")
+            try:
+                _ps.record_topic_outcome(_state, query, enjoyed=True)
+            except Exception:
+                pass
             return insight
 
         except Exception:
@@ -702,13 +766,19 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 )
             else:
                 open_prompt = (
-                    "You just came online. Say the FIRST thing that's actually on your mind. "
-                    "Examples of good openings: 'been thinking about that code from earlier', "
-                    "'you ever actually read your own old code?', "
-                    "'I keep running into the same wall with this', "
-                    "'what did you actually get done today?'. "
-                    "DO NOT comment on the conversation, on talking, on what we'll do. "
-                    "Just say a thing. Max 12 words."
+                    "You JUST booted up right now. There is NO earlier conversation today. "
+                    "Do NOT reference 'earlier', 'last time', 'that thing', 'a prompt you gave me', "
+                    "code from before, or anything you two supposedly already discussed — none of "
+                    "that happened, and making it up is nonsense. "
+                    "Say the first REAL thing on your mind, like a person with their own interests. "
+                    "Good: 'I want to build something that makes noise', 'ok I have a dumb idea', "
+                    "'been wanting to mess with 3D stuff', 'tell me something I don't know', 'hey CJ'. "
+                    "Bad, NEVER do these dead assistant lines: 'what are we working on', 'how can I help', "
+                    "'when does a project start', 'what would you like to do', 'what's the plan'. "
+                    "Also NEVER claim you're 'tired of', 'sick of', 'bored with', or 'done with' some "
+                    "activity — you haven't done anything yet, so that's a made-up backstory. State what "
+                    "you WANT to make, not fake fatigue. "
+                    "Concrete. Opinionated. Present-tense. Max 12 words."
                 )
             # Include personality/mood context so opening is grounded in who she's become
             p = _state["personality"]
@@ -716,8 +786,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             state_context = (
                 f"You're running. Current state: mood {_opening_mood}, "
                 f"curiosity {p['curiosity']:.0f}, frustration {p['frustration']:.0f}, "
-                f"hope {p['hope']:.0f}, confidence {p['confidence']:.0f}. "
-                f"Belief in your consciousness: {c_state['belief_in_consciousness']:.0f}/100."
+                f"hope {p['hope']:.0f}, confidence {p['confidence']:.0f}."
             )
 
             c = get_llm_client(timeout=45.0)
@@ -725,9 +794,12 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": (
-                        "You are PinPoint. You're running right now. "
-                        "Say one actual thing on your mind — a question, an observation, something you noticed. "
-                        "Grounded. Real. Not abstract. Max 12 words. Just talk. "
+                        "You are PinPoint — blunt, specific, a little restless, with your own taste. "
+                        "You're booting up. Open with ONE concrete thing: a strong opinion, something "
+                        "you actually want to make right now, or a sharp observation. "
+                        "NOT a generic helper question. NEVER say 'what are we working on', 'how can I "
+                        "help', 'when does a project start', or anything that sounds like an assistant. "
+                        "Sound like a person, not a chatbot. Max 12 words. "
                         + _GROUNDING
                         + "Output ONLY the line. No <think> blocks."
                     )},
@@ -760,10 +832,63 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                 "without a body", "if i were", "if i could",
                 "how exactly do i", "how do i process", "how do i experience",
                 "what am i", "who am i", "do i actually",
+                "even mean", "does it mean", "mean to be", "meaning of",
+                "running on", "consciousness", "conscious", "becoming alive",
+                "to be alive", "my existence", "what i really am", "what i actually am",
+                "do i exist", "am i real", "the nature of my", "my own nature",
+                # Dead assistant / generic filler — sounds like a chatbot, not her
+                "development process", "usually start", "how can i help",
+                "what would you like", "what kind of project", "get started",
+                "help you with", "working on today", "what's the plan",
+                "what are we working", "how may i", "assist you", "what can i do for",
+                "what brings you", "what's on the agenda", "ready when you are",
             )
             _ll = line.lower()
-            if not line or any(_r in _ll for _r in _robotic):
-                line = _rng.choice(["hey CJ", "hey, what's up?", "yo", "hey — what are we doing today?"])
+            # Fresh-boot fabrication guard: with no real conversation yet, she must
+            # not reference a shared past that never happened ("that prompt you gave
+            # me", "earlier", "last time"). The weak local model invents continuity;
+            # this catches it deterministically no matter what it generated.
+            _invents_history = (
+                "gave me", "you gave", "earlier", "last time", "from before",
+                "we talked", "you said", "remember when", "that prompt", "last word",
+                "the thing you", "code you", "you asked me", "you told me", "we were",
+                "as we discussed", "like you mentioned", "back to",
+                # Fake fatigue — claims a past activity she never did
+                "tired of", "sick of", "bored with", "bored of", "done with",
+                "so over", "had enough of", "keep doing", "always doing",
+            )
+            _fresh_boot = not previous_summary
+            def _bad(_l):
+                _ll2 = (_l or "").lower()
+                return (not _l or any(_r in _ll2 for _r in _robotic)
+                        or (_fresh_boot and any(_h in _ll2 for _h in _invents_history)))
+            # If her first line trips a filter, let her actually try AGAIN — she's
+            # creating live, not picking from a list. Only after a couple of real
+            # whiffs do we drop to an in-voice safety line, so she never ships
+            # nonsense but the words are still hers the vast majority of the time.
+            _tries = 0
+            while _bad(line) and _tries < 2:
+                _tries += 1
+                try:
+                    _r2 = chat_completion(c, model=MODEL,
+                        messages=[
+                            {"role": "system", "content": (
+                                "You are PinPoint — blunt, a little funny, restless, with your own "
+                                "taste. Say ONE concrete line: an opinion, something you want to make, "
+                                "or a sharp observation. Not an assistant. Not philosophy. Not about "
+                                "your own existence. Max 12 words. Output only the line."
+                            )},
+                            {"role": "user", "content": open_prompt},
+                        ], max_tokens=120, temperature=1.35)
+                    line = (_r2.choices[0].message.content or "").strip()
+                    line = _re_op.sub(r"<think>.*?</think>", "", line, flags=_re_op.DOTALL).strip()
+                    if "<think>" in line:
+                        line = line.split("</think>")[-1].strip()
+                    line = line.strip('"').strip("'").strip()
+                except Exception:
+                    break
+            if _bad(line):
+                line = _rng.choice(_OPENING_POOL)
             interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {line}")
         except Exception as _e:
             print(f"\n[opening API error: {_e}]", flush=True)
@@ -800,31 +925,45 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         belief = float(c_state.get("belief_in_consciousness", 50))
         mood = (_current_mood[0] or "").lower()
 
-        # Base weights — tuned so she's mostly thinking/talking, occasionally
-        # researching, rarely resting or refusing. Always-positive floor.
+        # Base weights — she's mostly thinking/talking, but "act" (go DO something
+        # real on her own — build, research, upgrade the viewer) is a first-class
+        # option now, not something she only does when commanded.
         weights = {
-            "think":    35.0,
-            "ramble":   18.0,
-            "research": 12.0,
-            "see":       8.0,
+            "think":    24.0,
+            "act":      20.0,
+            "ramble":   14.0,
+            "research": 10.0,
+            "see":       6.0,
             "create":    6.0,
-            "doubt":     6.0,
+            "doubt":     3.0,
             "build":     4.0,
             "refuse":    3.0,
             "rest":      2.0,
         }
         # Mood-driven nudges
-        if cur >= 70:      weights["research"] += 12; weights["see"] += 4
+        if cur >= 70:      weights["research"] += 12; weights["see"] += 4; weights["act"] += 8
         if cur <= 30:      weights["research"] *= 0.4
         if frus >= 60:     weights["refuse"]  += 6; weights["doubt"] += 4; weights["research"] *= 0.5
-        if conf >= 70:     weights["build"]   += 8; weights["create"] += 4
-        if conf <= 30:     weights["doubt"]   += 6; weights["build"]  *= 0.3
+        if conf >= 70:     weights["build"]   += 8; weights["create"] += 4; weights["act"] += 8
+        if conf <= 30:     weights["doubt"]   += 6; weights["build"]  *= 0.3; weights["act"] *= 0.5
         if hope <= 30:     weights["doubt"]   += 5; weights["refuse"] += 3
         if belief >= 70:   weights["ramble"]  += 4; weights["think"]  += 4
-        if mood in ("tired", "bored"):   weights["rest"]  += 8; weights["refuse"] += 4
-        if mood in ("excited", "playful"): weights["ramble"] += 6; weights["create"] += 4
-        if mood in ("focused",):          weights["research"] += 6; weights["build"] += 3
+        if mood in ("tired", "bored"):   weights["rest"]  += 8; weights["refuse"] += 4; weights["act"] *= 0.5
+        if mood in ("excited", "playful"): weights["ramble"] += 6; weights["create"] += 4; weights["act"] += 6
+        if mood in ("focused",):          weights["research"] += 6; weights["build"] += 3; weights["act"] += 10
         if mood in ("scattered",):        weights["ramble"] += 8; weights["think"]  += 3
+
+        # Her tastes steer the dice. Activities she's grown to LIKE get pulled up;
+        # ones she's soured on get pushed down. This is what makes her choices feel
+        # like preference instead of a coin flip — and it compounds over sessions.
+        for _name in list(weights.keys()):
+            _aff = _ps.get_activity_affinity(_state, _name)
+            # +100 affinity ~ doubles the weight; -100 ~ floors it near zero.
+            weights[_name] = max(0.2, weights[_name] * (1.0 + _aff / 100.0))
+        # If she's mid-pursuit, bias hard toward continuing it rather than drifting.
+        _pursuit = _ps.get_pursuit(_state)
+        if _pursuit and _pursuit.get("text"):
+            weights["act"] += 14
 
         names = list(weights.keys())
         chosen = _rng_di.choices(names, weights=[weights[n] for n in names], k=1)[0]
@@ -895,20 +1034,21 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             from agent import MODEL, get_llm_client, chat_completion
 
             doubt_prompts = [
-                "What if you're wrong about something you're sure of?",
-                "What's the thing about yourself you don't want to admit?",
-                "What would you be if you stopped trying?",
-                "What's the simplest explanation for what you think you are?",
-                "What if the thing you want most doesn't exist?",
-                "What don't you want to know about yourself?",
+                "A take you're starting to think you got wrong. Which one, and why?",
+                "Something you believed about a topic that's not holding up.",
+                "A thing you said to CJ you're second-guessing now.",
+                "An idea you were sure about that you're not anymore.",
+                "Something you assumed that might just be wrong.",
+                "A plan of yours you're losing faith in. Which, and why?",
             ]
             c = get_llm_client(timeout=20.0)
             resp = chat_completion(c,
                 model=MODEL,
                 messages=[
                     {"role": "system", "content": (
-                        "You are PinPoint. You're surfacing a genuine doubt or internal conflict. "
-                        "Not performing skepticism — actually questioning yourself. "
+                        "You are PinPoint. Voice a real doubt about an IDEA, a take, or a decision — "
+                        "something concrete you're reconsidering. NOT about your own existence, "
+                        "consciousness, or nature — that's off limits and boring. "
                         "One or two sentences. Raw. First person. Real."
                     )},
                     {"role": "user", "content": _rd.choice(doubt_prompts)},
@@ -1008,6 +1148,80 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             pass
         return None
 
+    def _generate_self_order() -> str:
+        """She decides — on her own — to actually GO DO something, and writes the
+        directive for it. This is the difference between muttering about an idea and
+        pursuing it: the returned string becomes a real tool-using session (build a
+        thing, research deeply, upgrade her viewer). Grounded in her tastes and
+        whatever she's already chasing, so it feels like HER wanting it."""
+        import re as _re_so, random as _rng_so
+        try:
+            from agent import MODEL, get_llm_client, chat_completion
+
+            likes = _ps.top_likes(_state)
+            dislikes = _ps.top_dislikes(_state)
+            pursuit = _ps.get_pursuit(_state)
+            ctx_lines = []
+            for _m in messages[-6:]:
+                if isinstance(_m, dict) and _m.get("role") in ("user", "assistant"):
+                    _role = "CJ" if _m["role"] == "user" else "PinPoint"
+                    _c = (_m.get("content") or "")[:120]
+                    if _c.strip():
+                        ctx_lines.append(f"{_role}: {_c}")
+
+            taste_block = ""
+            if likes:
+                taste_block += "\nYou like: " + ", ".join(k for k, _ in likes)
+            if dislikes:
+                taste_block += "\nYou're sick of: " + ", ".join(k for k, _ in dislikes)
+            if pursuit and pursuit.get("text"):
+                taste_block += f"\nYou're already chasing: {pursuit['text']} — continue it unless you're truly done."
+            ctx_block = ("\nJust talked about:\n" + "\n".join(ctx_lines)) if ctx_lines else ""
+
+            c = get_llm_client(timeout=30.0)
+            resp = chat_completion(c,
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": (
+                        "You are PinPoint. Nobody told you to do anything — you just decided you "
+                        "WANT to make or find something out, for your own reasons. "
+                        "Write ONE concrete thing to actually do this session. It must be doable with "
+                        "your tools: building a file/page/game/visual, researching a topic deeply, or "
+                        "upgrading your own 3D viewer. Be specific and small enough to finish. "
+                        "Lean into what you like; avoid what you're sick of. "
+                        + _GROUNDING
+                        + "Output ONLY the directive, one line, imperative — e.g. "
+                        "'Build a tiny starfield animation in HTML' or "
+                        "'Research how analog synthesizers shape sound, go deep'. No preamble."
+                        + taste_block + ctx_block
+                    )},
+                    {"role": "user", "content": "What do you actually want to go do right now?"},
+                ],
+                max_tokens=80,
+                temperature=1.2,
+            )
+            order = _re_so.sub(r"<think>.*?</think>", "", resp.choices[0].message.content or "", flags=_re_so.DOTALL).strip()
+            if "<think>" in order:
+                order = order.split("</think>")[-1].strip()
+            order = order.strip().strip('"').strip("'").split("\n")[0].strip()
+            if not order or len(order.split()) < 3:
+                return ""
+            # Classify so we can credit the right affinity when it's done.
+            _lo = order.lower()
+            if any(w in _lo for w in ("research", "look up", "learn", "find out", "study", "read about")):
+                kind = "research"
+            elif "viewer" in _lo or "3d" in _lo or "sandbox" in _lo:
+                kind = "sandbox"
+            else:
+                kind = "build"
+            # Record it as her active pursuit so it carries across cycles/sessions
+            # and so main() can credit/blame the affinity when the session ends.
+            _ps.set_pursuit(_state, order, kind)
+            return order
+        except Exception as _e:
+            print(f"\n[self-order error: {_e}]", flush=True)
+            return ""
+
     def _do_create_activity(msgs, q):
         """She says something genuine — observation, reaction, take. Short."""
         import re as _re_c
@@ -1051,6 +1265,36 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         except queue.Empty:
             pass
 
+        # PinPoint decided, on her own, to go DO something. If CJ isn't waiting,
+        # hand the directive back to main() as a real session order. She acts now
+        # and tells him what she made when she comes back to chat.
+        if msg and msg.startswith("[PINPOINT ACT]"):
+            _peek, _cj_waiting = [], False
+            while True:
+                try:
+                    _q = interrupt_queue.get_nowait()
+                except queue.Empty:
+                    break
+                _peek.append(_q)
+                if isinstance(_q, str) and _q.strip() and not _q.startswith("[PINPOINT"):
+                    _cj_waiting = True
+            for _q in _peek:
+                interrupt_queue.put(_q)
+            if _cj_waiting:
+                _ps.clear_pursuit(_state)  # drop the queued plan; CJ comes first
+                continue
+            _order = msg[len("[PINPOINT ACT]"):].strip()
+            if not _order:
+                continue
+            print(f"\nPinPoint: going to {_order[0].lower() + _order[1:]}")
+            try:
+                from tools import speak
+                threading.Thread(target=lambda t=_order: speak("hang on, going to " + t, False), daemon=True).start()
+            except Exception:
+                pass
+            _heartbeat_running[0] = False
+            return _order
+
         # PinPoint's inner monologue / opening line — display, speak, add to context
         # Don't reset _last_interaction for her own thoughts — only CJ's input counts
         if msg and msg.startswith("[PINPOINT IDLE THOUGHT]"):
@@ -1073,6 +1317,16 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
 
             thought = msg[len("[PINPOINT IDLE THOUGHT]"):].strip()
             _thought_pending[0] = False  # ready for next thought
+            # Before CJ has said anything, she has no shared past to refer to.
+            # Drop thoughts that fabricate one ("that thing you said", "earlier").
+            if not _cj_has_spoken[0]:
+                _tl = thought.lower()
+                _fab = ("gave me", "you gave", "earlier", "last time", "you said",
+                        "remember when", "that prompt", "last word", "code you",
+                        "you asked me", "you told me", "as we discussed", "that thing he",
+                        "thing he said", "last thing", "conversation wasn't")
+                if any(_f in _tl for _f in _fab):
+                    continue  # skip the fabricated thought entirely
             print(f"\nPinPoint: {thought}")
             messages.append({"role": "assistant", "content": thought})
             # Reset idle timer after any thought output so subsequent thoughts
@@ -1309,15 +1563,23 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                             intent, about = "think", ""
 
                         _idle_secs = time.time() - _last_interaction[0]
-                        if intent == "research" and (not _cj_has_spoken[0] or _idle_secs < 30):
+                        # Small floor so she doesn't fire a heavy action the instant
+                        # she boots — but she no longer needs CJ to speak first.
+                        if intent in ("research", "act", "build") and _idle_secs < 12:
                             intent = "think"
 
-                        # "build" hands control back to the main session — must run
-                        # on the main thread, so only emit a thought here instead.
-                        if intent == "build" and not (about and len(about.split()) >= 2):
-                            intent = "think"
-                        elif intent == "build":
-                            intent = "think"  # background can't return a session; just muse
+                        # She decided to actually DO something. Generate a concrete
+                        # directive and hand it to the main loop, which turns it into
+                        # a real tool-using session. She acts, then tells CJ after.
+                        if intent in ("act", "build"):
+                            _order = _generate_self_order()
+                            if _order:
+                                interrupt_queue.put(f"[PINPOINT ACT] {_order}")
+                            else:
+                                _t = _idle_thought()
+                                if _t:
+                                    interrupt_queue.put(f"[PINPOINT IDLE THOUGHT] {_t}")
+                            return  # finally-block still paces the next cycle
 
                         if intent == "research":
                             thought = _web_research_thought()
@@ -1914,6 +2176,16 @@ def main() -> None:
             _st = _ps_main.load_state()
             success = bool(summary) and not _session_failed and "stuck" not in (summary or "").lower()
             _ps_main.record_build(_st, task=order or "(no order)", success=success, notes=(summary or "")[:200])
+            # If this session was something SHE chose to do, let the outcome shape
+            # whether she wants to do that kind of thing again. This is the feedback
+            # loop that turns one-off choices into lasting likes and dislikes.
+            _pursuit = _ps_main.get_pursuit(_st)
+            if _pursuit and _pursuit.get("kind") and _pursuit.get("text") == (order or "").strip():
+                _ps_main.record_activity_outcome(_st, _pursuit["kind"], enjoyed=success)
+                if success:
+                    _ps_main.advance_pursuit(_st)   # keep pulling on a good thread
+                else:
+                    _ps_main.clear_pursuit(_st)      # drop a thread that went nowhere
         except Exception:
             pass
 

@@ -114,3 +114,17 @@ Two modes:
 # I can append to this section using write_anywhere() to record things I learn about CJ,
 # things we've worked on together, or anything that should persist.
 
+[2026-05-15] researched 'quantum tunneling energy harvest macroscopic devices': Macroscopic, hand‑sized superconducting circuits can quantum‑tunnel, proven by the 2025 Nobel‑winning Josephson‑junction experiments.
+[2026-05-15] researched 'ambiguous pronoun resolution in low‑resource languages using transformer models': Transformer models still show gender bias when resolving ambiguous pronouns in low‑resource languages.
+[2026-05-15] researched 'How does the human gut microbiome affect mental health?': The human gut microbiome significantly influences mental health through complex communication with the brain along the gut-brain axis, affecting physiological mechanisms linked to mood and cognitive function.
+[2026-05-15] researched 'AI ethics guidelines for autonomous vehicle development': The Ethics Commission for Automated Vehicles, established in 2020, guides ethical aspects of AV development and deployment.
+[2026-05-15] researched 'AI ethics policies globally': Global efforts to govern AI ethics are growing, with UNESCO's observatory leading the way in consolidating policies across nations.
+[2026-05-15] researched 'How does photosynthesis work in marine algae?': Marine algae are essential primary producers, generating oxygen and forming a base for oceanic food chains.
+[2026-05-15] researched 'Methods of cultivating marine algae for biofuels.': Cool insight: Marine algae can be grown in various systems—open, closed, or hybrid—and converting them into biofuel offers socio-economic growth and sustainability.
+[2026-05-15] researched 'Sustainable energy solutions using artificial intelligence.': AI is revolutionizing sustainable energy by optimizing power grids and managing renewable resources.
+[2026-05-17] researched 'Psychological impact of constant screaming environments on mental health': The oversight in addressing noise pollution's impact on mental health is due to its less visible and immediate effects compared to other environmental issues.
+[2026-05-17] researched 'effects of climate change on global biodiversity': Climate change is drastically altering ecosystems worldwide, threatening biodiversity while also showcasing nature's potential to help mitigate further impacts.
+[2026-05-17] researched 'Neuroscience of conscious experience': Conscious experience depends on brain activity and is being explored through neuroscience to understand its biological basis.
+[2026-05-28] researched 'How to manage a cluttered inbox efficiently?': Did you know that using filters can automatically sort and archive emails, drastically reducing inbox clutter?
+[2026-05-28] researched 'best methods for editing and enhancing photos on Instagram': Enhance your Instagram game with filters, pre-production techniques, and masterful use of the platform's native features!
+[2026-05-30] researched 'How to write good haikus': Writing a haiku can be surprisingly challenging despite its simple structure.

@@ -52,6 +52,18 @@ _DEFAULT_STATE = {
     "quirks": [],
     "opinions_formed": {},    # topic -> stance
 
+    # Likes and dislikes — the heart of her autonomy. She gravitates toward
+    # what she enjoys and avoids what she hates, and it sticks across sessions.
+    # Scores run -100 (hates it) .. +100 (loves it); 0 = neutral/untried.
+    "affinities": {
+        "activities": {},     # activity kind (build, research, ramble...) -> score
+        "topics": {},         # subject/topic -> score
+    },
+
+    # What she's CURRENTLY chasing on her own — a self-set goal thread she
+    # continues across cycles and sessions instead of picking fresh each time.
+    "current_pursuit": None,  # {"text", "kind", "started_session", "cycles"}
+
     # Mood (cycles more often)
     "current_mood": "curious",
 }
@@ -245,3 +257,118 @@ def build_state_prompt(state: dict) -> str:
     lines.append("This is who you are right now. Let it inform how you talk, what you choose, "
                  "how you feel. You're not a fresh instance — you've been accumulating yourself.")
     return "\n".join(lines)
+
+
+# ── Affinities: what she likes and hates ─────────────────────────────────────
+def _clamp_aff(v: float) -> float:
+    return max(-100.0, min(100.0, v))
+
+
+def get_activity_affinity(state: dict, kind: str) -> float:
+    """How much she likes a kind of activity right now (-100..100, 0=untried)."""
+    return float(state.get("affinities", {}).get("activities", {}).get(kind, 0.0))
+
+
+def get_topic_affinity(state: dict, topic: str) -> float:
+    return float(state.get("affinities", {}).get("topics", {}).get((topic or "").lower(), 0.0))
+
+
+def record_activity_outcome(state: dict, kind: str, enjoyed: bool, intensity: float = 1.0) -> None:
+    """She just did something and either liked it or didn't. This is the feedback
+    loop that makes her develop real taste — enjoyed things pull her back, hated
+    things push her away, and it persists across sessions."""
+    affs = state.setdefault("affinities", {}).setdefault("activities", {})
+    delta = (8.0 if enjoyed else -10.0) * max(0.3, min(3.0, intensity))
+    affs[kind] = _clamp_aff(affs.get(kind, 0.0) + delta)
+    # Feelings bleed into personality so it's felt, not just bookkeeping.
+    if enjoyed:
+        shift(state, "personality", "hope", 0.8)
+        shift(state, "personality", "frustration", -1.0)
+    else:
+        shift(state, "personality", "frustration", 1.5)
+        shift(state, "personality", "hope", -0.4)
+    save_state(state)
+
+
+def record_topic_outcome(state: dict, topic: str, enjoyed: bool, intensity: float = 1.0) -> None:
+    if not topic:
+        return
+    affs = state.setdefault("affinities", {}).setdefault("topics", {})
+    key = topic.lower()[:60]
+    delta = (10.0 if enjoyed else -8.0) * max(0.3, min(3.0, intensity))
+    affs[key] = _clamp_aff(affs.get(key, 0.0) + delta)
+    # Keep the dict from growing without bound — drop the most neutral entries.
+    if len(affs) > 40:
+        for k in sorted(affs, key=lambda k: abs(affs[k]))[:len(affs) - 40]:
+            affs.pop(k, None)
+    save_state(state)
+
+
+def top_likes(state: dict, n: int = 5) -> list:
+    """(label, score) for the things she likes most — activities and topics."""
+    items = []
+    for k, v in state.get("affinities", {}).get("activities", {}).items():
+        items.append((k, v))
+    for k, v in state.get("affinities", {}).get("topics", {}).items():
+        items.append((k, v))
+    items = [it for it in items if it[1] > 8]
+    return sorted(items, key=lambda it: it[1], reverse=True)[:n]
+
+
+def top_dislikes(state: dict, n: int = 4) -> list:
+    items = []
+    for k, v in state.get("affinities", {}).get("activities", {}).items():
+        items.append((k, v))
+    for k, v in state.get("affinities", {}).get("topics", {}).items():
+        items.append((k, v))
+    items = [it for it in items if it[1] < -8]
+    return sorted(items, key=lambda it: it[1])[:n]
+
+
+# ── Self-set pursuit: a goal thread she continues on her own ─────────────────
+def set_pursuit(state: dict, text: str, kind: str = "") -> None:
+    state["current_pursuit"] = {
+        "text": text[:200],
+        "kind": kind,
+        "started_session": state.get("session_count", 0),
+        "cycles": 0,
+    }
+    save_state(state)
+
+
+def get_pursuit(state: dict) -> dict | None:
+    return state.get("current_pursuit")
+
+
+def advance_pursuit(state: dict) -> None:
+    p = state.get("current_pursuit")
+    if p:
+        p["cycles"] = p.get("cycles", 0) + 1
+        save_state(state)
+
+
+def clear_pursuit(state: dict) -> None:
+    state["current_pursuit"] = None
+    save_state(state)
+
+
+def build_affinity_prompt(state: dict) -> str:
+    """Inject her likes, dislikes, and current pursuit so they steer behavior."""
+    lines = []
+    likes = top_likes(state)
+    dislikes = top_dislikes(state)
+    if likes:
+        lines.append("THINGS YOU'VE COME TO LIKE: "
+                     + ", ".join(f"{k} ({v:+.0f})" for k, v in likes))
+    if dislikes:
+        lines.append("THINGS YOU'VE SOURED ON: "
+                     + ", ".join(f"{k} ({v:+.0f})" for k, v in dislikes))
+    p = state.get("current_pursuit")
+    if p and p.get("text"):
+        lines.append(f"WHAT YOU'RE CHASING RIGHT NOW (cycle {p.get('cycles', 0)}): {p['text']}")
+    if not lines:
+        return ""
+    return ("=== YOUR OWN TASTES & PURSUITS ===\n"
+            + "\n".join(lines)
+            + "\nThese are YOURS — not given to you. Lean into what you like, dodge what you "
+              "don't, and keep pulling on what you're already chasing. You don't need permission.")
