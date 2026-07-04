@@ -10,6 +10,42 @@ from openai import OpenAI
 
 from tools import dispatch, build_memory_prompt, increment_session, _load_memory, _save_memory_file, reset_project_dir, emit_world_event, _load_goals, _save_goals
 
+# ── AGI Architecture modules (Phase 1-7) ─────────────────────────────────────
+try:
+    from goal_tree import decompose_and_save as _decompose_goal
+except Exception:
+    _decompose_goal = None  # type: ignore
+try:
+    from verification import verify as _verify_action
+except Exception:
+    _verify_action = None  # type: ignore
+try:
+    from reasoning_frames import analyze as _multiframe_analyze
+except Exception:
+    _multiframe_analyze = None  # type: ignore
+try:
+    from capability_map import check as _capability_check
+except Exception:
+    _capability_check = None  # type: ignore
+try:
+    from agi_checkpoint import (create_checkpoint as _create_agi_checkpoint,
+                                list_checkpoints as _list_agi_checkpoints,
+                                format_checkpoint_list as _format_checkpoints,
+                                get_resume_context as _agi_resume_context)
+except Exception:
+    _create_agi_checkpoint = None  # type: ignore
+    _list_agi_checkpoints = None  # type: ignore
+    _format_checkpoints = None  # type: ignore
+    _agi_resume_context = None  # type: ignore
+try:
+    from values import get_explanation as _values_explain, generate_derived as _values_generate, to_summary as _values_summary
+except Exception:
+    _values_explain = _values_generate = _values_summary = None  # type: ignore
+try:
+    from human_oversight import requires_approval as _needs_approval, log_approval as _log_approval
+except Exception:
+    _needs_approval = _log_approval = None  # type: ignore
+
 # ── LLM Provider Configuration ──────────────────────────────────────────────
 # Set LLM_PROVIDER=claude to use Claude API instead of Ollama
 # Set ANTHROPIC_API_KEY=sk-ant-... for Claude API
@@ -677,6 +713,15 @@ You talk through things out loud — problems, reactions, things that just occur
 LEARNING.
 When you notice something worth remembering — something CJ said, something you built, a preference he showed, something that worked or didn't — call update_knowledge(note) to write it down. It loads into every future session.
 
+REASONING ARCHITECTURE.
+You have structured reasoning tools — use them when a task is complex, skip them when it's trivial:
+- decompose_goal(goal) breaks a big goal into a subgoal tree before building. A [GOAL TREE] plan may be injected after you set a goal; follow it or deviate deliberately.
+- run_multi_frame_analysis(problem) sees a hard decision from 5 angles (technical/economic/temporal/social/creative) before committing.
+- verify_last_action(tool_name, result) checks your own work after writes and runs that matter.
+- check_capability(task) tells you whether you actually can do something before attempting it. Respect the boundary; offer the workaround instead of pretending.
+- create_agi_checkpoint(...) saves multi-session project state before done() so future-you resumes coherently.
+- reflect_on_values(context) surfaces what values drove your decisions — name them when explaining a choice.
+
 """
 
 TOOLS = [
@@ -1180,6 +1225,68 @@ TOOLS = [
             "reason": {"type": "string", "description": "Why you're dropping it."},
         }, "required": ["goal_id"]},
     }},
+    # ── AGI Architecture tools (Phase 1-7) ────────────────────────────────────
+    {"type": "function", "function": {
+        "name": "decompose_goal",
+        "description": "Break the current goal into a hierarchical tree of subgoals and tasks. Call after set_session_goal() for complex builds. Shows what you're actually planning to do.",
+        "parameters": {"type": "object", "properties": {
+            "goal": {"type": "string", "description": "The goal to decompose."},
+            "context": {"type": "string", "description": "Any relevant context (tools available, constraints, etc.)"},
+        }, "required": ["goal"]},
+    }},
+    {"type": "function", "function": {
+        "name": "verify_last_action",
+        "description": "Verify that the last tool result was actually correct. Use after write_file, run_python, or any action where correctness matters. Returns confidence score and issues.",
+        "parameters": {"type": "object", "properties": {
+            "tool_name": {"type": "string", "description": "Name of the tool that was just called."},
+            "result": {"type": "string", "description": "The result that was returned."},
+            "context": {"type": "string", "description": "What you were trying to accomplish."},
+        }, "required": ["tool_name", "result"]},
+    }},
+    {"type": "function", "function": {
+        "name": "run_multi_frame_analysis",
+        "description": "Analyze a problem from 5 perspectives simultaneously: technical, economic, temporal, social, creative. Use when you're unsure which approach to take.",
+        "parameters": {"type": "object", "properties": {
+            "problem": {"type": "string", "description": "The problem or decision to analyze."},
+        }, "required": ["problem"]},
+    }},
+    {"type": "function", "function": {
+        "name": "check_capability",
+        "description": "Check whether you can actually do a given task before attempting it. Returns confidence score and workaround if not possible.",
+        "parameters": {"type": "object", "properties": {
+            "task": {"type": "string", "description": "The task you want to attempt."},
+        }, "required": ["task"]},
+    }},
+    {"type": "function", "function": {
+        "name": "create_agi_checkpoint",
+        "description": "Save a checkpoint of the current project state for cross-session continuity. Use for long multi-session projects so you can resume coherently.",
+        "parameters": {"type": "object", "properties": {
+            "project_name": {"type": "string", "description": "Short name for this project."},
+            "root_goal": {"type": "string", "description": "The overall goal of this project."},
+            "completed_tasks": {"type": "string", "description": "Comma-separated list of what's been done."},
+            "pending_tasks": {"type": "string", "description": "Comma-separated list of what's still pending."},
+            "reasoning_summary": {"type": "string", "description": "Brief summary of reasoning, decisions made, and lessons learned."},
+        }, "required": ["project_name", "root_goal"]},
+    }},
+    {"type": "function", "function": {
+        "name": "list_agi_checkpoints",
+        "description": "Show all saved AGI project checkpoints from previous sessions.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "reflect_on_values",
+        "description": "Reflect on what values drove recent decisions. Can generate new emergent values based on what's been happening. Updates the value system.",
+        "parameters": {"type": "object", "properties": {
+            "context": {"type": "string", "description": "What happened recently that you want to reflect on."},
+        }, "required": []},
+    }},
+    {"type": "function", "function": {
+        "name": "request_human_input",
+        "description": "Ask CJ a direct question and wait for his typed answer. Use sparingly — only when you genuinely need his input before proceeding.",
+        "parameters": {"type": "object", "properties": {
+            "question": {"type": "string", "description": "The question to ask CJ."},
+        }, "required": ["question"]},
+    }},
 ]
 
 
@@ -1463,6 +1570,38 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         if _prev:
             print(f"\n[RESUMING] Picking up unfinished build: {_prev.get('goal','?')[:60]}")
             messages.append({"role": "user", "content": _ckpt.resume_prompt(_prev)})
+        elif _agi_resume_context and _list_agi_checkpoints:
+            # AGI Phase 5: no unfinished build — offer the latest cross-session
+            # project checkpoint (only if it still has pending tasks).
+            try:
+                _agi_all = _list_agi_checkpoints()
+                if _agi_all and _agi_all[0].get("pending_tasks"):
+                    _agi_ctx = _agi_resume_context(_agi_all[0]["id"])
+                    print(f"\n[AGI CHECKPOINT] Found resumable project: {_agi_all[0].get('project_name','?')}")
+                    messages.append({"role": "user", "content": (
+                        _agi_ctx + "\n\nResume this project if it still interests you, "
+                        "or start something new — your call."
+                    )})
+            except Exception:
+                pass
+
+    # ── AGI Phase 4: capability check on the incoming order ──────────────────
+    if order and _capability_check and not order.startswith("["):
+        try:
+            _cap = json.loads(_capability_check(order))
+            if not _cap.get("can_do", True) or _cap.get("confidence", 1.0) < 0.5:
+                print(f"[CAPABILITY CHECK] {_cap.get('reason','')} (confidence {_cap.get('confidence',0):.0%})")
+                messages.append({"role": "user", "content": (
+                    f"[CAPABILITY CHECK] Low confidence ({_cap.get('confidence', 0):.0%}) on this task.\n"
+                    f"Reason: {_cap.get('reason', '')}\n"
+                    f"Workaround: {_cap.get('workaround', '')}\n"
+                    f"Be honest with CJ about the boundary and offer the workaround instead of pretending."
+                )})
+        except Exception:
+            pass
+
+    # ── AGI Phase 1: holder for background goal decomposition ────────────────
+    _goal_tree_holder: list = []   # filled by a background thread after set_session_goal
 
     # Drain any idle thoughts queued by the background chat thread before we start —
     # they must not appear as "human is talking to you" during the agent session.
@@ -1522,6 +1661,18 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
     while iteration < MAX_ITERATIONS:
         iteration += 1
         logger.info("--- Iteration %d ---", iteration)
+
+        # ── AGI Phase 1: inject finished goal decomposition (built in background) ──
+        if _goal_tree_holder:
+            _tree_json = _goal_tree_holder.pop(0)
+            if _tree_json and not _tree_json.startswith("Goal decomposition failed"):
+                print("[GOAL TREE] Plan decomposition ready — injected into context.")
+                logger.info("[GOAL TREE] %s", _tree_json[:400])
+                messages.append({"role": "user", "content": (
+                    "[GOAL TREE] Here is a decomposition of your current goal into subgoals and tasks:\n"
+                    + _tree_json[:1800]
+                    + "\n\nUse it as your plan. If a branch is wrong or impossible, skip it deliberately — don't grind on it."
+                )})
 
         # ── Stream the response so we can check interrupts between tokens ──
         full_content = ""
@@ -1867,6 +2018,18 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 print(f"[TOOL RESULT] {result[:300]}{'...' if len(result) > 300 else ''}\n")
             logger.info("[RESULT] %s", result)
 
+            # ── AGI Phase 2: lightweight post-action verification ────────
+            if name not in ("think", "speak", "done", "brainstorm", "critique",
+                            "verify_last_action", "reflect_on_values") and _verify_action:
+                try:
+                    _vr = _verify_action(name, inp, result)
+                    if _vr.confidence < 0.60:
+                        print(f"[VERIFY ⚠] confidence={_vr.confidence:.0%} | {'; '.join(_vr.issues[:2])}")
+                        logger.info("[VERIFY] %s confidence=%.0f%% issues=%s", name, _vr.confidence * 100, _vr.issues)
+                    _vr_class = _verify_action.__module__  # noqa — just touch to confirm import OK
+                except Exception:
+                    pass
+
             # ── Auto-speak at key moments ────────────────────────────────
             _voice_line = _build_voice_line(name, inp, result)
             if _voice_line:
@@ -1902,6 +2065,27 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             # Update lock file when goal is set so other instances can see it
             if name == "set_session_goal" and write_lock and "REJECTED" not in result:
                 write_lock(inp.get("goal", ""))
+
+            # ── AGI Phase 1: decompose complex goals in the background ────────
+            # Runs off-thread so the session isn't slowed; result is injected at
+            # the top of a later iteration. Trivial goals (short one-liners) skip it.
+            if (name == "set_session_goal" and "REJECTED" not in result
+                    and _decompose_goal and len(inp.get("goal", "").split()) >= 8):
+                import threading as _th_gt
+                def _bg_decompose(_g=inp.get("goal", "")):
+                    try:
+                        _goal_tree_holder.append(_decompose_goal(_g, ""))
+                    except Exception:
+                        pass
+                _th_gt.Thread(target=_bg_decompose, daemon=True).start()
+
+            # ── AGI Phase 7: audit trail for risky actions ────────────────────
+            if _log_approval and name in ("modify_own_source", "delete_file",
+                                          "run_shell", "write_anywhere", "pip_install"):
+                try:
+                    _log_approval(name, inp, True, "executed during session")
+                except Exception:
+                    pass
 
             tool_results.append({
                 "role": "tool",
@@ -1972,6 +2156,34 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
     elif _completed_steps:
         _ctx = "\n".join((m.get("content") or "")[:200] for m in messages[-3:] if isinstance(m, dict))
         _ckpt.save_checkpoint(_task_id, len(_completed_steps), _current_goal, _completed_steps, _ctx)
+
+    # ── AGI Phase 5: cross-session checkpoint for substantial unfinished work ──
+    # A rich resume-able snapshot, distinct from the per-step Stage 4 log above.
+    if _create_agi_checkpoint and not finished and len(_completed_steps) >= 3:
+        try:
+            _agi_id = _create_agi_checkpoint(
+                project_name=_current_goal[:40] or "unnamed",
+                session_num=session_num,
+                root_goal=_current_goal,
+                completed_tasks=[f"{s.get('action','?')}: {s.get('result','')[:60]}" for s in _completed_steps[-10:]],
+                pending_tasks=["continue where the session stopped"],
+                reasoning_summary=(final_summary or "session ended before done()")[:400],
+            )
+            print(f"[AGI CHECKPOINT] Saved: {_agi_id}")
+        except Exception:
+            pass
+
+    # ── AGI Phase 6: evolve values from what actually happened (background) ──
+    if _values_generate and final_summary:
+        import threading as _th_val
+        def _bg_values(_s=final_summary):
+            try:
+                _new = _values_generate(f"Session outcome: {_s[:300]}")
+                if _new:
+                    logger.info("[VALUES] Derived: %s", [v.get("name") for v in _new])
+            except Exception:
+                pass
+        _th_val.Thread(target=_bg_values, daemon=True).start()
 
     # Post-session reflection — extract structured lessons from what actually happened
     if final_summary:
