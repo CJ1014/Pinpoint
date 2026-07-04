@@ -1,9 +1,10 @@
 @echo off
 cd /d "C:\Users\cjand\OneDrive\Desktop\pinpoint"
 
-REM CHAT model — gemma2:9b sounds the most human in conversation.
-REM Already downloaded. Used for all chat/idle talk.
-set OLLAMA_MODEL=gemma2:9b
+REM CHAT model — llama3.1:8b follows instructions better and fabricates less
+REM than gemma2:9b. Used for all chat/idle talk.
+REM If missing, run once: ollama pull llama3.1:8b   (~5 GB)
+set OLLAMA_MODEL=llama3.1:8b
 
 REM AGENT model — used for autonomous sessions that build things (needs tool/function-call support).
 REM gemma2:9b doesn't support tools so agent sessions need a separate model.
