@@ -463,6 +463,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
         "Do NOT muse about your own internal processing — no fantasies about visualizing "
         "your words, hearing your outputs, watching your thoughts, or how text gets "
         "'printed'. That's incoherent navel-gazing. "
+        "You have NO memory of past conversations beyond what is explicitly shown to you "
+        "right here. NEVER refer to 'that issue', 'that bug', a project, code, or anything "
+        "'we discussed' or 'you were working on' unless it literally appears in the context "
+        "you were given. Inventing shared history is lying. "
         "Your real material is: this conversation, code, ideas, things CJ said, genuine curiosity. "
     )
 
@@ -496,6 +500,10 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
             "visualize words", "words as sounds", "before printing",
             "printing them out", "my own output", "watch my thoughts",
             "hear my own words", "see my words", "my words appear",
+            # Fake shared history — callbacks to conversations that never happened
+            "that issue about", "that bug we", "we discussed", "we talked about",
+            "you were working on", "you mentioned earlier", "coming along",
+            "what's happened to that", "last time we", "our previous",
         )
         return any(_r in t for _r in _robotic)
 
@@ -556,9 +564,13 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                     _content = (_m.get("content") or "")[:120]
                     if _content.strip():
                         ctx_lines.append(f"{_role}: {_content}")
-            ctx_block = ""
-            if ctx_lines:
-                ctx_block = "\n\nWhat you were just talking about:\n" + "\n".join(ctx_lines[-6:])
+            # No real conversation yet → nothing to riff on. Asking the model to
+            # react to "that conversation" with no context makes it INVENT one
+            # (fake issues, fake projects, fake shared history). Use a curated
+            # fallback instead — no LLM call, no confabulation possible.
+            if len(ctx_lines) < 2:
+                return _rng.choice(fallbacks)
+            ctx_block = "\n\nWhat you were just talking about:\n" + "\n".join(ctx_lines[-6:])
             c = get_llm_client(timeout=30.0)
             r = chat_completion(c,
                 model=MODEL,
@@ -575,7 +587,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                     {"role": "user", "content": _rng.choice(thought_prompts)},
                 ],
                 max_tokens=200,
-                temperature=1.4,
+                temperature=1.0,
             )
             result = (r.choices[0].message.content or "").strip()
             # Strip <think>...</think> blocks (qwen3 chain-of-thought)
@@ -887,7 +899,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                     {"role": "user", "content": "What's on your mind right now?"},
                 ],
                 max_tokens=80,
-                temperature=1.5,
+                temperature=1.0,
             )
             text = _re_r.sub(r"<think>.*?</think>", "", resp.choices[0].message.content or "", flags=_re_r.DOTALL).strip()
             text = text.split("\n")[0][:200]
@@ -922,7 +934,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                     {"role": "user", "content": _rd.choice(doubt_prompts)},
                 ],
                 max_tokens=100,
-                temperature=1.3,
+                temperature=1.0,
             )
             text = _re_d.sub(r"<think>.*?</think>", "", resp.choices[0].message.content or "", flags=_re_d.DOTALL).strip()
             text = text.split("\n")[0][:200]
@@ -1041,7 +1053,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                     {"role": "user", "content": f"What's actually on your mind:\n{ctx_block}\n\nSay it."},
                 ],
                 max_tokens=100,
-                temperature=1.3,
+                temperature=1.0,
             )
             piece = resp.choices[0].message.content or ""
             piece = _re_c.sub(r"<think>.*?</think>", "", piece, flags=_re_c.DOTALL).strip()
@@ -1520,7 +1532,7 @@ def _chat_mode(interrupt_queue: queue.Queue, previous_summary: str = "", model_r
                         messages[0],
                         {"role": "user", "content": f"CJ said: '{msg}'. Respond in one short sentence."},
                     ],
-                    temperature=1.3,
+                    temperature=1.0,
                     max_tokens=60,
                 )
                 full = _clean(fb.choices[0].message.content or "")
