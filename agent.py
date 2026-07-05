@@ -1736,6 +1736,16 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 f"If unsure: call verify_claim(). Hallucinations will be caught."
             )})
 
+        # ════ Phase 6: Value Reflection (every 10th iteration) ════
+        if _values_summary and iteration > 1 and iteration % 10 == 0:
+            try:
+                messages.append({"role": "user", "content": (
+                    f"[VALUES CHECKPOINT]\nCurrent values: {_values_summary()}\n\n"
+                    f"Have these values changed? Should they? Note it briefly and continue."
+                )})
+            except Exception:
+                pass
+
         # ════ Phase 3: Multi-Frame Analysis (once, after a plan exists) ════
         if (not _frames_done[0] and _plan_next_action[0] and iteration >= 5):
             _frames_done[0] = True
