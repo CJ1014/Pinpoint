@@ -4094,6 +4094,14 @@ def _dispatch_impl(tool_name: str, tool_input: dict) -> str:
         return reflect_on_values(tool_input.get("context", ""))
     elif tool_name == "request_human_input":
         return request_human_input(tool_input.get("question", ""))
+    elif tool_name == "decompose_goal_auto":
+        try:
+            from goal_tree import build_auto_tree, _save_tree_to_memory
+            _t = build_auto_tree(tool_input.get("goal", ""), depth=int(tool_input.get("depth", 2) or 2))
+            _save_tree_to_memory(_t)
+            return json.dumps(_t.to_dict(), indent=2)
+        except Exception as e:
+            return f"decompose_goal_auto failed: {e}"
     # ── Part 0: Reality anchor tools ──────────────────────────────────────────
     elif tool_name == "verify_claim":
         try:

@@ -1310,6 +1310,15 @@ TOOLS = [
         "description": "Get summary of previous sessions from memory.",
         "parameters": {"type": "object", "properties": {}},
     }},
+    # ── Part 1: Auto goal decomposition ───────────────────────────────────────
+    {"type": "function", "function": {
+        "name": "decompose_goal_auto",
+        "description": "Automatically decompose a goal into a hierarchical tree of subgoals with dependencies. Shows executable actions and progress tracking.",
+        "parameters": {"type": "object", "properties": {
+            "goal": {"type": "string", "description": "The goal to decompose"},
+            "depth": {"type": "string", "description": "How many levels deep (1-3), default 2"},
+        }, "required": ["goal"]},
+    }},
 ]
 
 
@@ -2121,18 +2130,30 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             if name == "set_session_goal" and write_lock and "REJECTED" not in result:
                 write_lock(inp.get("goal", ""))
 
-            # ── AGI Phase 1: decompose complex goals in the background ────────
-            # Runs off-thread so the session isn't slowed; result is injected at
-            # the top of a later iteration. Trivial goals (short one-liners) skip it.
+            # ── Part 1: auto-decompose the goal into a plan tree ──────────────
+            # Deterministic (no LLM call) so it runs inline. Trivial goals skip it.
             if (name == "set_session_goal" and "REJECTED" not in result
-                    and _decompose_goal and len(inp.get("goal", "").split()) >= 8):
-                import threading as _th_gt
-                def _bg_decompose(_g=inp.get("goal", "")):
-                    try:
-                        _goal_tree_holder.append(_decompose_goal(_g, ""))
-                    except Exception:
-                        pass
-                _th_gt.Thread(target=_bg_decompose, daemon=True).start()
+                    and len(inp.get("goal", "")) > 8):
+                try:
+                    _tree_json = dispatch("decompose_goal_auto", {"goal": inp.get("goal", ""), "depth": "2"})
+                    _tree_data = json.loads(_tree_json)
+                    if _reality is not None:
+                        _reality.log_action(f"Decomposed goal: {inp.get('goal', '')}")
+                    _next_action = _tree_data.get("next_priority")
+                    _executable = _tree_data.get("executable_actions", [])
+                    print(f"[GOAL TREE] {_tree_data.get('total_nodes', 0)} nodes | next: {_next_action}")
+                    messages.append({"role": "user", "content": (
+                        f"[GOAL DECOMPOSED]\n"
+                        f"Root Goal: {inp.get('goal', '')}\n\n"
+                        f"Tree Structure: {_tree_data.get('total_nodes', 0)} nodes\n"
+                        f"Progress: 0/{_tree_data.get('total_nodes', 0)} done\n\n"
+                        f"Next Action: {_next_action}\n\n"
+                        f"Executable Queue (next 3):\n"
+                        + "\n".join(f"  → {a}" for a in _executable[:3])
+                        + "\n\nFollow this plan step by step."
+                    )})
+                except Exception:
+                    pass
 
             # ── AGI Phase 7: audit trail for risky actions ────────────────────
             if _log_approval and name in ("modify_own_source", "delete_file",
