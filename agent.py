@@ -2169,6 +2169,29 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             if name == "set_session_goal" and write_lock and "REJECTED" not in result:
                 write_lock(inp.get("goal", ""))
 
+            # ════ Phase 4: Capability Check on the goal ════
+            if name == "set_session_goal" and "REJECTED" not in result and _capability_check:
+                try:
+                    _cap4 = json.loads(_capability_check(inp.get("goal", "")))
+                    if not _cap4.get("can_do", True):
+                        print(f"[CAPABILITY] Goal outside boundaries: {_cap4.get('reason', '')}")
+                        if _reality is not None:
+                            _reality.log_action(f"Rejected goal (capability boundary): {inp.get('goal', '')}")
+                        tool_results.append({
+                            "role": "user",
+                            "content": f"[CAPABILITY] Cannot proceed. {_cap4.get('reason', '')}\n"
+                                       f"Workaround: {_cap4.get('workaround', '')}\n"
+                                       f"That goal is outside your capabilities. Choose a different one."
+                        })
+                    elif _cap4.get("confidence", 1.0) < 0.6:
+                        tool_results.append({
+                            "role": "user",
+                            "content": f"[CAUTION] Low confidence ({_cap4.get('confidence', 0):.0%}) on this goal. "
+                                       f"{_cap4.get('reason', '')}. Proceed carefully."
+                        })
+                except Exception:
+                    pass
+
             # ── Part 1: auto-decompose the goal into a plan tree ──────────────
             # Deterministic (no LLM call) so it runs inline. Trivial goals skip it.
             if (name == "set_session_goal" and "REJECTED" not in result
