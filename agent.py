@@ -1622,6 +1622,18 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                         _agi_ctx + "\n\nResume this project if it still interests you, "
                         "or start something new — your call."
                     )})
+                else:
+                    # ════ Phase 5: Checkpoint Resume (v3) ════
+                    from checkpoint import Checkpoint as _CP5
+                    _cp5_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "checkpoints")
+                    _latest_cp = _CP5.get_latest(_cp5_dir)
+                    if _latest_cp and _latest_cp.pending_tasks:
+                        print(_latest_cp.to_resume_text())
+                        messages.append({"role": "user", "content": (
+                            f"We're resuming from a checkpoint. Goal: {_latest_cp.root_goal}. "
+                            f"We've completed {len(_latest_cp.completed_tasks)} tasks. "
+                            f"Next: {_latest_cp.next_steps[0] if _latest_cp.next_steps else 'continue with pending'}"
+                        )})
             except Exception:
                 pass
 
@@ -2315,6 +2327,25 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 reasoning_summary=(final_summary or "session ended before done()")[:400],
             )
             print(f"[AGI CHECKPOINT] Saved: {_agi_id}")
+        except Exception:
+            pass
+
+    # ════ Phase 5: Checkpoint Save (v3) ════
+    if iteration > 5 or finished:
+        try:
+            from checkpoint import Checkpoint as _CP5s
+            _cp5 = _CP5s(_current_goal or "free session", session_num)
+            _cp5.reasoning_summary = (final_summary or "")[:500]
+            _cp5.completed_tasks = [f"{s.get('action','?')}: {s.get('result','')[:60]}"
+                                    for s in _completed_steps[-15:]]
+            if not finished:
+                _cp5.add_pending("continue where the session stopped")
+            if _reality is not None:
+                _cp5.files_created = [f.get("filename", "") for f in _reality.current_session_files_created]
+            _cp5_path = _cp5.save(os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "checkpoints"))
+            print(f"[CHECKPOINT] Saved {_cp5.id}")
+            if _reality is not None:
+                _reality.log_action(f"Saved checkpoint: {_cp5.id}")
         except Exception:
             pass
 
