@@ -2082,15 +2082,26 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 except Exception:
                     pass
 
-            # ── AGI Phase 2: lightweight post-action verification ────────
+            # ════ Phase 2: Verification ════
             if name not in ("think", "speak", "done", "brainstorm", "critique",
                             "verify_last_action", "reflect_on_values") and _verify_action:
                 try:
                     _vr = _verify_action(name, inp, result)
-                    if _vr.confidence < 0.60:
-                        print(f"[VERIFY ⚠] confidence={_vr.confidence:.0%} | {'; '.join(_vr.issues[:2])}")
+                    if _vr.confidence < 0.7:
+                        print(f"\n[VERIFY ⚠] Confidence: {_vr.confidence:.0%} on {name}")
+                        if _vr.issues:
+                            print(f"  Issues: {_vr.issues[0]}")
+                        if _vr.suggestions:
+                            print(f"  → {_vr.suggestions[0]}")
                         logger.info("[VERIFY] %s confidence=%.0f%% issues=%s", name, _vr.confidence * 100, _vr.issues)
-                    _vr_class = _verify_action.__module__  # noqa — just touch to confirm import OK
+                        tool_results.append({
+                            "role": "user",
+                            "content": f"[VERIFICATION ALERT] Confidence {_vr.confidence:.0%}. "
+                                       f"Issues: {_vr.issues[0] if _vr.issues else 'unknown'}. "
+                                       f"Suggestion: {_vr.suggestions[0] if _vr.suggestions else 'review output'}."
+                        })
+                    if _reality is not None:
+                        _reality.log_action(f"Verified {name}: {_vr.confidence:.0%}")
                 except Exception:
                     pass
 
