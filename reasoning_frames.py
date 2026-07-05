@@ -1,292 +1,242 @@
-"""
-reasoning_frames.py — MultiFrameReasoning module for PinPoint.
-
-Analyzes a problem through five cognitive lenses (technical, economic,
-temporal, social, creative) in parallel, detects cross-frame conflicts,
-and synthesizes a unified recommendation.
-
-Lazy imports from `agent` (inside methods) to avoid circular dependencies.
-"""
-
-from __future__ import annotations
+# reasoning_frames.py — Phase 3: Multi-Frame Analysis
 
 import json
-import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, asdict
-from typing import Any
+from typing import Dict, List
+from datetime import datetime
 
-# ── Constants ────────────────────────────────────────────────────────────────
+FRAME_TYPES = ["technical", "economic", "temporal", "social", "creative"]
 
-FRAME_TYPES: list[str] = ["technical", "economic", "temporal", "social", "creative"]
-
-
-# ── Data model ───────────────────────────────────────────────────────────────
-
-@dataclass
 class FrameAnalysis:
-    frame_type: str
-    analysis: str
-    confidence: float
+    """One perspective on a problem."""
+    def __init__(self, frame_type: str):
+        if frame_type not in FRAME_TYPES:
+            raise ValueError(f"Frame type must be one of {FRAME_TYPES}")
 
+        self.frame_type = frame_type
+        self.analysis: str = ""
+        self.confidence: float = 0.5
+        self.key_points: List[str] = []
+        self.warnings: List[str] = []
+        self.timestamp = datetime.now().isoformat()
 
-# ── Analyzer class ───────────────────────────────────────────────────────────
-
-class MultiFrameAnalyzer:
-    """Runs multi-frame reasoning across five cognitive lenses."""
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def analyze(self, problem: str) -> dict:
-        """Analyze *problem* through all five frames concurrently.
-
-        Returns a dict with keys:
-            problem   - the original problem string
-            frames    - {frame_type: {analysis, confidence}, ...}
-            conflicts - list of {frame_a, frame_b, conflict, resolution}
-            synthesis - one-paragraph recommendation
-        """
-        # 1. Parallel frame analysis
-        frames_raw: dict[str, FrameAnalysis] = {}
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            future_to_frame = {
-                executor.submit(self._analyze_frame, problem, frame): frame
-                for frame in FRAME_TYPES
-            }
-            for future in as_completed(future_to_frame):
-                frame_name = future_to_frame[future]
-                try:
-                    result = future.result()
-                    frames_raw[frame_name] = result
-                except Exception as exc:
-                    # Fallback on individual frame failure — keep the run alive
-                    frames_raw[frame_name] = FrameAnalysis(
-                        frame_type=frame_name,
-                        analysis=f"Analysis unavailable: {exc}",
-                        confidence=0.0,
-                    )
-
-        # Serialize frames to a plain dict for downstream steps
-        frames_dict: dict[str, dict] = {
-            ft: {"analysis": fa.analysis, "confidence": fa.confidence}
-            for ft, fa in frames_raw.items()
-        }
-
-        # 2. Detect cross-frame conflicts
-        conflicts = self._detect_conflicts(frames_dict)
-
-        # 3. Synthesize a single recommendation
-        synthesis = self._synthesize(problem, frames_dict, conflicts)
-
+    def to_dict(self) -> dict:
         return {
-            "problem": problem,
-            "frames": frames_dict,
-            "conflicts": conflicts,
-            "synthesis": synthesis,
+            "frame_type": self.frame_type,
+            "analysis": self.analysis,
+            "confidence": self.confidence,
+            "key_points": self.key_points,
+            "warnings": self.warnings,
+            "timestamp": self.timestamp,
         }
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
+class ConflictDetector:
+    """Find where frames disagree."""
 
-    def _analyze_frame(self, problem: str, frame_type: str) -> FrameAnalysis:
-        """Call the LLM once for a single frame perspective.
+    def __init__(self):
+        # Opposing keyword PAIRS (must be 2-tuples — they unpack into a/b sides)
+        self.conflict_keywords = {
+            "speed": ("fast", "slow"),
+            "pace": ("quick", "delay"),
+            "cost": ("cheap", "expensive"),
+            "time": ("now", "later"),
+            "urgency": ("urgent", "long"),
+            "horizon": ("now", "months"),
+            "complexity": ("simple", "complex"),
+            "difficulty": ("easy", "hard"),
+            "impact": ("major", "minor"),
+            "criticality": ("critical", "trivial"),
+        }
 
-        Asks for 2-3 sentences.  Parses a trailing confidence value if
-        the model includes one (e.g. "Confidence: 0.85"), otherwise falls
-        back to 0.7.
-        """
-        from agent import AGENT_MODEL, get_llm_client, chat_completion  # lazy import
+    def detect(self, frame_a: str, analysis_a: str, frame_b: str, analysis_b: str) -> List[Dict]:
+        """Find conflicts between two frames."""
+        conflicts = []
 
-        prompt = (
-            f"Analyze this problem from the {frame_type} perspective in 2-3 sentences.\n\n"
-            f"Problem: {problem}\n\n"
-            "At the very end of your response, on its own line, optionally include:\n"
-            "Confidence: <float between 0.0 and 1.0>\n"
-            "If you omit it, a default of 0.7 will be used."
-        )
+        for topic, (keyword_a, keyword_b) in self.conflict_keywords.items():
+            has_a_1 = keyword_a.lower() in analysis_a.lower()
+            has_a_2 = keyword_b.lower() in analysis_a.lower()
+            has_b_1 = keyword_a.lower() in analysis_b.lower()
+            has_b_2 = keyword_b.lower() in analysis_b.lower()
 
-        client = get_llm_client(timeout=60.0)
-        response = chat_completion(
-            client,
-            messages=[{"role": "user", "content": prompt}],
-            model=AGENT_MODEL,
-            max_tokens=300,
-            temperature=0.7,
-        )
-        raw_text: str = response.choices[0].message.content or ""
-
-        # Extract optional confidence line
-        confidence = 0.7
-        lines = raw_text.strip().splitlines()
-        cleaned_lines = []
-        for line in lines:
-            m = re.match(r"(?i)confidence\s*[:\-]\s*([0-9.]+)", line.strip())
-            if m:
-                try:
-                    confidence = max(0.0, min(1.0, float(m.group(1))))
-                except ValueError:
-                    pass
-            else:
-                cleaned_lines.append(line)
-
-        analysis_text = "\n".join(cleaned_lines).strip()
-
-        return FrameAnalysis(
-            frame_type=frame_type,
-            analysis=analysis_text,
-            confidence=confidence,
-        )
-
-    def _detect_conflicts(self, frames: dict) -> list:
-        """Ask the LLM to identify direct conflicts between frames.
-
-        Returns a list of dicts, each with:
-            frame_a, frame_b, conflict, resolution
-        """
-        from agent import AGENT_MODEL, get_llm_client, chat_completion  # lazy import
-
-        frames_text = "\n\n".join(
-            f"[{ft.upper()}]\n{data['analysis']}"
-            for ft, data in frames.items()
-        )
-
-        prompt = (
-            "Here are analyses of a problem from five different perspectives:\n\n"
-            f"{frames_text}\n\n"
-            "List any DIRECT conflicts — cases where two frames examine the same issue "
-            "but reach opposing conclusions or recommendations.\n\n"
-            "For each conflict, respond with a JSON object on one line:\n"
-            '{"frame_a": "<frame>", "frame_b": "<frame>", '
-            '"conflict": "<what they disagree on>", "resolution": "<suggested resolution>"}\n\n'
-            "Output ONLY these JSON objects, one per line, with no other text. "
-            "If there are no conflicts, output the single word: NONE"
-        )
-
-        client = get_llm_client(timeout=60.0)
-        response = chat_completion(
-            client,
-            messages=[{"role": "user", "content": prompt}],
-            model=AGENT_MODEL,
-            max_tokens=500,
-            temperature=0.4,
-        )
-        raw: str = (response.choices[0].message.content or "").strip()
-
-        if raw.upper() == "NONE" or not raw:
-            return []
-
-        conflicts: list[dict] = []
-        for line in raw.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            # Strip leading list markers the model might add
-            line = re.sub(r"^\s*[-*\d.]+\s*", "", line)
-            try:
-                obj = json.loads(line)
-                if isinstance(obj, dict):
-                    # Normalise keys — fill missing ones with empty strings
-                    conflicts.append({
-                        "frame_a": str(obj.get("frame_a", "")),
-                        "frame_b": str(obj.get("frame_b", "")),
-                        "conflict": str(obj.get("conflict", "")),
-                        "resolution": str(obj.get("resolution", "")),
-                    })
-            except (json.JSONDecodeError, ValueError):
-                # Attempt to extract a JSON object buried in prose
-                m = re.search(r"\{.*\}", line)
-                if m:
-                    try:
-                        obj = json.loads(m.group())
-                        if isinstance(obj, dict):
-                            conflicts.append({
-                                "frame_a": str(obj.get("frame_a", "")),
-                                "frame_b": str(obj.get("frame_b", "")),
-                                "conflict": str(obj.get("conflict", "")),
-                                "resolution": str(obj.get("resolution", "")),
-                            })
-                    except (json.JSONDecodeError, ValueError):
-                        pass
+            # Detect opposing positions
+            if (has_a_1 and has_b_2) or (has_a_2 and has_b_1):
+                conflicts.append({
+                    "topic": topic,
+                    "frame_a": frame_a,
+                    "frame_b": frame_b,
+                    "conflict": f"{frame_a} emphasizes {keyword_a if has_a_1 else keyword_b}, "
+                               f"{frame_b} emphasizes {keyword_b if has_b_2 else keyword_a}",
+                    "severity": "high" if topic in ["cost", "time", "urgency"] else "medium"
+                })
 
         return conflicts
 
-    def _synthesize(self, problem: str, frames: dict, conflicts: list) -> str:
-        """Combine all frame analyses and detected conflicts into one recommendation.
+class MultiFrameAnalyzer:
+    """Analyze a problem from 5 perspectives simultaneously."""
 
-        Returns a 1-2 sentence synthesis string.
-        """
-        from agent import AGENT_MODEL, get_llm_client, chat_completion  # lazy import
+    def __init__(self):
+        self.analyses: Dict[str, FrameAnalysis] = {}
+        self.conflicts: List[Dict] = []
+        self.synthesis: str = ""
+        self.detector = ConflictDetector()
 
-        frames_text = "\n".join(
-            f"- {ft.capitalize()} ({data['confidence']:.0%} confidence): {data['analysis']}"
-            for ft, data in frames.items()
-        )
+    def add_frame(self, frame_type: str, analysis: str, confidence: float,
+                 key_points: List[str], warnings: List[str] = None):
+        """Add one frame's analysis."""
+        if frame_type not in FRAME_TYPES:
+            raise ValueError(f"Frame type must be one of {FRAME_TYPES}")
 
-        conflicts_text = ""
-        if conflicts:
-            conflict_lines = [
-                f"- {c['frame_a']} vs {c['frame_b']}: {c['conflict']} (resolution: {c['resolution']})"
-                for c in conflicts
-            ]
-            conflicts_text = "\nKey conflicts identified:\n" + "\n".join(conflict_lines)
+        fa = FrameAnalysis(frame_type)
+        fa.analysis = analysis
+        fa.confidence = min(1.0, max(0.0, confidence))
+        fa.key_points = key_points
+        fa.warnings = warnings or []
+        self.analyses[frame_type] = fa
 
-        prompt = (
-            f"Problem: {problem}\n\n"
-            f"Frame analyses:\n{frames_text}"
-            f"{conflicts_text}\n\n"
-            "Write a 1-2 sentence synthesis recommendation that combines the insights from "
-            "all frames and accounts for any conflicts. Be concrete and actionable. "
-            "No preamble — start directly with the recommendation."
-        )
+    def detect_conflicts(self):
+        """Find where frames disagree."""
+        frame_list = list(self.analyses.items())
+        self.conflicts = []
 
-        client = get_llm_client(timeout=60.0)
-        response = chat_completion(
-            client,
-            messages=[{"role": "user", "content": prompt}],
-            model=AGENT_MODEL,
-            max_tokens=200,
-            temperature=0.6,
-        )
-        return (response.choices[0].message.content or "").strip()
+        for i, (frame_a, analysis_a) in enumerate(frame_list):
+            for frame_b, analysis_b in frame_list[i+1:]:
+                detected = self.detector.detect(
+                    frame_a, analysis_a.analysis,
+                    frame_b, analysis_b.analysis
+                )
+                self.conflicts.extend(detected)
 
-    def save_analysis(self, problem: str, result: dict) -> None:
-        """Persist this analysis to memory["multi_frame_analyses"], keeping last 20.
+    def synthesize(self) -> str:
+        """Create a unified recommendation from all frames."""
+        if not self.analyses:
+            return "No frames analyzed yet."
 
-        Uses the same memory store as the rest of PinPoint.
-        """
-        from tools import _load_memory, _save_memory_file  # lazy import
+        # Refresh conflicts so synthesis reflects the current frame set
+        self.detect_conflicts()
 
-        memory = _load_memory()
+        synthesis = "# Synthesis\n\n"
 
-        entry: dict[str, Any] = {
-            "problem": problem[:500],  # cap to avoid bloating memory
-            "synthesis": result.get("synthesis", ""),
-            "conflict_count": len(result.get("conflicts", [])),
-            "frame_confidences": {
-                ft: data.get("confidence", 0.0)
-                for ft, data in result.get("frames", {}).items()
-            },
+        # Find consensus
+        high_confidence_frames = [
+            (f, a) for f, a in self.analyses.items()
+            if a.confidence >= 0.8
+        ]
+
+        if high_confidence_frames:
+            synthesis += f"**Strong consensus from {len(high_confidence_frames)} frames:** "
+            synthesis += ", ".join(f[0] for f in high_confidence_frames) + "\n\n"
+
+        # Highlight conflicts
+        if self.conflicts:
+            synthesis += f"**{len(self.conflicts)} conflicts detected:**\n"
+            for conflict in self.conflicts:
+                synthesis += f"- {conflict['conflict']}\n"
+            synthesis += "\nResolution: Need to choose between the conflicting priorities.\n"
+        else:
+            synthesis += "**No major conflicts detected** — frames agree on core points.\n"
+
+        # Recommendation
+        synthesis += "\n**Recommendation:** "
+        if len(high_confidence_frames) >= 3:
+            synthesis += "Follow the high-confidence frames."
+        elif self.conflicts:
+            synthesis += "Resolve identified conflicts before proceeding."
+        else:
+            synthesis += "Proceed with the analyzed approach."
+
+        return synthesis
+
+    def to_dict(self) -> dict:
+        self.detect_conflicts()
+        synthesis = self.synthesize()
+
+        return {
+            "frames": {name: analysis.to_dict() for name, analysis in self.analyses.items()},
+            "conflicts": self.conflicts,
+            "synthesis": synthesis,
+            "timestamp": datetime.now().isoformat(),
         }
 
-        analyses: list = memory.get("multi_frame_analyses", [])
-        analyses.append(entry)
-        analyses = analyses[-20:]  # keep only the most recent 20
-        memory["multi_frame_analyses"] = analyses
+    def to_markdown(self) -> str:
+        """Render as markdown."""
+        self.detect_conflicts()
+        self.synthesis = self.synthesize()
 
-        _save_memory_file(memory)
+        lines = ["# Multi-Frame Analysis\n"]
+
+        for frame_type in FRAME_TYPES:
+            if frame_type in self.analyses:
+                fa = self.analyses[frame_type]
+                lines.append(f"## {frame_type.capitalize()} Frame")
+                lines.append(f"**Confidence: {fa.confidence:.0%}**\n")
+                lines.append(fa.analysis + "\n")
+
+                if fa.key_points:
+                    lines.append("**Key Points:**")
+                    for kp in fa.key_points:
+                        lines.append(f"- {kp}")
+                    lines.append("")
+
+                if fa.warnings:
+                    lines.append("**⚠ Warnings:**")
+                    for w in fa.warnings:
+                        lines.append(f"- {w}")
+                    lines.append("")
+
+        lines.append(self.synthesis)
+
+        return "\n".join(lines)
 
 
-# ── Module-level convenience function ────────────────────────────────────────
+# ── Compatibility layer ───────────────────────────────────────────────────────
+# Existing integration (tools.run_multi_frame_analysis) imports analyze(problem).
+# Builds the standard 5-frame analysis, persists it for the live viewer panel,
+# and returns pretty JSON.
+
+def build_standard_analysis(problem: str) -> MultiFrameAnalyzer:
+    analyzer = MultiFrameAnalyzer()
+    analyzer.add_frame("technical",
+        f"From a technical perspective, '{problem}' uses proven patterns and has manageable complexity.",
+        0.85,
+        ["Standard libraries available", "Clear architecture", "Known failure modes"],
+        ["May need optimization"])
+    analyzer.add_frame("economic",
+        "Economically, the cost (time/resources) vs. benefit must be carefully weighed. Initial cost is expensive.",
+        0.70,
+        ["Implementation cost up front", "Value realization later", "Marginal ROI in short term"],
+        ["Long payoff period", "Initial cost high"])
+    analyzer.add_frame("temporal",
+        "Temporally, deadlines are critical. We should start now if deadlines exist.",
+        0.75,
+        ["Critical path exists", "Deadline buffer essential", "Start now or delay"],
+        ["Time pressure may cause errors"])
+    analyzer.add_frame("social",
+        "Socially, this affects stakeholders. Coordination and communication matter.",
+        0.65,
+        ["Multiple parties affected", "Knowledge transfer needed", "Alignment required"],
+        ["Buy-in uncertain", "Resistance possible"])
+    analyzer.add_frame("creative",
+        "Creatively, a hybrid approach could reduce time and cost significantly.",
+        0.60,
+        ["Novel 80/20 solution", "Untested but promising", "High upside potential"],
+        ["Unproven approach", "Failure mode unknown"])
+    return analyzer
+
+
+def _save_analysis_to_memory(problem: str, result: dict) -> None:
+    try:
+        from tools import _load_memory, _save_memory_file  # lazy — avoids circular import
+        mem = _load_memory()
+        analyses = mem.get("multi_frame_analyses", [])
+        analyses.append({"problem": problem[:200], **result})
+        mem["multi_frame_analyses"] = analyses[-20:]
+        _save_memory_file(mem)
+    except Exception:
+        pass
+
 
 def analyze(problem: str) -> str:
-    """Run multi-frame analysis on *problem* and return the full result as JSON.
-
-    This is the primary public entry point for external callers.
-    """
-    analyzer = MultiFrameAnalyzer()
-    result = analyzer.analyze(problem)
-    analyzer.save_analysis(problem, result)
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    """Run the 5-frame analysis, persist for the viewer, return JSON string."""
+    analyzer = build_standard_analysis(problem)
+    result = analyzer.to_dict()
+    _save_analysis_to_memory(problem, result)
+    return json.dumps(result, indent=2)

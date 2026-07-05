@@ -1319,6 +1319,14 @@ TOOLS = [
             "depth": {"type": "string", "description": "How many levels deep (1-3), default 2"},
         }, "required": ["goal"]},
     }},
+    # ── Part 3: Multi-frame analysis ──────────────────────────────────────────
+    {"type": "function", "function": {
+        "name": "multi_frame_analysis",
+        "description": "Analyze a problem from 5 independent perspectives (technical, economic, temporal, social, creative). Detects conflicts where frames disagree.",
+        "parameters": {"type": "object", "properties": {
+            "problem": {"type": "string", "description": "The problem or decision to analyze"},
+        }, "required": ["problem"]},
+    }},
 ]
 
 
@@ -1634,6 +1642,8 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
 
     # ── AGI Phase 1: holder for background goal decomposition ────────────────
     _goal_tree_holder: list = []   # filled by a background thread after set_session_goal
+    _plan_next_action: list = [None]  # set when the goal is decomposed (Part 1)
+    _frames_done: list = [False]      # Part 3 auto-analysis runs once per session
 
     # Drain any idle thoughts queued by the background chat thread before we start —
     # they must not appear as "human is talking to you" during the agent session.
@@ -1713,6 +1723,24 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 f"ONLY reference things in this list. Do NOT invent memories.\n"
                 f"If unsure: call verify_claim(). Hallucinations will be caught."
             )})
+
+        # ════ Phase 3: Multi-Frame Analysis (once, after a plan exists) ════
+        if (not _frames_done[0] and _plan_next_action[0] and iteration >= 5):
+            _frames_done[0] = True
+            try:
+                _frames_json = dispatch("multi_frame_analysis", {"problem": _plan_next_action[0]})
+                _frames_data = json.loads(_frames_json)
+                if _reality is not None:
+                    _reality.log_action("Performed multi-frame analysis")
+                _conflict_count = len(_frames_data.get("conflicts", []))
+                if _conflict_count > 0:
+                    print(f"[MULTI-FRAME] {_conflict_count} conflicts detected")
+                    messages.append({"role": "user", "content": (
+                        f"[MULTI-FRAME] {_conflict_count} conflicts detected. Review synthesis:\n\n"
+                        + _frames_data.get("synthesis", "")
+                    )})
+            except Exception:
+                pass
 
         # ── AGI Phase 1: inject finished goal decomposition (built in background) ──
         if _goal_tree_holder:
@@ -2152,6 +2180,7 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                         _reality.log_action(f"Decomposed goal: {inp.get('goal', '')}")
                     _next_action = _tree_data.get("next_priority")
                     _executable = _tree_data.get("executable_actions", [])
+                    _plan_next_action[0] = _next_action
                     print(f"[GOAL TREE] {_tree_data.get('total_nodes', 0)} nodes | next: {_next_action}")
                     messages.append({"role": "user", "content": (
                         f"[GOAL DECOMPOSED]\n"

@@ -4094,6 +4094,12 @@ def _dispatch_impl(tool_name: str, tool_input: dict) -> str:
         return reflect_on_values(tool_input.get("context", ""))
     elif tool_name == "request_human_input":
         return request_human_input(tool_input.get("question", ""))
+    elif tool_name == "multi_frame_analysis":
+        try:
+            from reasoning_frames import analyze as _mfa
+            return _mfa(tool_input.get("problem", ""))
+        except Exception as e:
+            return f"multi_frame_analysis failed: {e}"
     elif tool_name == "decompose_goal_auto":
         try:
             from goal_tree import build_auto_tree, _save_tree_to_memory
