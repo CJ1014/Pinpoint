@@ -6,4 +6,5 @@ memory.json
 build/
 dist/
 *.spec
-pinpoint_state.json
+pinpoint_state.json.pytest_cache/
+pinpoint_permissions.json
