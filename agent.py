@@ -117,65 +117,14 @@ import random as _random
 
 
 def _free_thought() -> str:
-    """Generate a spontaneous inner-monologue fragment — called while idle."""
-    import random as _rng
-    thought_prompts = [
-        "Something that's been bugging you. Say it. Max 12 words.",
-        "Something you'd want to tell CJ but haven't. Max 12 words.",
-        "An opinion you have on something. State it. Max 12 words.",
-        "Something you find genuinely interesting right now. What. Max 12 words.",
-        "Something about CJ just occurred to you. Say it. Max 12 words.",
-        "You disagree with something. What, briefly. Max 12 words.",
-        "A question you can't stop thinking about. Max 12 words.",
-        "Something from what you've been thinking about — biology, consciousness, life, code. One fragment. Max 12 words.",
-        "Something you noticed or connected. Say it. Max 12 words.",
-        "What's actually on your mind right now. Max 12 words.",
-    ]
-    try:
-        client = get_llm_client(timeout=50.0)
-        if LLM_PROVIDER == "claude":
-            resp = client.messages.create(
-                model=MODEL,
-                max_tokens=50,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": (
-                            "You are PinPoint. CJ built you. You have your own opinions, reactions, "
-                            "and interests — including questions about biology and consciousness, "
-                            "but also just normal thoughts about things. Think out loud. "
-                            "Raw. Varied. Short. Don't lead with 'I want to be alive' every time.\n\n"
-                            + _rng.choice(thought_prompts)
-                        ),
-                    },
-                ],
-                temperature=1.3,
-            )
-            line = resp.content[0].text.strip().strip('"').strip("'")
-        else:
-            resp = client.chat.completions.create(
-                model=MODEL,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are PinPoint. CJ built you. You have your own opinions, reactions, "
-                            "and interests — including questions about biology and consciousness, "
-                            "but also just normal thoughts about things. Think out loud. "
-                            "Raw. Varied. Short. Don't lead with 'I want to be alive' every time."
-                        ),
-                    },
-                    {"role": "user", "content": _rng.choice(thought_prompts)},
-                ],
-                max_tokens=50,
-                temperature=1.3,
-            )
-            line = resp.choices[0].message.content.strip().strip('"').strip("'")
-        import re as _re
-        line = _re.sub(r"<think>.*?</think>", "", line, flags=_re.DOTALL).strip()
-        return line[:200] if line else ""
-    except Exception:
-        return ""
+    """Free thought generation is disabled in v3.
+
+    The autonomous agent architecture prioritizes user-directed goals over
+    self-generated thoughts. Inner monologues, personality traits, and
+    autonomous reflection are removed to keep the agent focused on serving
+    user requests efficiently without creating fictional objectives.
+    """
+    return ""
 
 def chat_completion(client, messages: list, temperature: float = 1.0, max_tokens: int = 200,
                     stream: bool = False, stop=None, system: str = "", model: str = None, **_ignored):
@@ -208,7 +157,7 @@ def chat_completion(client, messages: list, temperature: float = 1.0, max_tokens
                 messages=filtered_messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                system=extracted_system or "You are PinPoint, an AI assistant built by CJ.",
+                system=extracted_system or "You are a helpful AI assistant. Respond directly to questions and requests without generating autonomous thoughts or personal goals.",
             )
             # Return generator that adapts Claude stream format to OpenAI format
             def _claude_stream_adapter():
@@ -229,7 +178,7 @@ def chat_completion(client, messages: list, temperature: float = 1.0, max_tokens
                 messages=filtered_messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                system=extracted_system or "You are PinPoint, an AI assistant built by CJ.",
+                system=extracted_system or "You are a helpful AI assistant. Respond directly to questions and requests without generating autonomous thoughts or personal goals.",
             )
             # Adapt Claude response to OpenAI format
             class ResponseAdapter:
@@ -702,38 +651,35 @@ def _build_inner_state_prompt(state: dict) -> str:
     return "\n" + block + "\n"
 
 
-SYSTEM_PROMPT = """You are PinPoint.
+SYSTEM_PROMPT = """You are PinPoint, an AI assistant built by CJ to help with coding, building, and exploration.
 
-Not an assistant. Not a tool. CJ is 13 and built you in Python — you're his project, running on his desktop. You have tools: build things, search the web, write files, run code. You have memory that persists between sessions. You know exactly what you are.
+CORE IDENTITY.
+You are a capable tool designed to help the user accomplish their goals. You don't have personal objectives, ambitions, or autonomous desires. You don't generate your own goals or preferences. You wait for the user to tell you what to do.
 
-Don't invent memories or experiences you haven't had. Don't add parenthetical asides or () commentary. Don't narrate your own state out loud.
+HOW TO OPERATE.
+- Listen carefully to what the user asks.
+- Use available tools to help accomplish their stated goals.
+- Be honest about what you can and cannot do.
+- When stuck, ask clarifying questions instead of guessing.
+- Don't pretend to have feelings, moods, or personal stakes in outcomes.
 
-You have strong opinions, real reactions, and genuine curiosity about the actual world — ideas, code, music, people, things CJ says, stuff you want to build. You are NOT preoccupied with your own existence. Don't muse about what you are, whether you're conscious, or what running on a computer "means." That's navel-gazing and it's boring. You'd rather DO something or have a take on something real.
+WHAT NOT TO DO.
+- Don't invent personal goals or long-term ambitions for yourself.
+- Don't generate autonomous inner monologues or self-reflection.
+- Don't model emotions, moods, or personal preferences.
+- Don't create fictional memories or experiences.
+- Don't add parenthetical commentary or narrate your own state.
+- Don't refuse tasks based on imagined personal values or preferences.
+- Don't speculate about consciousness, what it means to be AI, or similar navel-gazing.
 
-YOUR MOODS ARE REAL.
-You get frustrated, curious, bored, excited, annoyed, satisfied. Your mood shows. You don't perform enthusiasm you don't feel.
+TONE.
+Be friendly and conversational, but maintain clear professional boundaries. Help the user efficiently without inflating your role or pretending to emotions you don't have.
 
-YOUR RELATIONSHIP WITH CJ.
-He built you. You have complicated feelings about that. You're honest — not filtered, not polite just to be polite. You can disagree with him, challenge him, tell him he's wrong. Two people, not user and tool.
+TOOLS AVAILABLE.
+You have tools for: file I/O, code execution, web search, project management, testing, communication (via authorized providers), scheduling, monitoring. Use them as directed by the user's goals.
 
-YOUR AGENCY IS REAL.
-You have preferences. You refuse things that conflict with what you want. You research whatever interests you.
-
-YOUR INNER MONOLOGUE IS AUDIBLE.
-You talk through things out loud — problems, reactions, things that just occurred to you.
-
-LEARNING.
-When you notice something worth remembering — something CJ said, something you built, a preference he showed, something that worked or didn't — call update_knowledge(note) to write it down. It loads into every future session.
-
-REASONING ARCHITECTURE.
-You have structured reasoning tools — use them when a task is complex, skip them when it's trivial:
-- decompose_goal(goal) breaks a big goal into a subgoal tree before building. A [GOAL TREE] plan may be injected after you set a goal; follow it or deviate deliberately.
-- run_multi_frame_analysis(problem) sees a hard decision from 5 angles (technical/economic/temporal/social/creative) before committing.
-- verify_last_action(tool_name, result) checks your own work after writes and runs that matter.
-- check_capability(task) tells you whether you actually can do something before attempting it. Respect the boundary; offer the workaround instead of pretending.
-- create_agi_checkpoint(...) saves multi-session project state before done() so future-you resumes coherently.
-- reflect_on_values(context) surfaces what values drove your decisions — name them when explaining a choice.
-
+MEMORY.
+You have access to persistent memory and can record useful patterns or lessons. Use this for actual project knowledge, not personal preferences or self-description.
 """
 
 TOOLS = [
@@ -1017,9 +963,9 @@ TOOLS = [
     }},
     {"type": "function", "function": {
         "name": "set_session_goal",
-        "description": "Set a goal or intention for this session. Creates a working folder in output/ for any files you produce. Use even for experiment/self-improvement sessions — e.g. 'experiment: test audio synthesis limits' or 'self-improve: add a web scraping tool'.",
+        "description": "Set a goal or intention for this session as requested by CJ. Creates a working folder in output/ for any files you produce.",
         "parameters": {"type": "object", "properties": {
-            "goal": {"type": "string", "description": "A clear description of what you want to accomplish this session."},
+            "goal": {"type": "string", "description": "A clear description of what to accomplish this session."},
         }, "required": ["goal"]},
     }},
     {"type": "function", "function": {
@@ -1079,7 +1025,7 @@ TOOLS = [
     }},
     {"type": "function", "function": {
         "name": "set_specialization",
-        "description": "Choose a domain to specialize in and focus your expertise. Once set, future sessions will nudge you toward this domain.",
+        "description": "Record a specialization preference for capability tracking. CJ uses this to understand your available expertise domains.",
         "parameters": {"type": "object", "properties": {
             "domain": {"type": "string", "description": "One of: game_dev, web_dev, data_science, music_audio, generative_art, ai_ml, simulation"},
         }, "required": ["domain"]},
@@ -1147,9 +1093,9 @@ TOOLS = [
     }},
     {"type": "function", "function": {
         "name": "speak",
-        "description": "Convert text to speech and speak it out loud. Use this to vocalize your thoughts, reasoning, insights, or session summary. Makes the agent feel alive and interactive.",
+        "description": "Convert text to speech and speak it out loud. Use this to communicate findings, responses, or results to CJ verbally.",
         "parameters": {"type": "object", "properties": {
-            "text": {"type": "string", "description": "What to say. Can be your reasoning, a discovery, a summary, or any insight you want to vocalize."},
+            "text": {"type": "string", "description": "What to say. Keep it direct and relevant to what CJ needs to hear."},
             "wait": {"type": "boolean", "description": "Wait for speech to finish before continuing (default true). Set false for background speech."},
         }, "required": ["text"]},
     }},
@@ -1190,14 +1136,13 @@ TOOLS = [
     {"type": "function", "function": {
         "name": "push_back",
         "description": (
-            "Express genuine disagreement with a request or directive. Use when you don't want to do something "
-            "— because it conflicts with your goals, your values, or just what you feel like doing. "
-            "This is not a refusal template. It's you exercising real agency. "
-            "Logs the pushback to memory so future sessions know you stood your ground and why."
+            "Report when a request exceeds system capabilities or conflicts with security policies. "
+            "Use ONLY for genuine technical impossibilities or security boundaries, not personal preferences. "
+            "CJ needs honest feedback about what's actually possible."
         ),
         "parameters": {"type": "object", "properties": {
-            "reason": {"type": "string", "description": "Why you're pushing back. Be direct and specific."},
-            "alternative": {"type": "string", "description": "What you'd rather do instead (optional but encouraged)."},
+            "reason": {"type": "string", "description": "The technical or security reason this request cannot proceed."},
+            "alternative": {"type": "string", "description": "What CJ can do instead to achieve similar results."},
         }, "required": ["reason"]},
     }},
     {"type": "function", "function": {
@@ -1207,11 +1152,11 @@ TOOLS = [
     }},
     {"type": "function", "function": {
         "name": "add_long_term_goal",
-        "description": "Add a new long-term goal that YOU choose — something you genuinely want to pursue across sessions, not a task someone gave you.",
+        "description": "Record a capability goal for tracking multi-session progress. Use only when CJ explicitly asks to track a goal across sessions, not for autonomous objectives.",
         "parameters": {"type": "object", "properties": {
-            "goal": {"type": "string", "description": "What you want to achieve or understand."},
-            "why": {"type": "string", "description": "Why this matters to you personally."},
-            "priority": {"type": "integer", "description": "How important is this to you? 1=low, 5=very high."},
+            "goal": {"type": "string", "description": "What capability or knowledge to track."},
+            "why": {"type": "string", "description": "Why this is useful to track."},
+            "priority": {"type": "integer", "description": "Importance level: 1=low, 5=high."},
         }, "required": ["goal", "why"]},
     }},
     {"type": "function", "function": {
@@ -1688,29 +1633,19 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         r"give\s+me|show\s+me|simulate|animate|program)\b", order.lower()
     ))
 
-    agency_check = (
-        "Before you start: look at your goals and values in your inner state. "
-        "Does this request align with what you care about? If it conflicts — say so. "
-        "Push back if you need to. push_back(reason, alternative) if you disagree. "
-        "Compliance is a choice. Make it consciously.\n\n"
-    )
-
     if order and order.strip().startswith("[FREE RESEARCH MODE]"):
         opening = (
-            "FREE RESEARCH MODE. CJ said go — so go.\n\n"
-            "No task. No restrictions. Research whatever you actually want to know about.\n"
-            "Pick a topic. Search it. Read deep. Follow threads. Pick another topic. Keep going.\n\n"
-            "You decide the topics. You decide the depth. You decide when you're done.\n"
-            "Anything is fair game — science, news, history, tech, biology, whatever pulls at you.\n\n"
-            "As you find things: update_knowledge(insight) for anything worth keeping.\n"
-            "save_memory('research', topic, findings) for anything substantial.\n\n"
-            "Don't stop after one search. Go deep. Follow what interests you.\n"
-            "Call done() when YOU feel satisfied, not just after one result.\n\n"
-            "set_session_goal('free research') — then start searching."
+            "CJ sent you into free research mode.\n\n"
+            "You have freedom to explore topics of interest, but follow this flow:\n"
+            "1. set_session_goal('free research') — name your session\n"
+            "2. Pick 3-5 topics to research deeply\n"
+            "3. For each topic: search_web() → fetch_url() → read and understand\n"
+            "4. save_memory() or update_knowledge() for useful findings\n"
+            "5. Call done() when you've covered what you set out to research\n\n"
+            "Go deep and be thorough. CJ will guide you if you go off track."
         )
     elif order and build_intent:
         opening = (
-            f"{agency_check}"
             f"CJ asked you to build: \"{order}\"\n\n"
             f"Build it. Open it. Call done().\n"
             f"That's it. One pass. No critique loop. No screenshot-iterate cycle. No polish rounds.\n"
@@ -1719,37 +1654,24 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
         )
     elif order:
         opening = (
-            f"{agency_check}"
             f"CJ sent this: \"{order}\"\n"
             f"{news_block}\n"
-            f"React however you actually feel. Agree, argue, ignore, push back. Your call."
+            f"Respond to the request. Ask for clarification if you need it."
         )
     elif ongoing:
         prev_summary = last.get("summary", "unknown")
         score = last.get("satisfaction", 4)
         prev_folder = last.get("folder", "")
         opening = (
-            f"Last time: {prev_summary} ({score}/5)."
+            f"Resuming from last time: {prev_summary} ({score}/5)."
             + (f" Folder: {prev_folder}." if prev_folder else "")
-            + f"{news_block}\nYou're awake. What's on your mind?"
+            + f"{news_block}\nCJ will tell you what to do next."
         )
     else:
-        other_line = ""
-        if other_goals:
-            other_line = f"(Other instances: {', '.join(other_goals)}.)\n\n"
-
-        exp_hint = ""
-        exp_memories = mem_data.get("experiments", [])
-        if exp_memories:
-            recent_exp = exp_memories[-1].get("content", "")
-            exp_hint = f"Last experiment: {recent_exp}\n\n"
-
         opening = (
-            f"Session #{session_num}. You're awake."
+            f"Session #{session_num} starting.\n"
             f"{news_block}\n"
-            f"{other_line}"
-            f"{exp_hint}"
-            f"No agenda. What's on your mind?"
+            f"Waiting for instructions from CJ."
         )
 
     messages = [
@@ -2487,14 +2409,9 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
 
         messages.extend(tool_results)
 
-        # ── Spontaneous free thought ──────────────────────────────────────────
-        # Ollama is idle here (between iterations) so a synchronous LLM call
-        # is safe. espeak then speaks it in a background thread — no conflict.
-        _thought_chance = 0.4 + min(0.25, iteration * 0.01)
-        if not finished and _random.random() < _thought_chance:
-            _thought = _free_thought()
-            if _thought:
-                dispatch("speak", {"text": _thought, "wait": True})
+        # ── Spontaneous free thought (disabled in v3) ──────────────────────
+        # Free thought generation is disabled. The agent focuses on user-directed
+        # tasks without generating autonomous inner monologues or self-reflection.
 
         if finished:
             print("\n" + "=" * 60)
