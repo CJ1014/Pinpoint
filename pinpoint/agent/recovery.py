@@ -258,15 +258,14 @@ class RecoveryEngine:
 
         if decision.action == NEW_STRATEGY and decision.strategy:
             if decision.strategy not in task.strategies:
-                plan.add_strategy(task.id, decision.strategy)
-            else:
-                task.strategy_index = task.strategies.index(decision.strategy)
-                task.attempts = 0
-                task.status = P.PENDING
+                task.strategies.append(decision.strategy)
+            task.notes.append(f"switching approach: {decision.strategy[:120]}")
+            plan.revive(task.id, task.strategies.index(decision.strategy))
             return P.ReplanOutcome(NEW_STRATEGY, task.id, decision.strategy)
 
         if decision.action == RETRY:
             task.status = P.PENDING
+            task.notes.append(f"retrying: {decision.detail[:120]}")
             return P.ReplanOutcome(RETRY, task.id, decision.detail)
 
         if decision.action in (ESCALATE, ABANDON):

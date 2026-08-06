@@ -166,6 +166,9 @@ _RECIPIENT = re.compile(
     r"\b(?i:text|message|call|phone|email|e-mail|dm|remind|tell|ask)\s+"
     r"(?!me\b|him\b|her\b|them\b|us\b)([A-Z][a-zA-Z]{1,20}(?:\s+[A-Z][a-zA-Z]{1,20})?)")
 _MY_THING = re.compile(r"\bmy\s+([a-z][\w -]{2,30}?)(?=\s|$|[.,;])", re.I)
+# A literal number or address names the recipient outright — nothing to resolve.
+_LITERAL_PHONE = re.compile(r"\+?\d[\d\s().-]{7,}\d")
+_LITERAL_EMAIL = re.compile(r"[^\s@]+@[^\s@]+\.[a-z]{2,}", re.I)
 
 
 def _detect_kind(text: str) -> str:
@@ -217,8 +220,12 @@ def _extract_entities(text: str) -> Dict[str, List[str]]:
     if ports:
         entities["ports"] = ports
     recipients = [r.strip() for r in _RECIPIENT.findall(text)]
-    if recipients:
-        entities["recipients"] = recipients[:4]
+    literals = [a.strip() for a in
+                _LITERAL_EMAIL.findall(text) + _LITERAL_PHONE.findall(text)]
+    if literals:
+        entities["addresses"] = literals[:4]
+    if recipients or literals:
+        entities["recipients"] = (recipients + literals)[:4]
     targets = [t.strip() for t in _MY_THING.findall(text)]
     if targets:
         entities["targets"] = targets[:4]
@@ -229,7 +236,11 @@ def _extract_unknowns(text: str, kind: str, entities: Dict[str, List[str]]) -> L
     """Name what the request does not pin down, so it can't be filled in by guesswork."""
     unknowns: List[str] = []
     if kind == COMMUNICATE:
+        # A literal number or address is already unambiguous; a bare name is not.
+        addresses = set(entities.get("addresses", []))
         for name in entities.get("recipients", []):
+            if name in addresses:
+                continue
             unknowns.append(f"which contact '{name}' refers to, and their number/address")
         if not entities.get("recipients"):
             unknowns.append("who the recipient is")

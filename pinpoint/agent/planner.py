@@ -310,6 +310,24 @@ class Plan:
         self.replans.append({"timestamp": _now(), **outcome.to_dict()})
         return outcome
 
+    def revive(self, task_id: str, strategy_index: Optional[int] = None) -> Optional[Task]:
+        """Reopen a task for another attempt, optionally on a different strategy.
+
+        Used by the recovery engine, which owns the decision about *whether* to
+        try again; the plan only owns what that does to the graph.
+        """
+        task = self.tasks.get(task_id)
+        if task is None:
+            return None
+        if strategy_index is not None and 0 <= strategy_index < len(task.strategies):
+            task.strategy_index = strategy_index
+        task.attempts = 0
+        task.status = PENDING
+        task.finished_at = ""
+        task.blocked_reason = ""
+        self._unblock_after_revival(task_id)
+        return task
+
     def add_strategy(self, task_id: str, strategy: str) -> bool:
         """Give a task another way to succeed — used by the recovery engine."""
         task = self.tasks.get(task_id)
