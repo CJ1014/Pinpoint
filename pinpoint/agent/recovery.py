@@ -22,6 +22,7 @@ from pinpoint.memory import failures as F
 RETRY = "retry"
 PREREQUISITE = "prerequisite"     # insert work that must happen first
 NEW_STRATEGY = "new_strategy"
+REDO_UPSTREAM = "redo_upstream"   # the thing being checked is wrong, not the check
 ESCALATE = "escalate"             # ask the human
 ABANDON = "abandon"               # stop pursuing this branch
 
@@ -128,6 +129,30 @@ class RecoveryEngine:
     def _signature(self, task_id: str, diagnosis: Diagnosis) -> str:
         return f"{task_id}:{diagnosis.category}"
 
+    @staticmethod
+    def _upstream_with_alternatives(plan: P.Plan, task: P.Task) -> Optional[P.Task]:
+        """Find finished upstream work that could have been done differently.
+
+        A step that checks the previous step's output fails when that output is
+        wrong — not because the check needs another attempt. Retrying the check
+        just re-reads the same broken artifact. The useful move is to go back
+        and redo the work with a different approach.
+        """
+        seen = set()
+        frontier = list(task.depends_on)
+        while frontier:
+            current = frontier.pop(0)
+            if current in seen:
+                continue
+            seen.add(current)
+            upstream = plan.tasks.get(current)
+            if upstream is None:
+                continue
+            if upstream.status == P.DONE and upstream.has_alternative:
+                return upstream
+            frontier.extend(upstream.depends_on)
+        return None
+
     def recover(self, plan: P.Plan, task: P.Task,
                 result: R.ActionResult, goal: str = "") -> RecoveryDecision:
         """Decide how to respond to a failed action, and record the postmortem."""
@@ -179,6 +204,19 @@ class RecoveryEngine:
                 ESCALATE,
                 f"{diagnosis.category} recurred {repeats + 1}x with no approaches left",
                 question=self._question_for(task, diagnosis, result))
+
+        # A verification failure on a dependency usually means the dependency's
+        # output is wrong, not that the check itself needs another attempt. Both
+        # UNVERIFIED (can't tell if it worked) and FAILED (clear proof it didn't)
+        # suggest bad upstream output when there's upstream work with alternatives.
+        # But if the diagnosis identifies a missing prerequisite, that takes priority.
+        if result.status in (R.UNVERIFIED, R.FAILED) and not diagnosis.escalate and not diagnosis.prerequisite:
+            upstream = self._upstream_with_alternatives(plan, task)
+            if upstream is not None:
+                return RecoveryDecision(
+                    REDO_UPSTREAM,
+                    f"the upstream task produced bad output — redoing with a different approach",
+                    strategy=upstream.strategies[upstream.strategy_index + 1])
 
         # A missing prerequisite is real work, not a retry.
         if diagnosis.prerequisite and repeats == 0:
@@ -262,6 +300,17 @@ class RecoveryEngine:
             task.notes.append(f"switching approach: {decision.strategy[:120]}")
             plan.revive(task.id, task.strategies.index(decision.strategy))
             return P.ReplanOutcome(NEW_STRATEGY, task.id, decision.strategy)
+
+        if decision.action == REDO_UPSTREAM and decision.strategy:
+            upstream_id = self._upstream_with_alternatives(plan, task).id
+            upstream = plan.tasks[upstream_id]
+            if decision.strategy not in upstream.strategies:
+                upstream.strategies.append(decision.strategy)
+            upstream.notes.append(
+                f"switched approach because downstream verification failed: "
+                f"{decision.strategy[:100]}")
+            plan.revive(upstream_id, upstream.strategies.index(decision.strategy))
+            return P.ReplanOutcome(REDO_UPSTREAM, upstream_id, decision.strategy)
 
         if decision.action == RETRY:
             task.status = P.PENDING

@@ -290,20 +290,39 @@ def parse(text: str) -> Objective:
     return objective
 
 
+def _resolve_recipient(name: str) -> Optional[str]:
+    """Ask the contact book about a name. Returns a question, or None if clear.
+
+    Asking "which Sarah?" when there is exactly one Sarah is not caution, it is
+    noise — and an assistant that checks before asking is the difference between
+    careful and annoying. Ambiguity still stops everything.
+    """
+    try:
+        from pinpoint.communication import contacts
+        resolution = contacts.contacts().resolve(name)
+    except Exception:
+        return f"Which {name} do you mean?"
+    if resolution.ok:
+        return None
+    return resolution.question or f"Which {name} do you mean?"
+
+
 def needs_clarification(objective: Objective) -> Optional[str]:
     """The question to ask before starting, or None if it can proceed.
 
-    Only genuinely blocking gaps qualify. Sending a message to an unidentified
-    person is blocking; not knowing which file is broken is something the agent
-    can go and find out for itself.
+    Only genuinely blocking gaps qualify. Sending a message to someone who
+    cannot be identified is blocking; not knowing which file is broken is
+    something the agent can go and find out for itself.
     """
     if objective.kind == COMMUNICATE:
         for unknown in objective.unknowns:
             if unknown.startswith("who the recipient"):
                 return "Who should I send this to?"
             if unknown.startswith("which contact"):
-                name = unknown.split("'")[1] if "'" in unknown else "them"
-                return f"Which {name} do you mean?"
+                name = unknown.split("'")[1] if "'" in unknown else ""
+                question = _resolve_recipient(name) if name else None
+                if question:
+                    return question
         if "the exact message content" in objective.unknowns:
             return "What exactly do you want me to say?"
     return None
