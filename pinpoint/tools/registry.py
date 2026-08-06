@@ -27,6 +27,7 @@ V_PROCESS_RUNNING = "process_running"  # something must still be running
 V_PROVIDER_CONFIRMATION = "provider_confirmation"  # external service must confirm
 V_STATE_CHANGE = "state_change"       # stored state must differ afterwards
 V_CONTENT = "content_match"           # output must contain expected content
+V_UNVERIFIABLE = "unverifiable"       # no way to check — never counts as success
 
 # ── Capability tags ───────────────────────────────────────────────────────────
 C_REASONING = "reasoning"
@@ -87,6 +88,34 @@ class ToolSpec:
 
 _REGISTRY: Dict[str, ToolSpec] = {}
 
+# Alternative names the model reaches for. tools.dispatch resolves these before
+# executing, so the policy engine has to resolve them too — otherwise
+# ``bash("rm -rf /")`` is classified as an unknown tool rather than as the
+# destructive shell command it actually is.
+ALIASES: Dict[str, str] = {
+    "open_in_browser": "open_html", "open_browser": "open_html",
+    "browser_open": "open_html", "open_file": "open_html",
+    "launch_browser": "open_html",
+    "create_file": "write_file", "save_file": "write_file", "write": "write_file",
+    "run_back": "push_back", "refuse": "push_back", "reject": "push_back",
+    "search": "search_web", "google": "search_web", "look_up": "search_web",
+    "get_url": "fetch_url", "scrape": "fetch_url", "visit": "fetch_url",
+    "execute": "run_shell", "bash": "run_shell", "shell": "run_shell",
+    "sh": "run_shell", "cmd": "run_shell", "command": "run_shell",
+    "execute_command": "run_shell", "run_command": "run_shell",
+    "terminal": "run_shell", "system": "run_shell",
+    "text": "send_message", "sms": "send_message", "message": "send_message",
+    "call": "make_call", "phone": "make_call",
+    "email": "send_email", "mail": "send_email",
+    "remove_file": "delete_file", "rm": "delete_file", "unlink": "delete_file",
+    "install": "pip_install", "pip": "pip_install",
+}
+
+
+def canonical(name: str) -> str:
+    """Resolve an alias to the tool that will actually run."""
+    return ALIASES.get(name, name)
+
 
 def register(spec: ToolSpec) -> ToolSpec:
     _REGISTRY[spec.name] = spec
@@ -94,20 +123,22 @@ def register(spec: ToolSpec) -> ToolSpec:
 
 
 def get(name: str) -> Optional[ToolSpec]:
-    return _REGISTRY.get(name)
+    return _REGISTRY.get(canonical(name))
 
 
 def require(name: str) -> ToolSpec:
     """Get a spec, or a conservative default for an unregistered tool.
 
-    An unknown tool is treated as YELLOW and irreversible — unrecognised
-    capability should never default to "safe".
+    An unknown tool is treated as YELLOW, irreversible, and *unverifiable* —
+    unrecognised capability should never default to "safe", and its effect must
+    never default to "confirmed".
     """
-    spec = _REGISTRY.get(name)
+    spec = _REGISTRY.get(canonical(name))
     if spec is not None:
         return spec
     return ToolSpec(name=name, description="unregistered tool",
-                    level=YELLOW, reversible=False, risk="high")
+                    level=YELLOW, reversible=False, risk="high",
+                    verification=V_UNVERIFIABLE)
 
 
 def all_specs() -> Dict[str, ToolSpec]:

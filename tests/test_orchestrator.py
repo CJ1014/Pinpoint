@@ -81,10 +81,31 @@ def test_completed_run_reports_naturally(tmp_path):
     assert "[TOOL CALL]" not in message and message.startswith("Done")
 
 
-def test_reasoning_only_steps_complete_without_actions(tmp_path):
+def test_a_plan_that_only_thought_about_it_is_not_complete(tmp_path):
+    """Working through every step without doing anything is not completion."""
     orchestrator, tools = build(tmp_path, nothing)
-    assert orchestrator.run("build me a game").status == O.COMPLETED
-    assert tools.calls == []
+    report = orchestrator.run("build me a game")
+    assert report.status == O.UNVERIFIED_COMPLETION and tools.calls == []
+
+
+def test_unverified_completion_says_so_in_those_words(tmp_path):
+    orchestrator, _ = build(tmp_path, nothing)
+    assert "could not verify completion" in orchestrator.run("build me a game").message()
+
+
+def test_evidence_excludes_pure_reasoning(tmp_path):
+    def think_only(task, context):
+        return [("think", {"reasoning": "considering it"})]
+
+    orchestrator, _ = build(tmp_path, think_only)
+    report = orchestrator.run("fix my build")
+    assert orchestrator.evidence() == [] and report.status == O.UNVERIFIED_COMPLETION
+
+
+def test_open_ended_requests_may_finish_on_reasoning_alone(tmp_path):
+    """An objective with no world-changing intent doesn't need an artifact."""
+    orchestrator, _ = build(tmp_path, nothing)
+    assert orchestrator.run("hmm").status == O.COMPLETED
 
 
 def test_successful_run_learns_a_procedure(tmp_path):

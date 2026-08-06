@@ -10,7 +10,7 @@ New work discovered mid-flight (a missing dependency, an unexpected second
 bug) gets inserted into the graph rather than appended to a static list.
 """
 
-import itertools
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -23,12 +23,15 @@ DONE = "done"
 FAILED = "failed"
 BLOCKED = "blocked"
 SKIPPED = "skipped"
+INTERRUPTED = "interrupted"   # halted mid-flight; resumable, but not "in progress"
 
-OPEN_STATUSES = (PENDING, ACTIVE)
+# Statuses that mean work remains. INTERRUPTED counts: a stopped plan is not a
+# finished plan, and saying otherwise is how a halted run gets reported as done.
+OPEN_STATUSES = (PENDING, ACTIVE, INTERRUPTED)
 _PRIORITY_VALUE = {I.PRIORITY_LOW: 0, I.PRIORITY_NORMAL: 1,
                    I.PRIORITY_HIGH: 2, I.PRIORITY_URGENT: 3}
 
-_ids = itertools.count(1)
+_ID_PATTERN = re.compile(r"^t(\d+)$")
 
 
 def _now() -> str:
@@ -126,12 +129,26 @@ class Plan:
 
     # ── construction ─────────────────────────────────────────────────────────
 
+    def _new_id(self) -> str:
+        """Allocate an id from the plan's own state, not a module counter.
+
+        A restored plan lives in a fresh process, so a module-level counter
+        restarts at 1 and hands out ids the restored plan already uses —
+        silently overwriting a task and corrupting the graph.
+        """
+        highest = 0
+        for existing in self.tasks:
+            match = _ID_PATTERN.match(existing)
+            if match:
+                highest = max(highest, int(match.group(1)))
+        return f"t{highest + 1}"
+
     def add(self, description: str, *, depends_on: Optional[List[str]] = None,
             task_id: str = "", priority: Optional[int] = None,
             max_attempts: int = 2, strategies: Optional[List[str]] = None,
             success_criteria: Optional[List[str]] = None, tool_hint: str = "",
             kind: str = "", parent: str = "") -> Task:
-        task_id = task_id or f"t{next(_ids)}"
+        task_id = task_id or self._new_id()
         if priority is None:
             priority = _PRIORITY_VALUE.get(
                 self.objective.priority if self.objective else I.PRIORITY_NORMAL, 1)
@@ -310,6 +327,35 @@ class Plan:
         self.replans.append({"timestamp": _now(), **outcome.to_dict()})
         return outcome
 
+    def interrupt(self, reason: str = "halted") -> List[str]:
+        """Mark in-flight work as interrupted rather than leaving it 'active'.
+
+        An ACTIVE task in a saved plan reads as "currently running", which is
+        false once execution has stopped — and on resume it would be started
+        again with its attempt counter already spent.
+        """
+        interrupted: List[str] = []
+        for task in self.tasks.values():
+            if task.status == ACTIVE:
+                task.status = INTERRUPTED
+                task.blocked_reason = reason
+                task.notes.append(f"interrupted: {reason[:120]}")
+                # The attempt never finished, so it should not count against
+                # the budget when the task is picked back up.
+                task.attempts = max(0, task.attempts - 1)
+                interrupted.append(task.id)
+        return interrupted
+
+    def resume_interrupted(self) -> List[str]:
+        """Return interrupted tasks to the ready pool."""
+        resumed = []
+        for task in self.tasks.values():
+            if task.status == INTERRUPTED:
+                task.status = PENDING
+                task.blocked_reason = ""
+                resumed.append(task.id)
+        return resumed
+
     def revive(self, task_id: str, strategy_index: Optional[int] = None) -> Optional[Task]:
         """Reopen a task for another attempt, optionally on a different strategy.
 
@@ -352,7 +398,7 @@ class Plan:
 
     def progress(self) -> dict:
         counts = {status: 0 for status in
-                  (PENDING, ACTIVE, DONE, FAILED, BLOCKED, SKIPPED)}
+                  (PENDING, ACTIVE, DONE, FAILED, BLOCKED, SKIPPED, INTERRUPTED)}
         for task in self.tasks.values():
             counts[task.status] = counts.get(task.status, 0) + 1
         total = len(self.tasks)
@@ -365,6 +411,7 @@ class Plan:
             "blocked": counts[BLOCKED],
             "active": counts[ACTIVE],
             "pending": counts[PENDING],
+            "interrupted": counts[INTERRUPTED],
             "percent": round(100.0 * finished / total, 1) if total else 0.0,
             "actions_used": self.actions_used,
             "actions_remaining": max(0, self.max_actions - self.actions_used),
@@ -396,7 +443,7 @@ class Plan:
 
     def render(self) -> str:
         glyphs = {DONE: "✓", FAILED: "✗", BLOCKED: "⊘", ACTIVE: "▶",
-                  SKIPPED: "–", PENDING: "·"}
+                  SKIPPED: "–", PENDING: "·", INTERRUPTED: "‖"}
         lines = []
         if self.objective:
             lines.append(f"GOAL: {self.objective.goal}")

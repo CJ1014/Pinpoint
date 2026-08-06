@@ -24,6 +24,13 @@ BLOCKED = "blocked"
 NEEDS_INPUT = "needs_input"
 STOPPED = "stopped"
 UNAVAILABLE = "unavailable"
+UNVERIFIED_COMPLETION = "unverified_completion"
+
+# Objective kinds where finishing means something changed in the world. For
+# these, a plan that ran to the end without a single confirmed effect has not
+# been completed — it has been narrated.
+_EVIDENCE_REQUIRED = (I.FIX, I.BUILD, I.MAINTAIN, I.COMMUNICATE,
+                      I.INVESTIGATE, I.RESEARCH, I.MONITOR, I.SCHEDULE)
 
 # What step_fn returns: a list of (tool, params) to run for this task.
 Step = Tuple[str, Dict[str, Any]]
@@ -73,12 +80,16 @@ class Orchestrator:
                  failure_memory: Optional[F.FailureMemory] = None,
                  recovery_engine: Optional[RC.RecoveryEngine] = None,
                  session: Any = "", max_iterations: int = 60,
+                 checkpoint_every: int = 4,
                  on_event: Optional[Callable[[str, dict], None]] = None):
         self.executor = executor
         self.step_fn = step_fn
         self.session = session
         self.max_iterations = max_iterations
+        self.checkpoint_every = checkpoint_every
         self.on_event = on_event
+        self.checkpoint_id = ""
+        self.plan: Optional[P.Plan] = None
         self._memory = memory
         self._failures = failure_memory
         self.recovery = recovery_engine or RC.RecoveryEngine(memory=failure_memory)
@@ -235,15 +246,17 @@ class Orchestrator:
             return RunReport(UNAVAILABLE, objective=objective, question=refusal)
 
         plan = plan or self.build_plan(objective)
+        self.plan = plan
+        plan.resume_interrupted()
         self._emit("plan", {"goal": objective.goal, "tasks": len(plan.tasks)})
 
         iterations = 0
         escalation = ""
+        completed_since_checkpoint = 0
 
         while iterations < self.max_iterations:
             if emergency_stop.is_engaged():
-                return self._finish(STOPPED, objective, plan, iterations,
-                                    question="Stopped on your say-so.")
+                return self._halt(objective, plan, iterations)
 
             if plan.budget_exhausted():
                 escalation = ("I've used the action budget for this job without "
@@ -264,11 +277,16 @@ class Orchestrator:
             # The stop can be engaged while a task is mid-flight. It outranks
             # whatever the task was doing, including how that task failed.
             if emergency_stop.is_engaged():
-                return self._finish(STOPPED, objective, plan, iterations,
-                                    question="Stopped on your say-so.")
+                return self._halt(objective, plan, iterations)
 
             if succeeded:
                 self._record_success(plan, task)
+                completed_since_checkpoint += 1
+                # Checkpoint as we go. Saving only on exit means a crash loses
+                # everything the run had achieved.
+                if completed_since_checkpoint >= self.checkpoint_every:
+                    completed_since_checkpoint = 0
+                    self._checkpoint(plan)
                 continue
 
             escalation = self._handle_failure(plan, task, failure) or ""
@@ -276,6 +294,17 @@ class Orchestrator:
                 break
 
         if plan.is_complete() and plan.succeeded() and not escalation:
+            # Every step is marked done — but "done" has to mean something
+            # happened. A plan that ran to the end on reasoning alone has no
+            # evidence behind it, and saying "Done" would be the exact failure
+            # this whole architecture exists to prevent.
+            if objective.kind in _EVIDENCE_REQUIRED and not self.evidence():
+                return self._finish(
+                    UNVERIFIED_COMPLETION, objective, plan, iterations,
+                    question="I worked through the plan but nothing I did produced "
+                             "a checkable result, so I can't claim it's done. "
+                             "Tell me what the finished thing should look like and "
+                             "I'll go and make it exist.")
             status = COMPLETED
             self._learn_procedure(plan)
         elif escalation:
@@ -288,6 +317,47 @@ class Orchestrator:
                                         "I'd rather check in than keep guessing.")
 
         return self._finish(status, objective, plan, iterations, question=escalation)
+
+    def _halt(self, objective: I.Objective, plan: P.Plan,
+              iterations: int) -> RunReport:
+        """Stop cleanly: mark in-flight work interrupted, then checkpoint it."""
+        interrupted = plan.interrupt("emergency stop engaged")
+        self._emit("interrupted", {"tasks": interrupted})
+        return self._finish(STOPPED, objective, plan, iterations,
+                            question="Stopped on your say-so.")
+
+    # ── evidence and checkpointing ───────────────────────────────────────────
+
+    def evidence(self) -> List[R.ActionResult]:
+        """Confirmed actions that actually changed or observed something.
+
+        Reasoning tools are excluded on purpose: thinking about a task is not
+        evidence that the task happened.
+        """
+        from pinpoint.tools import registry
+
+        out = []
+        for result in self.results:
+            if result.status != R.SUCCESS:
+                continue
+            spec = registry.get(result.tool)
+            method = spec.verification if spec else registry.V_UNVERIFIABLE
+            if method not in (registry.V_NONE, registry.V_UNVERIFIABLE):
+                out.append(result)
+        return out
+
+    def _checkpoint(self, plan: P.Plan, run_status: str = "") -> str:
+        """Save (or overwrite) this run's checkpoint. Never raises."""
+        try:
+            checkpoint = CP.save(plan, session=self.session,
+                                 observations=self.observations,
+                                 lessons=self.lessons, results=self.results,
+                                 checkpoint_id=self.checkpoint_id,
+                                 run_status=run_status)
+            self.checkpoint_id = checkpoint.id
+            return checkpoint.id
+        except Exception:
+            return self.checkpoint_id
 
     def _learn_procedure(self, plan: P.Plan) -> None:
         """A completed plan is a workflow worth keeping."""
@@ -302,13 +372,12 @@ class Orchestrator:
 
     def _finish(self, status: str, objective: I.Objective, plan: P.Plan,
                 iterations: int, question: str = "") -> RunReport:
-        checkpoint_id = ""
+        checkpoint_id = self.checkpoint_id
         if status != COMPLETED:
             # Unfinished work gets a checkpoint so it can be picked back up.
-            checkpoint = CP.save(plan, session=self.session,
-                                 observations=self.observations,
-                                 lessons=self.lessons, results=self.results)
-            checkpoint_id = checkpoint.id
+            run_status = {STOPPED: "INTERRUPTED", BLOCKED: "BLOCKED",
+                          UNVERIFIED_COMPLETION: "UNVERIFIED"}.get(status, "IN_PROGRESS")
+            checkpoint_id = self._checkpoint(plan, run_status=run_status)
 
         self.memory.consolidate(
             session=str(self.session),

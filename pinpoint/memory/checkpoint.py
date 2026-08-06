@@ -46,6 +46,8 @@ class Checkpoint:
     active: List[str] = field(default_factory=list)
     pending: List[str] = field(default_factory=list)
     blocked: List[Dict[str, Any]] = field(default_factory=list)
+    interrupted: List[Dict[str, Any]] = field(default_factory=list)
+    run_status: str = "IN_PROGRESS"    # IN_PROGRESS | INTERRUPTED | BLOCKED
     observations: List[str] = field(default_factory=list)
     lessons: List[str] = field(default_factory=list)
     effects: List[Dict[str, Any]] = field(default_factory=list)
@@ -114,8 +116,14 @@ def effects_from_results(results) -> List[Dict[str, Any]]:
 
 def save(plan, *, session: Any = "", observations: Optional[List[str]] = None,
          lessons: Optional[List[str]] = None, results=None,
-         next_action: str = "") -> Checkpoint:
-    """Snapshot a plan mid-flight."""
+         next_action: str = "", checkpoint_id: str = "",
+         run_status: str = "") -> Checkpoint:
+    """Snapshot a plan mid-flight.
+
+    Passing ``checkpoint_id`` overwrites that checkpoint instead of creating a
+    new one, so periodic saves during a long run leave one current snapshot
+    rather than a pile of stale ones.
+    """
     from pinpoint.agent import planner as P
     from pinpoint.security import permissions
 
@@ -139,6 +147,13 @@ def save(plan, *, session: Any = "", observations: Optional[List[str]] = None,
                                     if plan.next_task() else ""),
         session=session,
     )
+    checkpoint.interrupted = [
+        {"id": t.id, "description": t.description}
+        for t in tasks.values() if t.status == P.INTERRUPTED]
+    checkpoint.run_status = run_status or ("INTERRUPTED" if checkpoint.interrupted
+                                           else "IN_PROGRESS")
+    if checkpoint_id:
+        checkpoint.id = checkpoint_id
     jsonstore.write_json(_path(checkpoint.id), checkpoint.to_dict())
     return checkpoint
 
@@ -207,6 +222,9 @@ def resume(checkpoint: Checkpoint):
     from pinpoint.agent import planner as P
 
     plan = P.Plan.from_dict(checkpoint.plan)
+    # Work that was halted mid-flight goes back into the ready pool. It was
+    # never finished, so resuming has to actually redo it.
+    plan.resume_interrupted()
     discrepancies = verify_against_reality(checkpoint)
 
     if discrepancies:

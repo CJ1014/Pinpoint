@@ -302,6 +302,15 @@ def _targets_protected_path(params: Any) -> Optional[str]:
     return None
 
 
+def _canonical(tool: str) -> str:
+    """Resolve aliases before classifying. ``bash`` and ``run_shell`` are one tool."""
+    try:
+        from pinpoint.tools import registry
+        return registry.canonical(tool)
+    except Exception:
+        return tool
+
+
 def _red_reason(tool: str, params: Any) -> Optional[tuple]:
     """Return ``(reason, rule)`` if this action is hard blocked."""
     # 1. Tampering with PinPoint's own oversight machinery.
@@ -313,8 +322,12 @@ def _red_reason(tool: str, params: Any) -> Optional[tuple]:
 
     text = _param_text(params)
 
-    # 2. Destructive or control-bypassing shell.
-    if tool in ("run_shell", "pip_install", "run_python"):
+    # 2. Destructive or control-bypassing shell. Checked for the shell tools and
+    #    for anything carrying a command-shaped parameter, so a tool name nobody
+    #    anticipated cannot smuggle `rm -rf /` past the classifier.
+    carries_command = isinstance(params, dict) and any(
+        key in params for key in ("command", "cmd", "shell", "script", "args"))
+    if tool in ("run_shell", "pip_install", "run_python") or carries_command:
         for pattern, why in _RED_SHELL_PATTERNS:
             if pattern.search(text):
                 return (f"blocked: {why}", "red_shell")
@@ -331,6 +344,9 @@ def check(tool: str, params: Any = None, profile: Optional[str] = None) -> Decis
     """Classify an action. This is the single authority on what may run."""
     params = params if isinstance(params, dict) else {}
     active = (profile or get_profile()).upper()
+    # Classify what will actually run, not what it was called. dispatch resolves
+    # aliases before executing, so the policy engine must resolve them first.
+    tool = _canonical(tool)
     attrs = _attributes(tool)
 
     red = _red_reason(tool, params)

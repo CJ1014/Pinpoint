@@ -118,6 +118,12 @@ def report(run) -> str:
     if run.status == "stopped":
         return "Stopped. I've saved where I got to, so we can pick it up when you're ready."
 
+    if run.status == "unverified_completion":
+        lead = "I could not verify completion."
+        if changes:
+            lead += " Here's what I actually did: " + "; ".join(changes[:4]) + "."
+        return f"{lead} {run.question}".strip()
+
     if run.status == "completed":
         unverified_actions = [r for r in run.results if r.status == R.UNVERIFIED]
         text = completed(goal, changes, verified=not unverified_actions)

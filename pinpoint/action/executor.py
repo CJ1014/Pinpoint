@@ -45,7 +45,14 @@ class Executor:
         return tools.dispatch
 
     def _run_tool(self, tool: str, params: dict, timeout: float) -> tuple:
-        """Run the tool with a wall-clock timeout. Returns ``(output, error)``."""
+        """Run the tool with a wall-clock timeout.
+
+        Returns ``(output, error, timed_out)``. A timeout is *not* a failure:
+        Python cannot kill the worker thread, so the tool may still be running
+        and its effect may land afterwards. Calling that FAILED would be a lie
+        in the other direction — and would prompt a retry that repeats a side
+        effect which already happened.
+        """
         box: Dict[str, Any] = {}
 
         def _call():
@@ -59,11 +66,11 @@ class Executor:
         thread.start()
         thread.join(timeout)
         if thread.is_alive():
-            return "", f"timed out after {timeout:.0f}s"
+            return "", f"timed out after {timeout:.0f}s", True
         if "err" in box:
-            return "", box["err"]
+            return "", box["err"], False
         output = box.get("out", "")
-        return (output if isinstance(output, str) else str(output)), ""
+        return (output if isinstance(output, str) else str(output)), "", False
 
     # ── the pipeline ─────────────────────────────────────────────────────────
 
@@ -110,8 +117,8 @@ class Executor:
 
         # 5. Execute.
         started = time.perf_counter()
-        output, error = self._run_tool(tool, params,
-                                       timeout if timeout is not None else spec.timeout)
+        output, error, timed_out = self._run_tool(
+            tool, params, timeout if timeout is not None else spec.timeout)
         duration_ms = (time.perf_counter() - started) * 1000.0
 
         res = R.ActionResult(
@@ -120,6 +127,30 @@ class Executor:
             side_effects=self._side_effects(spec), permission_level=decision.level,
             approval=approval_state, goal=goal, attempt=attempt,
         )
+
+        if timed_out:
+            # Check anyway — the effect may already have landed. Only a positive
+            # confirmation counts; anything else stays honestly unknown.
+            outcome = V.verify(tool, params, output, method=spec.verification,
+                               before=before, after=None, expected=expected)
+            if outcome.verified is True:
+                res.status = R.SUCCESS
+                res.error = ""
+                res.confidence = outcome.confidence
+                res.epistemic = outcome.epistemic
+                res.verification = outcome.to_dict()
+            else:
+                res.status = R.UNVERIFIED
+                res.confidence = 0.2
+                res.epistemic = epistemics.UNKNOWN
+                res.side_effects.append("may still be running")
+                res.error = (f"{error} — the tool may still be running, so its "
+                             f"effect is unknown. Do not retry blindly: check "
+                             f"the state first.")
+                res.verification = V.VerificationOutcome(
+                    spec.verification, None, res.error, 0.2,
+                    epistemics.UNKNOWN).to_dict()
+            return self._finish(res, goal, attempt)
 
         if error:
             res.status = R.FAILED

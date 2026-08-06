@@ -67,15 +67,36 @@ def _resolve_path(candidate: str) -> str:
 
 
 def _target_path(params: Dict[str, Any], output: str) -> str:
-    """Prefer the absolute path the tool reported; fall back to its parameters."""
-    match = _WRITTEN_PATH.search(output or "")
-    if match:
-        return match.group(1).strip()
+    """Work out which file to actually check, reconciling both signals.
+
+    Taking the tool's word for it is a spoofing hole — a tool reporting
+    "Written 5 chars to /etc/hostname" would verify green against a file it
+    never touched. Ignoring the tool entirely is wrong too, because a relative
+    filename only resolves correctly against the root the tool actually used.
+
+    So: an absolute request is authoritative, and a relative request accepts
+    the tool's resolved path only when it names the same file.
+    """
+    requested = ""
     for key in ("path", "filename", "file", "output_file", "save_path", "target"):
         value = params.get(key)
         if value:
-            return _resolve_path(str(value))
-    return ""
+            requested = str(value)
+            break
+
+    match = _WRITTEN_PATH.search(output or "")
+    reported = match.group(1).strip() if match else ""
+
+    if not requested:
+        return reported
+
+    if os.path.isabs(requested):
+        return requested
+
+    if reported and os.path.basename(reported) == os.path.basename(requested):
+        return reported
+
+    return _resolve_path(requested)
 
 
 def _verify_file_exists(params, output) -> VerificationOutcome:
@@ -214,6 +235,18 @@ def _verify_none(params, output) -> VerificationOutcome:
                                0.85, epistemics.OBSERVED)
 
 
+def _verify_unverifiable(params, output) -> VerificationOutcome:
+    """An unregistered tool. Its effect is unknown, and unknown is not success."""
+    if _reports_failure(output):
+        return VerificationOutcome(registry.V_UNVERIFIABLE, False,
+                                   "the tool reported an error", 0.8,
+                                   epistemics.INFERRED)
+    return VerificationOutcome(
+        registry.V_UNVERIFIABLE, None,
+        "this tool is not in the registry, so there is no way to check what it "
+        "actually did — do not treat it as done", 0.2, epistemics.UNKNOWN)
+
+
 def verify(tool: str, params: Dict[str, Any], output: str, *,
            method: str = "", before: Any = None, after: Any = None,
            expected: str = "") -> VerificationOutcome:
@@ -235,4 +268,6 @@ def verify(tool: str, params: Dict[str, Any], output: str, *,
         return _verify_state_change(params, output, before, after)
     if method == registry.V_CONTENT:
         return _verify_content(params, output, expected)
+    if method == registry.V_UNVERIFIABLE:
+        return _verify_unverifiable(params, output)
     return _verify_none(params, output)

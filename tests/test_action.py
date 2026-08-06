@@ -216,7 +216,8 @@ def test_tool_exception_becomes_failed_result():
     assert res.status == R.FAILED and "disk on fire" in res.error
 
 
-def test_tool_timeout_becomes_failed_result():
+def test_tool_timeout_is_unverified_not_failed():
+    """Python can't kill the worker, so the effect may still land. Unknown ≠ failed."""
     import time
 
     def slow(tool, params):
@@ -224,7 +225,33 @@ def test_tool_timeout_becomes_failed_result():
         return "done"
 
     res = make(slow).execute("write_file", {"filename": "a", "content": "b"}, timeout=0.1)
-    assert res.status == R.FAILED and "timed out" in res.error
+    assert res.status == R.UNVERIFIED and "timed out" in res.error
+    assert "may still be running" in res.error
+
+
+def test_timeout_that_still_landed_is_a_success(tmp_path):
+    """If the effect is confirmed despite the timeout, say so."""
+    import threading
+    import time
+
+    target = tmp_path / "slow.txt"
+
+    def slow(tool, params):
+        time.sleep(0.05)
+        target.write_text("landed")
+        return f"Written 6 chars to {target}"
+
+    res = make(slow).execute("write_file", {"filename": str(target), "content": "x"},
+                             timeout=0.3)
+    assert res.status == R.SUCCESS
+
+
+def test_timeout_warns_against_a_blind_retry():
+    import time
+
+    res = make(lambda t, p: time.sleep(2)).execute(
+        "run_shell", {"command": "sleep 10"}, timeout=0.1)
+    assert "Do not retry blindly" in res.error
 
 
 def test_failure_never_reports_success():
