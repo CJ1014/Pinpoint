@@ -13,6 +13,18 @@ import httpx
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 ROOT_DIR = os.path.dirname(__file__)
+
+# v3 subsystems (security, action verification, communication, monitoring).
+# Guarded so a problem in the new layer can never stop the existing agent.
+try:
+    from pinpoint import integration as _v3
+except Exception:  # pragma: no cover - defensive
+    _v3 = None
+try:
+    from pinpoint import toolapi as _v3tools
+except Exception:  # pragma: no cover - defensive
+    _v3tools = None
+
 _running_servers = {}  # port -> thread
 MEMORY_FILE = os.path.join(os.path.dirname(__file__), "memory.json")
 MEMORY_CATEGORIES = ("skills", "lessons", "mistakes", "ideas", "projects", "preferences", "dislikes", "experiments", "reflections")
@@ -69,7 +81,9 @@ _session_order = ""             # what CJ asked for this session (context for au
 # PinPoint's own source — editing these is the highest-risk action.
 _SOURCE_FILES = {"agent.py", "tools.py", "main.py", "pinpoint_state.py", "viewer.html"}
 _DANGEROUS_TOOLS = {"modify_own_source", "run_shell", "pip_install",
-                    "delete_file", "write_anywhere"}
+                    "delete_file", "write_anywhere",
+                    # v3: anything that reaches a real person or costs money.
+                    "send_message", "send_email", "make_call"}
 _MODERATE_TOOLS = {"write_file", "run_python", "run_tests", "run_gui", "start_server",
                    "type_text", "press_key"}
 
@@ -3888,6 +3902,39 @@ _TOOL_ALIASES: dict = {
 }
 
 
+# v3 tools. Each entry takes the raw tool_input dict and returns a string.
+# Kept as a table so adding a capability doesn't grow the if/elif chain further.
+_V3_TOOLS = {} if _v3tools is None else {
+    # Communication
+    "send_message": lambda i: _v3tools.send_message(i.get("to", ""), i.get("body", "")),
+    "send_email": lambda i: _v3tools.send_email(i.get("to", ""), i.get("subject", ""),
+                                                i.get("body", "")),
+    "make_call": lambda i: _v3tools.make_call(i.get("to", ""), i.get("purpose", ""),
+                                              i.get("script", "")),
+    "get_call_status": lambda i: _v3tools.get_call_status(i.get("call_id", "")),
+    "get_messages": lambda i: _v3tools.get_messages(int(i.get("limit", 10) or 10)),
+    "resolve_contact": lambda i: _v3tools.resolve_contact(i.get("name", "")),
+    "add_contact": lambda i: _v3tools.add_contact(i.get("name", ""), i.get("phone", ""),
+                                                  i.get("email", ""), i.get("note", "")),
+    "communication_status": lambda i: _v3tools.communication_status(),
+    # Scheduling
+    "schedule_task": lambda i: _v3tools.schedule_task(i.get("what", ""),
+                                                      i.get("when", "")),
+    "list_scheduled": lambda i: _v3tools.list_scheduled(),
+    "cancel_scheduled": lambda i: _v3tools.cancel_scheduled(i.get("task_id", "")),
+    # Monitoring
+    "watch": lambda i: _v3tools.watch(i.get("kind", ""), i.get("target", ""),
+                                      i.get("response", ""), bool(i.get("auto", False))),
+    "list_watchers": lambda i: _v3tools.list_watchers(),
+    "check_watchers": lambda i: _v3tools.check_watchers(),
+    "stop_watching": lambda i: _v3tools.stop_watching(i.get("key", "")),
+    # Honesty about what is possible here
+    "capability_report": lambda i: _v3tools.capability_report(),
+    "permission_status": lambda i: _v3tools.permission_status(),
+    "emergency_status": lambda i: _v3tools.emergency_status(),
+}
+
+
 def dispatch(tool_name: str, tool_input: dict) -> str:
     """Public dispatch entry point — enforces guardrails, runs the tool, audits it."""
     if not isinstance(tool_input, dict):
@@ -3902,12 +3949,29 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
             tool_input["filename"] = os.path.basename(tool_input.pop("file_path"))
         tool_name = canonical
 
+    # v3: hard limits first — emergency stop and RED actions. No mode, profile,
+    # or grant overrides these, so they are checked before v2's approval logic.
+    if _v3 is not None:
+        blocked = _v3.hard_block(tool_name, tool_input)
+        if blocked is not None:
+            _audit_decision(tool_name, tool_input, "BLOCKED", "v3 hard limit")
+            return blocked
+
     # Stage 3: guardrail check before any dangerous action executes.
     refusal = _guardrail(tool_name, tool_input)
     if refusal is not None:
         return refusal
     result = _dispatch_impl(tool_name, tool_input)
-    _audit(tool_name, tool_input, result if isinstance(result, str) else str(result))
+    result = result if isinstance(result, str) else str(result)
+    _audit(tool_name, tool_input, result)
+
+    # v3: structured audit, plus an independent check that the tool did what its
+    # output implies. An unconfirmed effect is appended as a note, not swallowed.
+    if _v3 is not None:
+        _v3.record_action(tool_name, tool_input, result)
+        note = _v3.observe(tool_name, tool_input, result)
+        if note:
+            result = f"{result}\n\n{note}"
     return result
 
 
@@ -4129,5 +4193,16 @@ def _dispatch_impl(tool_name: str, tool_input: dict) -> str:
             return get_anchor().get_previous_sessions_summary()
         except Exception as e:
             return f"get_previous_sessions failed: {e}"
+
+    # ── v3: communication, monitoring, scheduling, capability honesty ─────────
+    elif tool_name in _V3_TOOLS:
+        if _v3tools is None:
+            return ("Error: the v3 subsystems failed to load, so this tool is "
+                    "unavailable right now.")
+        try:
+            return _V3_TOOLS[tool_name](tool_input)
+        except Exception as e:
+            return f"Error: {tool_name} failed — {type(e).__name__}: {e}"
+
     else:
         return f"Unknown tool: {tool_name}"

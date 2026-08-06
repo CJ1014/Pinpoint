@@ -51,6 +51,13 @@ try:
 except Exception:
     _reality = None  # type: ignore
 
+# ── v3 subsystems (security, planning, communication, monitoring) ─────────────
+# Guarded: a failure in the new layer must never stop the existing agent.
+try:
+    from pinpoint import integration as _v3
+except Exception:
+    _v3 = None  # type: ignore
+
 # ── LLM Provider Configuration ──────────────────────────────────────────────
 # Set LLM_PROVIDER=claude to use Claude API instead of Ollama
 # Set ANTHROPIC_API_KEY=sk-ant-... for Claude API
@@ -1327,6 +1334,147 @@ TOOLS = [
             "problem": {"type": "string", "description": "The problem or decision to analyze"},
         }, "required": ["problem"]},
     }},
+
+    # ── v3: Communication ─────────────────────────────────────────────────────
+    {"type": "function", "function": {
+        "name": "send_message",
+        "description": (
+            "Send a text message through an authorised provider. Resolves the "
+            "recipient first — if the name is ambiguous or unknown, it asks instead "
+            "of guessing. Only report a message as sent if the result contains a "
+            "confirmation_id."),
+        "parameters": {"type": "object", "properties": {
+            "to": {"type": "string", "description": "Contact name, phone number, or email"},
+            "body": {"type": "string", "description": "Exactly what to say"},
+        }, "required": ["to", "body"]},
+    }},
+    {"type": "function", "function": {
+        "name": "send_email",
+        "description": "Send an email through an authorised provider. Same confirmation rule as send_message.",
+        "parameters": {"type": "object", "properties": {
+            "to": {"type": "string", "description": "Contact name or email address"},
+            "subject": {"type": "string"},
+            "body": {"type": "string"},
+        }, "required": ["to", "subject", "body"]},
+    }},
+    {"type": "function", "function": {
+        "name": "make_call",
+        "description": (
+            "Place a phone call through an authorised provider. The call always "
+            "opens by identifying itself as an automated assistant — that is not "
+            "optional. Never claim a call happened without a confirmation_id."),
+        "parameters": {"type": "object", "properties": {
+            "to": {"type": "string", "description": "Contact name or phone number"},
+            "purpose": {"type": "string", "description": "Why you're calling, in one line"},
+            "script": {"type": "string", "description": "What to say after the introduction"},
+        }, "required": ["to"]},
+    }},
+    {"type": "function", "function": {
+        "name": "get_call_status",
+        "description": "Check what actually happened to a call you placed.",
+        "parameters": {"type": "object", "properties": {
+            "call_id": {"type": "string", "description": "The confirmation id from make_call"},
+        }, "required": ["call_id"]},
+    }},
+    {"type": "function", "function": {
+        "name": "resolve_contact",
+        "description": "Work out who a name refers to before messaging or calling them. Returns a question if it's ambiguous.",
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string"},
+        }, "required": ["name"]},
+    }},
+    {"type": "function", "function": {
+        "name": "add_contact",
+        "description": "Save a contact CJ has given you. Needs at least a phone number or an email.",
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string"},
+            "phone": {"type": "string"},
+            "email": {"type": "string"},
+            "note": {"type": "string", "description": "What distinguishes them, e.g. 'from school'"},
+        }, "required": ["name"]},
+    }},
+    {"type": "function", "function": {
+        "name": "communication_status",
+        "description": "Check which communication channels actually work here, and what's missing if they don't.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+
+    # ── v3: Scheduling ────────────────────────────────────────────────────────
+    {"type": "function", "function": {
+        "name": "schedule_task",
+        "description": (
+            "Schedule something for later. Understands 'tomorrow at 9am', 'in 20 "
+            "minutes', 'every day at 8am', 'every 15 minutes'. Fails honestly if "
+            "the time can't be read rather than guessing."),
+        "parameters": {"type": "object", "properties": {
+            "what": {"type": "string", "description": "What should happen"},
+            "when": {"type": "string", "description": "When it should happen"},
+        }, "required": ["what", "when"]},
+    }},
+    {"type": "function", "function": {
+        "name": "list_scheduled",
+        "description": "List everything currently scheduled.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "cancel_scheduled",
+        "description": "Cancel a scheduled task by its id.",
+        "parameters": {"type": "object", "properties": {
+            "task_id": {"type": "string"},
+        }, "required": ["task_id"]},
+    }},
+
+    # ── v3: Monitoring ────────────────────────────────────────────────────────
+    {"type": "function", "function": {
+        "name": "watch",
+        "description": (
+            "Watch something and react when it changes: a port, a process, a file, "
+            "a URL, or a command that should keep passing. Use this for 'keep an "
+            "eye on my server' style requests."),
+        "parameters": {"type": "object", "properties": {
+            "kind": {"type": "string", "description": "port | process | file | http | command"},
+            "target": {"type": "string", "description": "e.g. 'localhost:25565', 'java', '/path/file', 'https://...'"},
+            "response": {"type": "string", "description": "What you intend to do when it changes"},
+            "auto": {"type": "boolean", "description": "Act automatically instead of just telling CJ"},
+        }, "required": ["kind", "target"]},
+    }},
+    {"type": "function", "function": {
+        "name": "list_watchers",
+        "description": "Show what you're currently watching and its state.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "check_watchers",
+        "description": "Poll everything you're watching right now and report changes.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "stop_watching",
+        "description": "Stop watching something, or stop the monitor entirely if no key is given.",
+        "parameters": {"type": "object", "properties": {
+            "key": {"type": "string", "description": "e.g. 'port:localhost:25565'"},
+        }},
+    }},
+
+    # ── v3: Knowing your own limits ───────────────────────────────────────────
+    {"type": "function", "function": {
+        "name": "capability_report",
+        "description": (
+            "What you can actually do in this environment right now, and the "
+            "workaround where you can't. Check this before promising something "
+            "that needs a screen, a keyboard, or a provider."),
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "permission_status",
+        "description": "Your current autonomy profile and standing permissions.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "emergency_status",
+        "description": "Whether the emergency stop is engaged. Only CJ can clear it.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
 ]
 
 
@@ -1401,6 +1549,16 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
     _save_inner_state(inner_state)
     _knowledge = _load_knowledge()
     system_content = SYSTEM_PROMPT + (_knowledge + "\n\n" if _knowledge else "") + _build_inner_state_prompt(inner_state) + memory_context
+
+    # v3: capability honesty, stated preferences, and a structured plan for
+    # whatever CJ asked for. Everything here is deterministic — no extra LLM call.
+    if _v3 is not None:
+        try:
+            _v3_block = _v3.session_start(session_num, order)
+            if _v3_block:
+                system_content += "\n\n" + _v3_block
+        except Exception:
+            pass
 
     # Check for an ongoing project to continue
     mem_data = _load_memory()
@@ -1736,6 +1894,26 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
                 f"If unsure: call verify_claim(). Hallucinations will be caught."
             )})
 
+        # ════ v3: due reminders and anything the watchers noticed ════
+        # Deterministic and cheap, so it can run every iteration without cost.
+        if _v3 is not None:
+            try:
+                _due = _v3.due_reminders()
+                _notices = _v3.monitor_notices()
+                if _due or _notices:
+                    _lines = [f"• REMINDER DUE: {d}" for d in _due]
+                    _lines += [f"• {n}" for n in _notices]
+                    print("\n[WATCH] " + " | ".join(_lines[:3]))
+                    logger.info("[WATCH] %s", _lines)
+                    messages.append({"role": "user", "content": (
+                        "[SOMETHING HAPPENED WHILE YOU WERE WORKING]\n"
+                        + "\n".join(_lines)
+                        + "\n\nDeal with it if it matters more than what you're doing. "
+                          "If it's a reminder for CJ, speak() it to him now."
+                    )})
+            except Exception:
+                pass
+
         # ════ Phase 6: Value Reflection (every 10th iteration) ════
         if _values_summary and iteration > 1 and iteration % 10 == 0:
             try:
@@ -1859,6 +2037,25 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
 
         # Handle interrupt — inject the message and re-prompt immediately
         if interrupted:
+            # v3: two things must happen before the model sees this. An emergency
+            # stop phrase halts execution outright, and stated preferences are
+            # recorded with CJ's authority behind them — neither can wait for a
+            # model turn to interpret them.
+            if _v3 is not None:
+                try:
+                    _reaction = _v3.handle_user_text(interrupt_msg)
+                    if _reaction.get("stopped"):
+                        print(f"\n[EMERGENCY STOP] {_reaction['note']}\n")
+                        logger.warning("[EMERGENCY STOP] engaged by CJ: %s", interrupt_msg)
+                        dispatch("speak", {"text": "Stopping everything now.", "wait": True})
+                        final_summary = "Halted at CJ's request."
+                        finished = True
+                        break
+                    if _reaction.get("note"):
+                        print(f"[PREFERENCE] {_reaction['note']}")
+                except Exception:
+                    pass
+
             if interrupt_msg.lower() in ("/mute", "/unmute", "/toggle"):
                 from tools import mute_voice, unmute_voice, toggle_voice
                 if interrupt_msg.lower() == "/mute":
@@ -2356,6 +2553,16 @@ def run(logger: Optional[logging.Logger] = None, order: str = "", interrupt_queu
             print(f"[CHECKPOINT] Saved {_cp5.id}")
             if _reality is not None:
                 _reality.log_action(f"Saved checkpoint: {_cp5.id}")
+        except Exception:
+            pass
+
+    # v3: consolidate tiered memory — the best of working memory becomes
+    # episodic, the rest is dropped, and expired records are pruned.
+    if _v3 is not None:
+        try:
+            _kept = _v3.session_end(session_num, final_summary or _current_goal)
+            if _kept:
+                print(f"[MEMORY] {_kept}")
         except Exception:
             pass
 

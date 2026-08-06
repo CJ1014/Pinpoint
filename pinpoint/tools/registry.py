@@ -359,6 +359,36 @@ def _register_builtins() -> None:
        "communication.read", external=True, requires=["voice_provider"], risk="low")
     _r("resolve_contact", "Resolve a name to a contact", [C_COMMUNICATION], GREEN,
        "communication.contacts", risk="low")
+    _r("add_contact", "Save a contact CJ has given", [C_COMMUNICATION], YELLOW,
+       "communication.contacts", verification=V_STATE_CHANGE, risk="low")
+    _r("communication_status", "Report which channels actually work",
+       [C_COMMUNICATION, C_INSPECTION], GREEN, "communication.read", risk="none")
+
+    # ── Scheduling ────────────────────────────────────────────────────────────
+    _r("schedule_task", "Schedule something for later", [C_PLANNING], GREEN,
+       "schedule.write", verification=V_STATE_CHANGE, risk="low")
+    _r("list_scheduled", "List scheduled tasks", [C_PLANNING], GREEN,
+       "schedule.read", risk="none")
+    _r("cancel_scheduled", "Cancel a scheduled task", [C_PLANNING], GREEN,
+       "schedule.write", verification=V_STATE_CHANGE, risk="low")
+
+    # ── Monitoring ────────────────────────────────────────────────────────────
+    _r("watch", "Watch a port, process, file, URL, or command", [C_INSPECTION],
+       GREEN, "monitor.write", verification=V_STATE_CHANGE, risk="low")
+    _r("list_watchers", "Show what is being watched", [C_INSPECTION], GREEN,
+       "monitor.read", risk="none")
+    _r("check_watchers", "Poll every watcher now", [C_INSPECTION], GREEN,
+       "monitor.read", risk="none")
+    _r("stop_watching", "Stop a watcher", [C_INSPECTION], GREEN, "monitor.write",
+       risk="low")
+
+    # ── Self-knowledge ────────────────────────────────────────────────────────
+    _r("capability_report", "Report what is actually possible in this environment",
+       [C_META, C_INSPECTION], GREEN, "meta.capability", risk="none")
+    _r("permission_status", "Report the autonomy profile and standing grants",
+       [C_META, C_INSPECTION], GREEN, "meta.read", risk="none")
+    _r("emergency_status", "Report whether the emergency stop is engaged",
+       [C_META, C_INSPECTION], GREEN, "meta.read", risk="none")
 
 
 _register_builtins()
