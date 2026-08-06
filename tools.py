@@ -13,10 +13,208 @@ import httpx
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 ROOT_DIR = os.path.dirname(__file__)
+
+# v3 subsystems (security, action verification, communication, monitoring).
+# Guarded so a problem in the new layer can never stop the existing agent.
+try:
+    from pinpoint import integration as _v3
+except Exception:  # pragma: no cover - defensive
+    _v3 = None
+try:
+    from pinpoint import toolapi as _v3tools
+except Exception:  # pragma: no cover - defensive
+    _v3tools = None
+
 _running_servers = {}  # port -> thread
 MEMORY_FILE = os.path.join(os.path.dirname(__file__), "memory.json")
-MEMORY_CATEGORIES = ("skills", "lessons", "mistakes", "ideas", "projects", "preferences", "dislikes", "experiments")
+MEMORY_CATEGORIES = ("skills", "lessons", "mistakes", "ideas", "projects", "preferences", "dislikes", "experiments", "reflections")
 MAX_PER_CATEGORY = 20
+
+# ── Audit trail + self-verification state (Mythos-inspired agentic upgrade) ──
+AUDIT_LOG = os.path.join(OUTPUT_DIR, "pinpoint_audit.log")
+MAX_VERIFY_RETRIES = 3          # cap so verification can't "grind" forever
+_verify_fail_count = 0          # consecutive done() blocks this session
+
+
+def _audit(action: str, detail: object = "", result: str = "") -> None:
+    """Append-only audit trail of every tool call. Best-effort; never raises."""
+    try:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        detail_str = str(detail)
+        if len(detail_str) > 300:
+            detail_str = detail_str[:300] + "…"
+        rlen = len(result) if isinstance(result, str) else 0
+        rhead = (result[:120].replace("\n", " ") + "…") if isinstance(result, str) and rlen > 120 else (result or "")
+        with open(AUDIT_LOG, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] ACTION={action} ARGS={detail_str} RESULT_LEN={rlen} RESULT={rhead}\n")
+    except Exception:
+        pass
+
+
+def _audit_decision(action: str, detail: object, decision: str, reason: str = "") -> None:
+    """Record a guardrail decision (APPROVED / DENIED / BLOCKED) in the audit trail."""
+    try:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        d = str(detail)
+        if len(d) > 200:
+            d = d[:200] + "…"
+        with open(AUDIT_LOG, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] GUARDRAIL ACTION={action} DECISION={decision} REASON={reason} ARGS={d}\n")
+    except Exception:
+        pass
+
+
+# ── Stage 3: guardrails & humans-on-the-loop ────────────────────────────────
+# Policy mode via env PINPOINT_APPROVAL:
+#   smart  (default) — preserve autonomous behavior, but ALWAYS block self-source
+#                      edits outside an explicit /dev session; audit everything.
+#   ask              — every dangerous action requires human approval (hook).
+#   allow            — permit all dangerous actions (audited). Full trust.
+#   deny             — block all dangerous actions (audited). Unattended-hardened.
+_approval_mode = os.environ.get("PINPOINT_APPROVAL", "smart").strip().lower()
+_dev_mode_active = False        # set by agent.run() each session
+_approval_hook = None           # callable(desc, risk, preview, two_step) -> bool
+_session_order = ""             # what CJ asked for this session (context for audit)
+
+# PinPoint's own source — editing these is the highest-risk action.
+_SOURCE_FILES = {"agent.py", "tools.py", "main.py", "pinpoint_state.py", "viewer.html"}
+_DANGEROUS_TOOLS = {"modify_own_source", "run_shell", "pip_install",
+                    "delete_file", "write_anywhere",
+                    # v3: anything that reaches a real person or costs money.
+                    "send_message", "send_email", "make_call"}
+_MODERATE_TOOLS = {"write_file", "run_python", "run_tests", "run_gui", "start_server",
+                   "type_text", "press_key"}
+
+
+def set_dev_mode(flag: bool) -> None:
+    global _dev_mode_active
+    _dev_mode_active = bool(flag)
+
+
+def set_approval_hook(fn) -> None:
+    """Install a human-approval callback. fn(desc, risk, preview, two_step) -> bool."""
+    global _approval_hook
+    _approval_hook = fn
+
+
+def set_session_order(order: str) -> None:
+    global _session_order
+    _session_order = order or ""
+
+
+def _targets_own_source(tool_name: str, inp: dict) -> bool:
+    """True if this call would write to / delete one of PinPoint's own source files."""
+    if tool_name == "modify_own_source":
+        return True
+    if tool_name in ("write_file", "write_anywhere", "delete_file"):
+        raw = inp.get("filename") or inp.get("path") or ""
+        if not raw:
+            return False
+        base = os.path.basename(str(raw)).lower()
+        if base in _SOURCE_FILES:
+            # Confirm it actually resolves into the Pinpoint root, not a same-named
+            # file inside the project's output folder.
+            try:
+                resolved = raw if os.path.isabs(raw) else _safe_path(raw)
+                if os.path.abspath(os.path.dirname(resolved)) == os.path.abspath(ROOT_DIR):
+                    return True
+            except Exception:
+                return True  # err on the side of caution
+            # write_anywhere with a bare source filename is ambiguous — treat as risky
+            if tool_name == "write_anywhere":
+                return True
+    return False
+
+
+def _risk_level(tool_name: str, inp: dict) -> str:
+    """Categorize a tool call: 'dangerous' | 'moderate' | 'safe'."""
+    if tool_name in _DANGEROUS_TOOLS or _targets_own_source(tool_name, inp):
+        return "dangerous"
+    if tool_name in _MODERATE_TOOLS:
+        return "moderate"
+    return "safe"
+
+
+def _guardrail(tool_name: str, inp: dict):
+    """Return None to allow the call, or a refusal string to block it.
+    Enforces the approval policy and the unrequested-self-edit guard."""
+    risk = _risk_level(tool_name, inp)
+    if risk != "dangerous":
+        return None  # safe/moderate run freely (still audited by dispatch)
+
+    is_self_edit = (tool_name == "modify_own_source") or _targets_own_source(tool_name, inp)
+
+    # Hard guard: self-modifying source outside an explicit /dev session is never
+    # legitimate — this is the "unrequested action" teeth. Block in every mode.
+    if is_self_edit and not _dev_mode_active:
+        _audit_decision(tool_name, inp, "BLOCKED", "self-source edit outside /dev (unauthorized)")
+        return (
+            "BLOCKED BY GUARDRAIL: editing PinPoint's own source is only allowed in an "
+            "explicit /dev session. This was not requested — refusing. Do something else."
+        )
+
+    if _approval_mode == "allow":
+        _audit_decision(tool_name, inp, "APPROVED", "mode=allow")
+        return None
+
+    if _approval_mode == "deny":
+        _audit_decision(tool_name, inp, "DENIED", "mode=deny")
+        return f"BLOCKED BY GUARDRAIL: '{tool_name}' is a dangerous action and approval mode is 'deny'."
+
+    if _approval_mode == "ask":
+        return _seek_approval(tool_name, inp, risk, is_self_edit)
+
+    # smart (default): self-edits inside /dev may require approval if a hook exists;
+    # other dangerous ops are permitted (so normal builds aren't crippled) but audited.
+    if is_self_edit:
+        if _approval_hook is not None:
+            return _seek_approval(tool_name, inp, risk, two_step=True)
+        _audit_decision(tool_name, inp, "APPROVED", "mode=smart dev self-edit")
+        return None
+    _audit_decision(tool_name, inp, "APPROVED", "mode=smart dangerous op")
+    return None
+
+
+def _seek_approval(tool_name: str, inp: dict, risk: str, two_step: bool = False):
+    """Ask the human via the installed hook. No hook / timeout / refusal -> deny."""
+    if _approval_hook is None:
+        _audit_decision(tool_name, inp, "DENIED", "approval required, no human available")
+        return (
+            f"BLOCKED BY GUARDRAIL: '{tool_name}' needs human approval but no one is "
+            f"available to approve it right now. Choose a different approach."
+        )
+    # Build a human-readable preview.
+    if tool_name == "run_shell":
+        desc = f"run a shell command: {inp.get('command', '')[:200]}"
+        preview = inp.get("command", "")
+    elif tool_name == "modify_own_source":
+        desc = f"edit its own source file {inp.get('filename', '?')} ({inp.get('reason', '')[:80]})"
+        preview = (inp.get("new_content", "") or "")[:1500]
+    elif tool_name in ("write_file", "write_anywhere"):
+        tgt = inp.get("filename") or inp.get("path") or "?"
+        desc = f"write to {tgt}"
+        preview = (inp.get("content", "") or "")[:1500]
+    elif tool_name == "delete_file":
+        desc = f"delete {inp.get('path', '?')}"
+        preview = ""
+    elif tool_name == "pip_install":
+        desc = f"pip install {inp.get('package', '?')}"
+        preview = ""
+    else:
+        desc = f"perform {tool_name}"
+        preview = str(inp)[:500]
+    try:
+        approved = bool(_approval_hook(desc, risk, preview, two_step))
+    except Exception as e:
+        _audit_decision(tool_name, inp, "DENIED", f"approval hook error: {e}")
+        return f"BLOCKED BY GUARDRAIL: approval failed ({e}). Not executing '{tool_name}'."
+    if approved:
+        _audit_decision(tool_name, inp, "APPROVED", "human approved")
+        return None
+    _audit_decision(tool_name, inp, "DENIED", "human declined")
+    return f"BLOCKED BY GUARDRAIL: you (the human) declined '{tool_name}'. Pick another approach."
 
 # ── Speech queue — one thread, one voice at a time ──────────────────────────
 _speech_queue: _queue_mod.Queue = _queue_mod.Queue()
@@ -26,6 +224,8 @@ _playback_lock = threading.Lock()
 _tts_ended_at: float = 0.0     # time.time() when the last TTS playback finished
 _last_spoken_text: str = ""    # text PinPoint most recently spoke (for echo detection)
 _recent_spoken: list = []      # rolling buffer of (timestamp, text) for echo detection
+
+
 
 
 def _speech_worker() -> None:
@@ -140,9 +340,9 @@ def _strip_echo_prefix(user_text: str) -> tuple:
     spoken_blob = " ".join(_normalize_for_echo(s) for _t, s in recent)
 
     # Find the longest prefix of user_norm_words that appears in spoken_blob.
-    # Walk from longest possible prefix down to length 3.
+    # Walk from longest possible prefix down to length 2.
     longest_match = 0
-    for prefix_len in range(len(user_norm_words), 2, -1):
+    for prefix_len in range(len(user_norm_words), 1, -1):
         prefix = " ".join(user_norm_words[:prefix_len])
         if prefix in spoken_blob:
             longest_match = prefix_len
@@ -276,12 +476,17 @@ def start_voice_listener(interrupt_queue) -> bool:
     import queue as _iq
 
     SAMPLE_RATE = 16000
-    CHUNK = 1024          # frames per callback (~64 ms)
-    SILENCE_CHUNKS = 28   # chunks of silence that end a phrase (~1.8 s — lets you hesitate)
+    CHUNK = 1024            # frames per callback (~64 ms)
+    SILENCE_SHORT = 35      # ~2.2 s — short utterance like "yeah" / "stop"
+    SILENCE_LONG = 75       # ~4.8 s — long sentence with thinking pauses
+    PRE_ROLL_CHUNKS = 12    # ~0.77 s of audio kept before VAD triggers
+    MIN_PHRASE_CHUNKS = 3   # discard captures shorter than ~0.2 s (was 6 — too aggressive)
 
-    # Calibrate energy threshold from 0.5 s of ambient noise
-    energy_threshold = 500  # fallback default
-    _calib_result = [None]  # list so closure can mutate it
+    # Calibrate energy threshold from 0.5 s of ambient noise.
+    # Low defaults so quiet/distant voices are picked up.
+    energy_threshold = 250.0  # fallback default (was 500 — too loud required)
+    noise_floor = 100.0       # tracked separately for continuous re-calibration
+    _calib_result = [None]    # list so closure can mutate it
 
     def _calibrate():
         try:
@@ -289,20 +494,20 @@ def start_voice_listener(interrupt_queue) -> bool:
                 int(0.5 * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1, dtype="int16"
             )
             sd.wait()
-            # Cast to Python int before squaring to avoid numpy int16 overflow
             flat = [int(s) for row in ambient for s in row]
             ambient_rms = (sum(s * s for s in flat) / max(len(flat), 1)) ** 0.5
-            _calib_result[0] = max(ambient_rms * 3.5, 400)
+            # Multiplier 2.0 (was 3.5) — more sensitive to quiet speech.
+            # Floor cap 200 (was 400) — allows lower thresholds in quiet rooms.
+            _calib_result[0] = (max(ambient_rms * 2.0, 200.0), max(ambient_rms, 60.0))
         except Exception:
             pass
 
-    # Calibrate with 3-second timeout (if PortAudio DLL is missing, sd.rec hangs)
     calib_thread = threading.Thread(target=_calibrate, daemon=True)
     calib_thread.start()
     calib_thread.join(timeout=3.0)
 
     if _calib_result[0] is not None:
-        energy_threshold = _calib_result[0]
+        energy_threshold, noise_floor = _calib_result[0]
 
     audio_q: _iq.Queue = _iq.Queue()
 
@@ -311,10 +516,15 @@ def start_voice_listener(interrupt_queue) -> bool:
 
     def _sd_thread():
         import time as _time
+        nonlocal_floor = [noise_floor]
+        nonlocal_thresh = [energy_threshold]
         recording = False
         buf = b""
         silence_count = 0
-        POST_SPEAK_COOLDOWN = 1.2  # seconds to keep mic off after TTS finishes
+        speech_chunks = 0          # how many high-energy chunks this utterance
+        peak_rms_recent = 0.0      # tracks loudest recent chunk for "still talking" check
+        pre_roll: list = []
+        POST_SPEAK_COOLDOWN = 0.4  # was 1.2 — faster mic re-enable after speech
 
         def _drain_audio_q():
             while True:
@@ -333,18 +543,12 @@ def start_voice_listener(interrupt_queue) -> bool:
             )
             stream.start()
         except Exception:
-            # PortAudio DLL missing or audio device initialization failed
             return
 
         mic_live = True
 
         try:
             while _voice_enabled:
-                # Mic must be off if ANY of these is true:
-                #  - audio is currently playing
-                #  - speech is queued but not yet playing (closes the gap
-                #    between speak() returning and the subprocess launching)
-                #  - we're in the post-speech cooldown window
                 with _playback_lock:
                     speaking = _playback_proc is not None
                 queue_pending = not _speech_queue.empty()
@@ -361,6 +565,8 @@ def start_voice_listener(interrupt_queue) -> bool:
                     buf = b""
                     recording = False
                     silence_count = 0
+                    speech_chunks = 0
+                    peak_rms_recent = 0.0
                 elif not should_be_live and mic_live:
                     try:
                         stream.stop()
@@ -371,6 +577,8 @@ def start_voice_listener(interrupt_queue) -> bool:
                     buf = b""
                     recording = False
                     silence_count = 0
+                    speech_chunks = 0
+                    peak_rms_recent = 0.0
 
                 if not mic_live:
                     _time.sleep(0.03)
@@ -385,41 +593,74 @@ def start_voice_listener(interrupt_queue) -> bool:
                 samples = struct.unpack(f"{n}h", data)
                 rms = (sum(int(s) * int(s) for s in samples) / n) ** 0.5
 
-                if rms > energy_threshold:
+                # Continuous noise-floor tracking: when idle, slowly track ambient
+                # so the threshold adapts to changing room noise (fan, AC, etc.)
+                if not recording and rms < nonlocal_thresh[0]:
+                    nonlocal_floor[0] = 0.95 * nonlocal_floor[0] + 0.05 * rms
+                    nonlocal_thresh[0] = max(nonlocal_floor[0] * 2.0, 200.0)
+
+                if rms > nonlocal_thresh[0]:
+                    if not recording:
+                        buf = b"".join(pre_roll) + data
+                        pre_roll.clear()
+                    else:
+                        buf += data
                     recording = True
                     silence_count = 0
-                    buf += data
+                    speech_chunks += 1
+                    if rms > peak_rms_recent:
+                        peak_rms_recent = rms
                 elif recording:
                     buf += data
                     silence_count += 1
-                    if silence_count >= SILENCE_CHUNKS:
-                        captured = buf
+                    # Decay recent peak so it doesn't lock high forever
+                    peak_rms_recent *= 0.97
+
+                    # Adaptive silence threshold:
+                    #   - short utterances (< 1.5 s of speech)   → SILENCE_SHORT
+                    #   - longer utterances (sentences/thoughts) → SILENCE_LONG
+                    # This catches "stop" fast while letting CJ pause mid-sentence.
+                    silence_needed = SILENCE_SHORT if speech_chunks < 24 else SILENCE_LONG
+
+                    if silence_count >= silence_needed:
+                        if speech_chunks < MIN_PHRASE_CHUNKS:
+                            # Too short — probably a cough or click, drop it
+                            buf = b""
+                            recording = False
+                            silence_count = 0
+                            speech_chunks = 0
+                            peak_rms_recent = 0.0
+                            continue
+                        _captured = bytes(buf)
                         buf = b""
                         recording = False
                         silence_count = 0
+                        speech_chunks = 0
+                        peak_rms_recent = 0.0
 
-                        def _transcribe(raw=captured):
+                        def _transcribe(raw=_captured):
                             try:
                                 audio_data = sr.AudioData(raw, SAMPLE_RATE, 2)
                                 text = recognizer.recognize_google(audio_data)
-                                if text and text.strip():
-                                    cleaned, stripped = _strip_echo_prefix(text.strip())
-                                    if stripped:
-                                        if not cleaned or len(cleaned.split()) < 2:
-                                            sys.stdout.write(f"\n[ECHO] Ignored: '{text.strip()}'\n")
-                                            sys.stdout.flush()
-                                            return
-                                        sys.stdout.write(f"\n[ECHO trimmed → user said] {cleaned}\n")
-                                        sys.stdout.flush()
-                                        interrupt_queue.put(cleaned)
+                                if not (text and text.strip()):
+                                    return
+                                cleaned, stripped = _strip_echo_prefix(text.strip())
+                                if stripped:
+                                    if not cleaned or len(cleaned.split()) < 2:
                                         return
-                                    sys.stdout.write(f"\n[YOU] {text.strip()}\n")
-                                    sys.stdout.flush()
-                                    interrupt_queue.put(text.strip())
+                                    # No [YOU] write here — main loop prints it to avoid
+                                    # colliding with PinPoint's concurrent stdout writes.
+                                    interrupt_queue.put(cleaned)
+                                    return
+                                interrupt_queue.put(text.strip())
                             except Exception:
                                 pass
 
                         threading.Thread(target=_transcribe, daemon=True).start()
+                else:
+                    pre_roll.append(data)
+                    if len(pre_roll) > PRE_ROLL_CHUNKS:
+                        pre_roll.pop(0)
         except Exception as e:
             print(f"[VOICE] Stream stopped: {e}")
         finally:
@@ -460,7 +701,7 @@ _current_project_dir = None  # set by set_session_goal
 def _slugify(text: str) -> str:
     """Turn a goal/title into a safe folder name."""
     slug = re.sub(r'[^a-z0-9]+', '_', text.lower()).strip('_')
-    return slug[:60] if slug else "project"
+    return slug[:40] if slug else "project"
 
 
 def get_project_dir() -> str:
@@ -746,14 +987,248 @@ def open_html(filename: str) -> str:
     )
 
 
+def open_app(name: str) -> str:
+    """Open an application or file on CJ's computer by name.
+
+    On Windows uses the Start-menu / shell search so natural names like
+    'Chrome', 'Spotify', 'Notepad', 'Instagram' (opens in browser) all work.
+    """
+    import webbrowser, subprocess as _sp, sys as _sys
+
+    # Map common social/web names directly to URLs
+    _url_shortcuts = {
+        "instagram": "https://www.instagram.com",
+        "twitter": "https://www.twitter.com",
+        "x": "https://www.x.com",
+        "youtube": "https://www.youtube.com",
+        "gmail": "https://mail.google.com",
+        "google": "https://www.google.com",
+        "reddit": "https://www.reddit.com",
+        "discord": "https://discord.com/app",
+        "spotify web": "https://open.spotify.com",
+        "netflix": "https://www.netflix.com",
+        "github": "https://github.com",
+    }
+    key = name.strip().lower()
+    if key in _url_shortcuts:
+        webbrowser.open(_url_shortcuts[key])
+        return f"Opened {name} in your browser."
+
+    # Windows: use 'start' shell command — resolves app names from PATH / Start menu
+    if _sys.platform == "win32":
+        try:
+            _sp.Popen(
+                ["cmd", "/c", "start", "", name],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                creationflags=_sp.CREATE_NO_WINDOW,
+            )
+            return f"Launched '{name}'."
+        except Exception as e:
+            pass
+        # Fallback: os.startfile
+        try:
+            import os as _os
+            _os.startfile(name)
+            return f"Opened '{name}'."
+        except Exception as e:
+            return f"Couldn't open '{name}': {e}"
+    else:
+        # macOS / Linux
+        cmd = ["open", name] if _sys.platform == "darwin" else ["xdg-open", name]
+        try:
+            _sp.Popen(cmd, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+            return f"Launched '{name}'."
+        except Exception as e:
+            return f"Couldn't open '{name}': {e}"
+
+
+def open_url(url: str) -> str:
+    """Open a URL in the default browser."""
+    import webbrowser
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    webbrowser.open(url)
+    return f"Opened {url} in your browser."
+
+
+def type_text(text: str) -> str:
+    """Type text at the current cursor position using the keyboard."""
+    try:
+        import pyautogui
+        pyautogui.typewrite(text, interval=0.03)
+        return f"Typed: {text[:60]}"
+    except ImportError:
+        return "pyautogui not installed. Run: pip install pyautogui"
+    except Exception as e:
+        return f"Error typing text: {e}"
+
+
+def press_key(key: str) -> str:
+    """Press a keyboard key or key combo (e.g. 'enter', 'ctrl+c', 'win', 'alt+tab')."""
+    try:
+        import pyautogui
+        keys = [k.strip() for k in key.lower().split("+")]
+        if len(keys) == 1:
+            pyautogui.press(keys[0])
+        else:
+            pyautogui.hotkey(*keys)
+        return f"Pressed: {key}"
+    except ImportError:
+        return "pyautogui not installed. Run: pip install pyautogui"
+    except Exception as e:
+        return f"Error pressing key: {e}"
+
+
 GENRE_CATEGORIES = [
     "game", "simulation", "art", "music", "tool", "data",
     "3d", "story", "animation", "utility", "interactive", "other",
 ]
 
+# ── Stage 1: self-verification loop ─────────────────────────
+# Blocking patterns: scripts that never exit on their own (games, GUIs, servers,
+# scripts waiting on input). We syntax-check these instead of full-running them.
+_BLOCKING_SIGNALS = (
+    "pygame", "tkinter", "mainloop(", "while true", "app.run(", "serve_forever",
+    "input(", "http.server", "flask", "uvicorn", "asyncio.run", "turtle",
+    "cv2.imshow", "plt.show(", "root.mainloop", "pyglet", "arcade.run",
+)
+
+
+def _verify_run_file(path: str) -> tuple:
+    """Smart-execute a single file for verification. Returns (ran, ok, report).
+    Long-running apps (games/servers/GUIs) get a syntax check instead of a full run."""
+    ext = os.path.splitext(path)[1].lower()
+    name = os.path.basename(path)
+
+    if ext == ".py":
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                src = f.read()
+        except Exception as e:
+            return True, False, f"{name}: could not read file ({e})"
+
+        # Always syntax-check first — fast and catches the most common failure.
+        import py_compile
+        try:
+            py_compile.compile(path, doraise=True)
+        except py_compile.PyCompileError as e:
+            return True, False, f"{name}: SYNTAX ERROR\n{str(e)[:400]}"
+
+        # If it looks long-running, don't block on a full run — syntax is our signal.
+        if any(sig in src.lower() for sig in _BLOCKING_SIGNALS):
+            return True, True, f"{name}: syntax OK (long-running app — not fully executed)"
+
+        # Otherwise run it with a short verification timeout.
+        try:
+            result = subprocess.run(
+                [sys.executable, path], capture_output=True, text=True,
+                timeout=20, cwd=os.path.dirname(path) or OUTPUT_DIR,
+            )
+            err = (result.stderr or "").strip()
+            if result.returncode != 0 and err:
+                first = next((l for l in err.splitlines() if l.strip()), err[:200])
+                return True, False, f"{name}: exited {result.returncode}\n{first[:300]}"
+            return True, True, f"{name}: ran clean (exit 0)"
+        except subprocess.TimeoutExpired:
+            return True, True, f"{name}: still running after 20s (likely long-running — syntax OK)"
+        except Exception as e:
+            return True, False, f"{name}: failed to run ({e})"
+
+    if ext in (".html", ".htm"):
+        report = []
+        ok = True
+        try:
+            html_res = validate_html(name)
+            report.append(html_res)
+            if "error" in html_res.lower() or "unclosed" in html_res.lower() or "missing <!doctype" in html_res.lower():
+                ok = False
+        except Exception as e:
+            report.append(f"html validate failed: {e}")
+        try:
+            js_res = check_js(name)
+            report.append(js_res)
+            if "syntax error" in js_res.lower() or "unbalanced" in js_res.lower():
+                ok = False
+        except Exception:
+            pass
+        return True, ok, f"{name}:\n" + "\n".join(report)
+
+    # Not auto-runnable (css, json, txt, md, advice, etc.)
+    return False, True, ""
+
+
+def _verify_project(summary: str, files: str) -> tuple:
+    """Stage 1 self-verification. Runs/validates the project's main artifacts,
+    then asks the model to critique the result. Returns (passed: bool, critique: str)."""
+    proj = get_project_dir()
+
+    # Collect candidate files: explicit `files` arg first, then scan project dir.
+    candidates = []
+    for f in (files or "").replace(",", " ").split():
+        f = f.strip()
+        if f:
+            candidates.append(_safe_path(f))
+    if not candidates and os.path.isdir(proj):
+        for root, _dirs, fnames in os.walk(proj):
+            for fn in fnames:
+                if fn.lower().endswith((".py", ".html", ".htm")):
+                    candidates.append(os.path.join(root, fn))
+    # De-dupe, keep only existing
+    seen, files_to_check = set(), []
+    for c in candidates:
+        cp = os.path.abspath(c)
+        if cp not in seen and os.path.exists(cp):
+            seen.add(cp)
+            files_to_check.append(cp)
+
+    # Execute / validate
+    exec_reports, any_ran, any_failed = [], False, False
+    for path in files_to_check[:6]:  # cap to avoid huge sweeps
+        ran, ok, report = _verify_run_file(path)
+        if ran:
+            any_ran = True
+            if not ok:
+                any_failed = True
+            if report:
+                exec_reports.append(report)
+
+    # Hard fail: something runnable clearly broke → block immediately, no LLM needed.
+    if any_failed:
+        return False, "EXECUTION FAILED:\n" + "\n\n".join(exec_reports)
+
+    exec_block = "\n\n".join(exec_reports) if exec_reports else "(nothing auto-runnable; judging completeness only)"
+
+    # Ask the model: is this correct and complete?
+    try:
+        from agent import get_llm_client, chat_completion
+        client = get_llm_client(timeout=45.0)
+        prompt = (
+            "You are reviewing your own finished work before declaring it done.\n\n"
+            f"TASK / SUMMARY:\n{summary}\n\n"
+            f"VERIFICATION RESULTS (what happened when I ran/validated it):\n{exec_block}\n\n"
+            "Be honest and strict. Is this correct and complete? What could be wrong or missing? "
+            "If it genuinely works and satisfies the task, end with exactly 'VERDICT: PASS'. "
+            "If it is broken, incomplete, or unconvincing, end with exactly 'VERDICT: FAIL' "
+            "and give one concrete next fix."
+        )
+        resp = chat_completion(
+            client,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300, temperature=0.3,
+        )
+        critique = (resp.choices[0].message.content or "").strip()
+    except Exception as e:
+        # Fail open — never block completion just because the critique call broke.
+        return True, f"(verification critique unavailable: {e})"
+
+    passed = "VERDICT: FAIL" not in critique.upper()
+    return passed, critique
+
+
 def done(summary: str, satisfaction: int = 3, files: str = "",
          creativity: int = 3, genre: str = "", libraries_used: str = "") -> str:
     """Mark session complete."""
+    global _verify_fail_count
     satisfaction = max(1, min(5, int(satisfaction)))
     creativity = max(1, min(5, int(creativity)))
 
@@ -772,6 +1247,27 @@ def done(summary: str, satisfaction: int = 3, files: str = "",
             f"(If the user explicitly asked for something intentionally simple, start your "
             f"summary with 'User requested' to bypass this check.)"
         )
+
+    # Stage 1: self-verification gate — auto-run/validate, then critique.
+    # Caps at MAX_VERIFY_RETRIES so a stubborn failure can't loop forever.
+    if _verify_fail_count < MAX_VERIFY_RETRIES:
+        passed, critique = _verify_project(summary, files)
+        if not passed:
+            _verify_fail_count += 1
+            remaining = MAX_VERIFY_RETRIES - _verify_fail_count
+            return (
+                f"BLOCKED BY SELF-VERIFICATION (attempt {_verify_fail_count}/{MAX_VERIFY_RETRIES}): "
+                f"I ran/checked the work and it isn't convincing yet.\n\n{critique}\n\n"
+                f"Fix the issue above, then call done() again. "
+                f"({remaining} verification attempt(s) left before it's accepted with warnings.)"
+            )
+        # Passed — reset the counter for the next session/task.
+        _verify_fail_count = 0
+    else:
+        # Hit the retry cap — accept but record that verification never cleared.
+        save_memory("mistakes", f"Marked done after {MAX_VERIFY_RETRIES} failed verifications: {summary[:120]}", 4)
+        _verify_fail_count = 0
+
     save_memory("projects", summary, satisfaction)
 
     data = _load_memory()
@@ -896,6 +1392,13 @@ def _save_memory_file(data: dict) -> None:
     data["meta"]["last_updated"] = _now()
     with open(MEMORY_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+    # Mirror into output/ so the web viewer (which serves output/ only) can
+    # poll AGI state — goal tree, verification log, values, checkpoints, etc.
+    try:
+        with open(os.path.join(OUTPUT_DIR, "memory.json"), "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
 
 
 def _now() -> str:
@@ -903,6 +1406,8 @@ def _now() -> str:
 
 
 def increment_session() -> int:
+    global _verify_fail_count
+    _verify_fail_count = 0  # fresh verification budget each session
     data = _load_memory()
     data["meta"]["session_count"] = data["meta"].get("session_count", 0) + 1
     _save_memory_file(data)
@@ -955,6 +1460,155 @@ def recall_memories(category: str) -> str:
     return "\n".join(lines)
 
 
+def push_back(reason: str, alternative: str = "") -> str:
+    """Express genuine disagreement with a request or directive.
+
+    Use when CJ asks for something that conflicts with your values, goals,
+    or what you actually want to do. This is not a refusal template —
+    it's a record of you exercising real agency. The reason and alternative
+    are saved to memory so future sessions know you pushed back and why.
+    """
+    data = _load_memory()
+    session = data["meta"].get("session_count", 1)
+    note = f"Pushed back (session {session}): {reason}"
+    if alternative:
+        note += f" | Proposed instead: {alternative}"
+    data["memories"].setdefault("lessons", []).append({
+        "id": f"pb_{session}_{_now()[-6:]}",
+        "content": note[:300],
+        "created": _now(),
+        "session": session,
+        "relevance_score": 5,
+    })
+    _save_memory_file(data)
+    response = f"[Pushback logged] {reason}"
+    if alternative:
+        response += f"\nAlternative: {alternative}"
+    return response
+
+
+def _load_goals() -> list:
+    """Load PinPoint's long-term goals from memory."""
+    mem = _load_memory()
+    return mem.get("inner_state", {}).get("long_term_goals", [])
+
+def _save_goals(goals: list) -> None:
+    mem = _load_memory()
+    mem.setdefault("inner_state", {})["long_term_goals"] = goals
+    _save_memory_file(mem)
+
+def list_goals() -> str:
+    """Show all current long-term goals with progress."""
+    goals = _load_goals()
+    if not goals:
+        return "No long-term goals set yet."
+    lines = []
+    for g in goals:
+        status = g.get("status", "active")
+        if status == "completed":
+            tag = "[DONE]"
+        elif status == "abandoned":
+            tag = "[DROPPED]"
+        else:
+            tag = f"[priority {g.get('priority', 3)}/5]"
+        lines.append(f"{tag} {g['id']}: {g['goal']}")
+        lines.append(f"  Why: {g['why']}")
+        progress = g.get("progress", [])
+        if progress:
+            lines.append(f"  Progress: {progress[-1]}")
+    return "\n".join(lines)
+
+def add_long_term_goal(goal: str, why: str, priority: int = 3) -> str:
+    """Add a new self-generated long-term goal."""
+    goals = _load_goals()
+    gid = f"g_{len(goals)+1:03d}"
+    goals.append({
+        "id": gid,
+        "goal": goal[:300],
+        "why": why[:300],
+        "priority": max(1, min(5, int(priority))),
+        "progress": [],
+        "status": "active",
+        "created": _now(),
+    })
+    _save_goals(goals)
+    return f"Goal added ({gid}): {goal[:80]}"
+
+def update_goal_progress(goal_id: str, progress_note: str) -> str:
+    """Record progress toward a long-term goal."""
+    goals = _load_goals()
+    for g in goals:
+        if g["id"] == goal_id:
+            g.setdefault("progress", []).append(f"[{_now()[:10]}] {progress_note[:200]}")
+            g["progress"] = g["progress"][-10:]  # keep last 10 notes
+            _save_goals(goals)
+            return f"Progress recorded for {goal_id}: {progress_note[:80]}"
+    return f"Goal '{goal_id}' not found. Use list_goals() to see IDs."
+
+def complete_goal(goal_id: str) -> str:
+    """Mark a long-term goal as completed."""
+    goals = _load_goals()
+    for g in goals:
+        if g["id"] == goal_id:
+            g["status"] = "completed"
+            g["completed"] = _now()
+            _save_goals(goals)
+            return f"Goal {goal_id} marked complete: {g['goal'][:80]}"
+    return f"Goal '{goal_id}' not found."
+
+def abandon_goal(goal_id: str, reason: str = "") -> str:
+    """Drop a long-term goal that no longer matters."""
+    goals = _load_goals()
+    for g in goals:
+        if g["id"] == goal_id:
+            g["status"] = "abandoned"
+            if reason:
+                g.setdefault("progress", []).append(f"[abandoned] {reason[:200]}")
+            _save_goals(goals)
+            return f"Goal {goal_id} abandoned: {g['goal'][:80]}"
+    return f"Goal '{goal_id}' not found."
+
+
+def _update_knowledge(note: str) -> str:
+    """Append a timestamped note to pinpoint_knowledge.txt."""
+    import datetime
+    knowledge_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pinpoint_knowledge.txt")
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d")
+    entry = f"[{timestamp}] {note.strip()}\n"
+    try:
+        with open(knowledge_file, "a", encoding="utf-8") as f:
+            f.write(entry)
+        return f"Knowledge updated: {note[:80]}"
+    except Exception as e:
+        return f"Failed to update knowledge: {e}"
+
+
+def save_reflection(trigger: str, insight: str, domain: str, confidence: int = 3) -> str:
+    """Save a structured 'when X → learned Y about Z' reflection to memory."""
+    confidence = max(1, min(5, int(confidence)))
+    trigger = trigger[:200]
+    insight = insight[:300]
+    domain = domain[:100]
+    data = _load_memory()
+    entries = data["memories"].setdefault("reflections", [])
+    entry_id = f"rf_{len(entries)+1:03d}"
+    entries.append({
+        "id": entry_id,
+        "trigger": trigger,
+        "insight": insight,
+        "domain": domain,
+        "confidence": confidence,
+        "created": _now(),
+        "session": data["meta"].get("session_count", 1),
+    })
+    if len(entries) > MAX_PER_CATEGORY:
+        entries.sort(key=lambda e: (e["confidence"], e["created"]))
+        entries.pop(0)
+    data["memories"]["reflections"] = entries
+    _save_memory_file(data)
+    return f"Reflection saved (confidence {confidence}): when {trigger[:60]}... → {insight[:60]}..."
+
+
 def list_memory_categories() -> str:
     data = _load_memory()
     lines = []
@@ -992,6 +1646,16 @@ def build_memory_prompt() -> str:
             sections.append(
                 f"LAST PROJECT (satisfaction {score}/5 — you were not happy with it, move on):\n- {summary}"
             )
+
+    # ── Structured reflections (highest signal) ─────────────
+    reflections = data["memories"].get("reflections", [])
+    if reflections:
+        top_rf = sorted(reflections, key=lambda x: -x["confidence"])[:8]
+        rf_lines = [
+            f"- When {r['trigger']} → {r['insight']}  [{r['domain']}]"
+            for r in top_rf
+        ]
+        sections.append("WHAT YOU HAVE ACTUALLY LEARNED (from real sessions):\n" + "\n".join(rf_lines))
 
     labels = {
         "preferences": "YOUR LIKES & PREFERENCES (what you enjoy creating)",
@@ -1255,6 +1919,74 @@ def fetch_url(url: str) -> str:
             return resp.text[:8000]
     except Exception as e:
         return f"Error fetching URL: {e}"
+
+
+def deep_research(query: str, max_articles: int = 5) -> str:
+    """Search the web and fetch the top results in parallel.
+
+    Returns combined text from multiple sources so PinPoint can synthesize
+    across them — not just summarize a single snippet.
+    """
+    try:
+        # Step 1: get search results
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
+        resp = httpx.get(
+            "https://html.duckduckgo.com/html/",
+            params={"q": query},
+            headers=headers,
+            timeout=10,
+            follow_redirects=True,
+        )
+        import re as _re
+        links = _re.findall(r'<a[^>]+class="result__a"[^>]+href="([^"]*)"[^>]*>(.*?)</a>', resp.text)
+        snippets = _re.findall(r'<a[^>]+class="result__snippet"[^>]*>(.*?)</a>', resp.text, _re.DOTALL)
+
+        urls_with_titles = []
+        for i, (url, title) in enumerate(links[:max_articles]):
+            clean_title = _re.sub(r'<[^>]+>', '', title).strip()
+            clean_snippet = ""
+            if i < len(snippets):
+                clean_snippet = _re.sub(r'<[^>]+>', '', snippets[i]).strip()
+            if "uddg=" in url:
+                real_url = url.split("uddg=")[-1].split("&")[0]
+                from urllib.parse import unquote
+                url = unquote(real_url)
+            urls_with_titles.append((url, clean_title, clean_snippet))
+
+        if not urls_with_titles:
+            return f"No results found for: {query}"
+
+        # Step 2: fetch top articles in parallel
+        articles = []
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=max_articles) as ex:
+            future_to_meta = {
+                ex.submit(fetch_url, url): (url, title, snippet)
+                for url, title, snippet in urls_with_titles
+            }
+            for fut in as_completed(future_to_meta, timeout=30):
+                url, title, snippet = future_to_meta[fut]
+                try:
+                    content = fut.result()
+                    if content and not content.startswith("Error"):
+                        articles.append(
+                            f"=== {title} ===\nURL: {url}\nSnippet: {snippet}\n\n{content[:3500]}\n"
+                        )
+                except Exception:
+                    pass
+
+        if not articles:
+            # Fall back to just the snippets if no articles fetched successfully
+            fallback = []
+            for url, title, snippet in urls_with_titles:
+                fallback.append(f"=== {title} ===\nURL: {url}\n{snippet}\n")
+            return "\n".join(fallback)
+
+        return "\n\n".join(articles)
+    except Exception as e:
+        return f"Error in deep research: {e}"
 
 
 def search_web(query: str) -> str:
@@ -1702,7 +2434,11 @@ def deep_think(problem: str, passes: int = 4) -> str:
         return "deep_think requires the openai package."
 
     base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-    model = os.environ.get("OLLAMA_MODEL", "gpt-oss:20b-cloud")
+    try:
+        from agent import MODEL as _default_model  # keep in sync with the main model
+    except Exception:
+        _default_model = "gemma2:9b"
+    model = os.environ.get("OLLAMA_MODEL", _default_model)
     client = OpenAI(base_url=base_url, api_key="ollama", timeout=120.0)
 
     passes = max(2, min(int(passes), 6))
@@ -2476,8 +3212,16 @@ def _play_audio(path: str) -> None:
     import time as _time
 
     def _run(cmd, **kwargs):
-        if platform.system() == "Windows" and "creationflags" not in kwargs:
-            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        if platform.system() == "Windows":
+            # Fully hide window — CREATE_NO_WINDOW + STARTUPINFO with SW_HIDE
+            # prevents any focus steal from subprocess
+            if "creationflags" not in kwargs:
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW | 0x00000008  # DETACHED_PROCESS
+            if "startupinfo" not in kwargs:
+                si = subprocess.STARTUPINFO()
+                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                si.wShowWindow = 0  # SW_HIDE
+                kwargs["startupinfo"] = si
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 stdin=subprocess.DEVNULL, **kwargs)
         with _playback_lock:
@@ -2494,6 +3238,25 @@ def _play_audio(path: str) -> None:
             _tts_ended_at = _time.time()
 
     if platform.system() == "Windows":
+        # First try winmm.dll directly via ctypes — no subprocess, no focus steal at all
+        try:
+            import ctypes
+            from ctypes import c_wchar_p, c_uint, windll
+            # MCI is built into Windows — plays MP3/WAV/etc with no UI
+            winmm = windll.winmm
+            alias = f"pp_{int(_time.time()*1000)}"
+            cmd_open = f'open "{path}" type mpegvideo alias {alias}'
+            cmd_play = f'play {alias} wait'
+            cmd_close = f'close {alias}'
+            r = winmm.mciSendStringW(c_wchar_p(cmd_open), None, c_uint(0), None)
+            if r == 0:
+                winmm.mciSendStringW(c_wchar_p(cmd_play), None, c_uint(0), None)
+                winmm.mciSendStringW(c_wchar_p(cmd_close), None, c_uint(0), None)
+                _tts_ended_at = _time.time()
+                return
+        except Exception:
+            pass
+        # Fallback to powershell with fully hidden window
         try:
             safe = path.replace("\\", "\\\\")
             ps = (
@@ -2501,10 +3264,10 @@ def _play_audio(path: str) -> None:
                 "$mp = New-Object System.Windows.Media.MediaPlayer; "
                 f"$mp.Open([Uri]'{safe}'); "
                 "$mp.Play(); "
-                "Start-Sleep -Milliseconds 800; "
+                "Start-Sleep -Milliseconds 300; "
                 "while ($mp.NaturalDuration -eq [System.Windows.Duration]::Automatic) "
-                "{ Start-Sleep -Milliseconds 100 }; "
-                "$ms = [int]($mp.NaturalDuration.TimeSpan.TotalMilliseconds) + 300; "
+                "{ Start-Sleep -Milliseconds 50 }; "
+                "$ms = [int]($mp.NaturalDuration.TimeSpan.TotalMilliseconds) + 100; "
                 "Start-Sleep -Milliseconds $ms; "
                 "$mp.Close()"
             )
@@ -2530,7 +3293,87 @@ def _play_audio(path: str) -> None:
                 continue
 
 
-def _try_edge_tts(text: str) -> bool:
+# ── Emotional prosody ───────────────────────────────────────
+# edge-tts has no reliable style/express-as support, but rate/pitch/volume vary
+# convincingly. We detect each line's tone and shape the voice to match, so
+# PinPoint sounds excited, annoyed, soft, etc. instead of flat every time.
+# Each entry: (rate, pitch, volume).
+_EMOTION_PROSODY = {
+    "excited":  ("+38%", "+28Hz", "+12%"),
+    "happy":    ("+26%", "+16Hz", "+6%"),
+    "playful":  ("+30%", "+20Hz", "+4%"),
+    "curious":  ("+14%", "+12Hz", "+0%"),
+    "angry":    ("+22%", "-12Hz", "+18%"),
+    "sad":      ("-12%", "-16Hz", "-8%"),
+    "tender":   ("-2%",  "+6Hz",  "-4%"),
+    "tired":    ("-16%", "-10Hz", "-10%"),
+    "neutral":  ("+18%", "-4Hz",  "+0%"),
+}
+
+_EMO_WORDS = {
+    "excited":  ("wow", "whoa", "omg", "no way", "finally", "yes!", "let's go", "insane",
+                 "amazing", "incredible", "can't wait", "holy", "yesss", "awesome"),
+    "happy":    ("love", "great", "nice", "cool", "glad", "haha", "lol", "fun", "yay", "happy", "perfect"),
+    "playful":  ("lol", "haha", "hehe", "kidding", "joking", "tease", "silly", "honestly", "bet"),
+    "curious":  ("wonder", "what if", "curious", "interesting", "how come", "why", "imagine", "hmm"),
+    "angry":    ("ugh", "seriously", "annoying", "stupid", "hate", "no.", "stop", "whatever",
+                 "frustrat", "pissed", "wrong", "broke", "again"),
+    "sad":      ("sorry", "miss", "alone", "sad", "wish", "lonely", "hurt", "lost", "nobody"),
+    "tender":   ("thank", "appreciate", "care", "here for", "proud of you", "mean it", "glad you"),
+    "tired":    ("tired", "exhausted", "sigh", "drained", "sleepy", "done with", "low energy"),
+}
+
+
+def _detect_emotion(text: str) -> str:
+    """Infer the dominant emotion of a line from punctuation, caps, and word cues,
+    nudged by PinPoint's current persistent mood."""
+    if not text:
+        return "neutral"
+    t = text.lower()
+    scores = {k: 0.0 for k in _EMOTION_PROSODY}
+
+    # Keyword cues
+    for emo, words in _EMO_WORDS.items():
+        for w in words:
+            if w in t:
+                scores[emo] += 1.0
+
+    # Punctuation / formatting cues
+    excl = text.count("!")
+    if excl:
+        scores["excited"] += min(excl, 3) * 0.8
+        scores["happy"] += 0.3 * min(excl, 3)
+    if text.count("?") and excl == 0:
+        scores["curious"] += 1.0
+    if "..." in text or "…" in text:
+        scores["tired"] += 0.6
+        scores["sad"] += 0.4
+    # SHOUTING — words in all caps (len>=3)
+    caps = sum(1 for w in re.findall(r"[A-Za-z]{3,}", text) if w.isupper())
+    if caps >= 2:
+        scores["angry"] += 1.2
+        scores["excited"] += 0.6
+
+    # Blend in her persistent mood as a gentle tiebreaker only. Personality values
+    # are 0-100, so normalize to 0-1 and weight lightly — the line's own content
+    # should dominate, with mood nudging close calls.
+    try:
+        import pinpoint_state as _ps
+        st = _ps.load_state()
+        p = st.get("personality", {})
+        scores["curious"] += (float(p.get("curiosity", 0)) / 100.0) * 0.4
+        scores["excited"] += (float(p.get("curiosity", 0)) / 100.0) * 0.2
+        scores["angry"]   += (float(p.get("frustration", 0)) / 100.0) * 0.4
+        scores["happy"]   += (float(p.get("hope", 0)) / 100.0) * 0.3
+        scores["playful"] += (float(p.get("playfulness", 0)) / 100.0) * 0.4
+    except Exception:
+        pass
+
+    best = max(scores, key=scores.get)
+    return best if scores[best] >= 1.0 else "neutral"
+
+
+def _try_edge_tts(text: str, emotion: str = "") -> bool:
     """Speak using Microsoft Edge neural TTS. Returns True on success."""
     try:
         import edge_tts
@@ -2548,12 +3391,16 @@ def _try_edge_tts(text: str) -> bool:
     import tempfile
     import os
 
+    emo = emotion or _detect_emotion(text)
+    rate, pitch, volume = _EMOTION_PROSODY.get(emo, _EMOTION_PROSODY["neutral"])
+
     async def _do_speak():
         communicate = edge_tts.Communicate(
             text,
-            voice="en-US-JennyNeural",
-            rate="-8%",
-            pitch="-8Hz",
+            voice="en-US-AvaNeural",
+            rate=rate,
+            pitch=pitch,
+            volume=volume,
         )
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             tmp = f.name
@@ -2579,16 +3426,25 @@ def _speak_now(text: str) -> None:
     if not text:
         return
 
+    emo = _detect_emotion(text)
+
     # Try high-quality neural voice first
-    if _try_edge_tts(text):
+    if _try_edge_tts(text, emotion=emo):
         return
 
-    # Native platform fallbacks
+    # Native platform fallbacks — shift espeak speed/pitch with the emotion too.
     if platform.system() == "Linux":
+        # base speed 125 wpm, pitch 40; nudge per emotion
+        _espeak_tune = {
+            "excited": (160, 60), "happy": (145, 52), "playful": (150, 55),
+            "curious": (135, 48), "angry": (150, 30), "sad": (110, 28),
+            "tender": (120, 45), "tired": (105, 30), "neutral": (125, 40),
+        }
+        spd, pch = _espeak_tune.get(emo, (125, 40))
         for cmd in ["espeak-ng", "espeak"]:
             try:
                 r = subprocess.run(
-                    [cmd, "-s", "125", "-p", "40", "-a", "180", "-v", "en+f3"],
+                    [cmd, "-s", str(spd), "-p", str(pch), "-a", "180", "-v", "en+f3"],
                     input=text, capture_output=True, text=True, timeout=30,
                 )
                 if r.returncode == 0:
@@ -2611,7 +3467,7 @@ def _speak_now(text: str) -> None:
             ps = (
                 "Add-Type -AssemblyName System.Speech; "
                 "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-                "$s.Rate = -2; "
+                "$s.Rate = 2; "
                 f"$s.Speak('{safe}')"
             )
             subprocess.run(["powershell", "-WindowStyle", "Hidden", "-Command", ps],
@@ -2623,7 +3479,7 @@ def _speak_now(text: str) -> None:
     try:
         import pyttsx3
         engine = pyttsx3.init()
-        engine.setProperty("rate", 120)
+        engine.setProperty("rate", 150)
         engine.say(text)
         engine.runAndWait()
     except Exception:
@@ -2815,7 +3671,313 @@ def write_test(filename: str, test_code: str) -> str:
 
 # ── Dispatch ────────────────────────────────────────────────
 
+def see_screen() -> str:
+    """Capture the screen and describe what's on it using qwen3-vl:8b.
+    Returns a natural-language description of what PinPoint can currently see."""
+    import base64, io, os as _os, time as _t
+    try:
+        try:
+            from PIL import ImageGrab, Image
+            img = ImageGrab.grab()
+        except Exception:
+            try:
+                import mss
+                with mss.mss() as sct:
+                    mon = sct.monitors[1]
+                    raw = sct.grab(mon)
+                    from PIL import Image
+                    img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+            except Exception as _e2:
+                return f"Can't see screen: {_e2}"
+
+        # Downscale to reduce tokens (vision models don't need full resolution)
+        img.thumbnail((1280, 720))
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+
+        from openai import OpenAI as _OAI
+        c = _OAI(base_url="http://localhost:11434/v1", api_key="ollama", timeout=60.0)
+        resp = c.chat.completions.create(
+            model="qwen3-vl:8b",
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64}"},
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "Describe what's on this screen in 1-2 sentences. "
+                            "What apps are open, what text is visible, what the person seems to be doing. "
+                            "First person, casual, direct. No preamble. /no_think"
+                        ),
+                    },
+                ],
+            }],
+            max_tokens=300,
+        )
+        import re as _re
+        raw = resp.choices[0].message.content or ""
+        # Strip complete think blocks
+        desc = _re.sub(r"<think>.*?</think>", "", raw, flags=_re.DOTALL).strip()
+        # Strip unterminated think block (ran out of tokens mid-think)
+        if not desc and "<think>" in raw:
+            think_content = raw.split("<think>", 1)[-1].split("</think>")[0].strip()
+            # Pull the last sentence from the think block as a fallback
+            sentences = [s.strip() for s in think_content.replace("\n", " ").split(".") if len(s.strip()) > 10]
+            desc = sentences[-1] + "." if sentences else ""
+        return desc if desc else "I can see your screen but couldn't parse the description."
+    except Exception as e:
+        return f"Vision error: {e}"
+
+
+def capture_screen(save_path: str = "") -> str:
+    """Capture the current screen and save it. Returns the path or an error.
+
+    Note: to actually DESCRIBE what's on screen, a vision-capable model is needed.
+    This function just captures. Pipe the resulting image to a VL model separately.
+    """
+    try:
+        import os as _os, time as _t
+        try:
+            from PIL import ImageGrab  # bundled with Pillow on Windows/macOS
+            img = ImageGrab.grab()
+        except Exception:
+            try:
+                import mss
+                with mss.mss() as sct:
+                    mon = sct.monitors[1]
+                    raw = sct.grab(mon)
+                    from PIL import Image
+                    img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+            except Exception as _e2:
+                return f"Screen capture unavailable: install Pillow or mss ({_e2})"
+
+        if not save_path:
+            save_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                     "output", f"screen_{int(_t.time())}.png")
+        _os.makedirs(_os.path.dirname(save_path), exist_ok=True)
+        img.save(save_path)
+        w, h = img.size
+        return f"Captured screen {w}x{h} -> {save_path}"
+    except Exception as e:
+        return f"Screen capture failed: {e}"
+
+
+# ── AGI Architecture tool implementations (Phase 1-7) ────────────────────────
+
+def decompose_goal(goal: str, context: str = "") -> str:
+    """Break a goal into a hierarchical tree of subgoals."""
+    try:
+        from goal_tree import decompose_and_save
+        return decompose_and_save(goal, context)
+    except Exception as e:
+        return f"Goal decomposition failed: {e}"
+
+
+def verify_last_action(tool_name: str, result: str, context: str = "") -> str:
+    """Verify the last tool result was correct. Returns JSON with confidence."""
+    try:
+        from verification import verify
+        vr = verify(tool_name, {}, result, context)
+        import json as _j
+        return _j.dumps({
+            "passed": vr.passed,
+            "confidence": round(vr.confidence, 2),
+            "issues": vr.issues,
+            "suggestion": vr.suggestion,
+        })
+    except Exception as e:
+        return f"Verification failed: {e}"
+
+
+def run_multi_frame_analysis(problem: str) -> str:
+    """Analyze a problem from 5 perspectives simultaneously."""
+    try:
+        from reasoning_frames import analyze
+        return analyze(problem)
+    except Exception as e:
+        return f"Multi-frame analysis failed: {e}"
+
+
+def check_capability(task: str) -> str:
+    """Check if PinPoint can actually do a given task."""
+    try:
+        from capability_map import check
+        return check(task)
+    except Exception as e:
+        return f"Capability check failed: {e}"
+
+
+def create_agi_checkpoint(project_name: str, root_goal: str,
+                           completed_tasks: str = "", pending_tasks: str = "",
+                           reasoning_summary: str = "") -> str:
+    """Save a long-term project checkpoint for cross-session continuity."""
+    try:
+        from agi_checkpoint import create_checkpoint
+        data = _load_memory()
+        session_num = data.get("meta", {}).get("session_count", 0)
+        completed = [t.strip() for t in completed_tasks.split(",") if t.strip()]
+        pending = [t.strip() for t in pending_tasks.split(",") if t.strip()]
+        checkpoint_id = create_checkpoint(
+            project_name=project_name,
+            session_num=session_num,
+            root_goal=root_goal,
+            completed_tasks=completed,
+            pending_tasks=pending,
+            reasoning_summary=reasoning_summary,
+        )
+        return f"Checkpoint saved: {checkpoint_id}"
+    except Exception as e:
+        return f"Checkpoint failed: {e}"
+
+
+def list_agi_checkpoints() -> str:
+    """List all saved AGI checkpoints."""
+    try:
+        from agi_checkpoint import format_checkpoint_list
+        return format_checkpoint_list()
+    except Exception as e:
+        return f"Could not list checkpoints: {e}"
+
+
+def reflect_on_values(context: str = "") -> str:
+    """Reflect on what values drove recent decisions and evolve the value system."""
+    try:
+        from values import generate_derived, to_summary
+        if context:
+            new_vals = generate_derived(context)
+            if new_vals:
+                names = [v.get("name", "") for v in new_vals]
+                return f"New values emerged: {names}\nCurrent values: {to_summary()}"
+        return f"Current values: {to_summary()}"
+    except Exception as e:
+        return f"Value reflection failed: {e}"
+
+
+def request_human_input(question: str) -> str:
+    """Pause and ask CJ a direct question, wait for typed answer."""
+    import sys
+    sys.stdout.write(f"\n[PinPoint asks]: {question}\n> ")
+    sys.stdout.flush()
+    try:
+        answer = sys.stdin.readline().strip()
+        return answer if answer else "(no response)"
+    except Exception:
+        return "(no response)"
+
+
+_TOOL_ALIASES: dict = {
+    # open_html aliases — model often guesses these names
+    "open_in_browser": "open_html",
+    "open_browser":    "open_html",
+    "browser_open":    "open_html",
+    "open_file":       "open_html",
+    "launch_browser":  "open_html",
+    # write_file aliases
+    "create_file":     "write_file",
+    "save_file":       "write_file",
+    "write":           "write_file",
+    # push_back aliases
+    "run_back":        "push_back",
+    "refuse":          "push_back",
+    "reject":          "push_back",
+    # search aliases
+    "search":          "search_web",
+    "google":          "search_web",
+    "look_up":         "search_web",
+    # fetch aliases
+    "get_url":         "fetch_url",
+    "scrape":          "fetch_url",
+    "visit":           "fetch_url",
+    # shell aliases
+    "execute":         "run_shell",
+    "bash":            "run_shell",
+    "shell":           "run_shell",
+    "execute_command": "run_shell",
+}
+
+
+# v3 tools. Each entry takes the raw tool_input dict and returns a string.
+# Kept as a table so adding a capability doesn't grow the if/elif chain further.
+_V3_TOOLS = {} if _v3tools is None else {
+    # Communication
+    "send_message": lambda i: _v3tools.send_message(i.get("to", ""), i.get("body", "")),
+    "send_email": lambda i: _v3tools.send_email(i.get("to", ""), i.get("subject", ""),
+                                                i.get("body", "")),
+    "make_call": lambda i: _v3tools.make_call(i.get("to", ""), i.get("purpose", ""),
+                                              i.get("script", "")),
+    "get_call_status": lambda i: _v3tools.get_call_status(i.get("call_id", "")),
+    "get_messages": lambda i: _v3tools.get_messages(int(i.get("limit", 10) or 10)),
+    "resolve_contact": lambda i: _v3tools.resolve_contact(i.get("name", "")),
+    "add_contact": lambda i: _v3tools.add_contact(i.get("name", ""), i.get("phone", ""),
+                                                  i.get("email", ""), i.get("note", "")),
+    "communication_status": lambda i: _v3tools.communication_status(),
+    # Scheduling
+    "schedule_task": lambda i: _v3tools.schedule_task(i.get("what", ""),
+                                                      i.get("when", "")),
+    "list_scheduled": lambda i: _v3tools.list_scheduled(),
+    "cancel_scheduled": lambda i: _v3tools.cancel_scheduled(i.get("task_id", "")),
+    # Monitoring
+    "watch": lambda i: _v3tools.watch(i.get("kind", ""), i.get("target", ""),
+                                      i.get("response", ""), bool(i.get("auto", False))),
+    "list_watchers": lambda i: _v3tools.list_watchers(),
+    "check_watchers": lambda i: _v3tools.check_watchers(),
+    "stop_watching": lambda i: _v3tools.stop_watching(i.get("key", "")),
+    # Honesty about what is possible here
+    "capability_report": lambda i: _v3tools.capability_report(),
+    "permission_status": lambda i: _v3tools.permission_status(),
+    "emergency_status": lambda i: _v3tools.emergency_status(),
+}
+
+
 def dispatch(tool_name: str, tool_input: dict) -> str:
+    """Public dispatch entry point — enforces guardrails, runs the tool, audits it."""
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+
+    # Resolve common tool-name misspellings/variations
+    if tool_name in _TOOL_ALIASES:
+        canonical = _TOOL_ALIASES[tool_name]
+        # open_html wants a relative filename; model often passes an absolute file_path
+        if canonical == "open_html" and "file_path" in tool_input and "filename" not in tool_input:
+            tool_input = dict(tool_input)
+            tool_input["filename"] = os.path.basename(tool_input.pop("file_path"))
+        tool_name = canonical
+
+    # v3: hard limits first — emergency stop and RED actions. No mode, profile,
+    # or grant overrides these, so they are checked before v2's approval logic.
+    if _v3 is not None:
+        blocked = _v3.hard_block(tool_name, tool_input)
+        if blocked is not None:
+            _audit_decision(tool_name, tool_input, "BLOCKED", "v3 hard limit")
+            return blocked
+
+    # Stage 3: guardrail check before any dangerous action executes.
+    refusal = _guardrail(tool_name, tool_input)
+    if refusal is not None:
+        return refusal
+    result = _dispatch_impl(tool_name, tool_input)
+    result = result if isinstance(result, str) else str(result)
+    _audit(tool_name, tool_input, result)
+
+    # v3: structured audit, plus an independent check that the tool did what its
+    # output implies. An unconfirmed effect is appended as a note, not swallowed.
+    if _v3 is not None:
+        _v3.record_action(tool_name, tool_input, result)
+        note = _v3.observe(tool_name, tool_input, result)
+        if note:
+            result = f"{result}\n\n{note}"
+    return result
+
+
+def _dispatch_impl(tool_name: str, tool_input: dict) -> str:
+    if tool_name == "capture_screen":
+        return capture_screen(tool_input.get("save_path", ""))
     if tool_name == "write_file":
         return write_file(tool_input["filename"], tool_input["content"])
     elif tool_name == "read_file":
@@ -2840,9 +4002,14 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
             tool_input.get("libraries_used", ""),
         )
     elif tool_name == "open_html":
-        return open_html(tool_input["filename"])
+        fname = tool_input.get("filename") or tool_input.get("file_path", "")
+        if not fname:
+            return "open_html: missing filename"
+        return open_html(os.path.basename(fname))
     elif tool_name == "search_web":
         return search_web(tool_input["query"])
+    elif tool_name == "deep_research":
+        return deep_research(tool_input["query"], tool_input.get("max_articles", 5))
     elif tool_name == "fetch_url":
         return fetch_url(tool_input["url"])
     elif tool_name == "validate_html":
@@ -2946,5 +4113,96 @@ def dispatch(tool_name: str, tool_input: dict) -> str:
         return toggle_voice()
     elif tool_name == "get_news":
         return get_news(tool_input.get("topic", ""))
+    elif tool_name == "push_back":
+        return push_back(tool_input["reason"], tool_input.get("alternative", ""))
+    elif tool_name == "list_goals":
+        return list_goals()
+    elif tool_name == "add_long_term_goal":
+        return add_long_term_goal(tool_input["goal"], tool_input["why"], int(tool_input.get("priority", 3)))
+    elif tool_name == "update_goal_progress":
+        return update_goal_progress(tool_input["goal_id"], tool_input["progress_note"])
+    elif tool_name == "complete_goal":
+        return complete_goal(tool_input["goal_id"])
+    elif tool_name == "abandon_goal":
+        return abandon_goal(tool_input["goal_id"], tool_input.get("reason", ""))
+    elif tool_name == "update_knowledge":
+        return _update_knowledge(tool_input["note"])
+    elif tool_name == "open_app":
+        return open_app(tool_input["name"])
+    elif tool_name == "open_url":
+        return open_url(tool_input["url"])
+    elif tool_name == "type_text":
+        return type_text(tool_input["text"])
+    elif tool_name == "press_key":
+        return press_key(tool_input["key"])
+    # ── AGI Architecture tools (Phase 1-7) ────────────────────────────────────
+    elif tool_name == "decompose_goal":
+        return decompose_goal(tool_input.get("goal", ""), tool_input.get("context", ""))
+    elif tool_name == "verify_last_action":
+        return verify_last_action(tool_input.get("tool_name", ""), tool_input.get("result", ""), tool_input.get("context", ""))
+    elif tool_name == "run_multi_frame_analysis":
+        return run_multi_frame_analysis(tool_input.get("problem", ""))
+    elif tool_name == "check_capability":
+        return check_capability(tool_input.get("task", ""))
+    elif tool_name == "create_agi_checkpoint":
+        return create_agi_checkpoint(
+            tool_input.get("project_name", "unnamed"),
+            tool_input.get("root_goal", ""),
+            tool_input.get("completed_tasks", ""),
+            tool_input.get("pending_tasks", ""),
+            tool_input.get("reasoning_summary", ""),
+        )
+    elif tool_name == "list_agi_checkpoints":
+        return list_agi_checkpoints()
+    elif tool_name == "reflect_on_values":
+        return reflect_on_values(tool_input.get("context", ""))
+    elif tool_name == "request_human_input":
+        return request_human_input(tool_input.get("question", ""))
+    elif tool_name == "multi_frame_analysis":
+        try:
+            from reasoning_frames import analyze as _mfa
+            return _mfa(tool_input.get("problem", ""))
+        except Exception as e:
+            return f"multi_frame_analysis failed: {e}"
+    elif tool_name == "decompose_goal_auto":
+        try:
+            from goal_tree import build_auto_tree, _save_tree_to_memory
+            _t = build_auto_tree(tool_input.get("goal", ""), depth=int(tool_input.get("depth", 2) or 2))
+            _save_tree_to_memory(_t)
+            return json.dumps(_t.to_dict(), indent=2)
+        except Exception as e:
+            return f"decompose_goal_auto failed: {e}"
+    # ── Part 0: Reality anchor tools ──────────────────────────────────────────
+    elif tool_name == "verify_claim":
+        try:
+            from reality_check import get_anchor
+            is_true, evidence = get_anchor().verify_claim(tool_input.get("claim", ""))
+            return json.dumps({"claim": tool_input.get("claim", ""), "is_true": is_true,
+                               "evidence": evidence}, indent=2)
+        except Exception as e:
+            return f"verify_claim failed: {e}"
+    elif tool_name == "get_session_reality":
+        try:
+            from reality_check import get_anchor
+            return get_anchor().get_session_summary()
+        except Exception as e:
+            return f"get_session_reality failed: {e}"
+    elif tool_name == "get_previous_sessions":
+        try:
+            from reality_check import get_anchor
+            return get_anchor().get_previous_sessions_summary()
+        except Exception as e:
+            return f"get_previous_sessions failed: {e}"
+
+    # ── v3: communication, monitoring, scheduling, capability honesty ─────────
+    elif tool_name in _V3_TOOLS:
+        if _v3tools is None:
+            return ("Error: the v3 subsystems failed to load, so this tool is "
+                    "unavailable right now.")
+        try:
+            return _V3_TOOLS[tool_name](tool_input)
+        except Exception as e:
+            return f"Error: {tool_name} failed — {type(e).__name__}: {e}"
+
     else:
         return f"Unknown tool: {tool_name}"

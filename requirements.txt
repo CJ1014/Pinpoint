@@ -2,3 +2,13 @@ openai
 httpx
 sounddevice
 numpy
+
+# Development
+pytest
+
+# Optional — enable extra capabilities. PinPoint reports these as unavailable
+# and offers a workaround when they are absent, rather than pretending.
+# pyautogui   # keyboard and mouse control
+# pillow      # screenshots
+# mss         # screenshots (alternative)
+# edge-tts    # speech output
