@@ -96,7 +96,12 @@ else:
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "qwen2.5-coder:14b" if LLM_PROVIDER == "ollama" else MODEL)
 
 def get_llm_client(timeout: float = 120.0):
-    """Factory function to get the appropriate LLM client (Ollama or Claude API)."""
+    """Factory function to get the appropriate LLM client (local, Ollama or Claude API)."""
+    if LLM_PROVIDER == "local":
+        # The v4 local engine holds its own weights and needs no client object;
+        # chat_completion() reaches it directly. Returning None keeps callers
+        # from assuming a remote connection exists.
+        return None
     if LLM_PROVIDER == "claude":
         if not ANTHROPIC_API_KEY:
             raise ValueError("ANTHROPIC_API_KEY environment variable not set. Set LLM_PROVIDER=ollama or provide ANTHROPIC_API_KEY for Claude.")
@@ -148,6 +153,20 @@ def chat_completion(client, messages: list, temperature: float = 1.0, max_tokens
                 extracted_system = msg.get("content", "")
                 filtered_messages = [m for m in messages if m.get("role") != "system"]
                 break
+
+    if LLM_PROVIDER == "local":
+        # v4 local engine. Raises LocalModelUnavailable rather than falling back
+        # to a remote provider — a benchmark that silently answers from Ollama
+        # while you believe you are measuring the local model is worse than an error.
+        from pinpoint.llm.provider import get_provider
+
+        provider = get_provider()
+        if stream:
+            return provider.stream(filtered_messages, system=extracted_system,
+                                   max_tokens=max_tokens, temperature=temperature)
+        return provider.generate(filtered_messages, system=extracted_system,
+                                 max_tokens=max_tokens, temperature=temperature,
+                                 stop=stop)
 
     if LLM_PROVIDER == "claude":
         if stream:
