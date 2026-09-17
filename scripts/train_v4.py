@@ -133,6 +133,84 @@ def cmd_dump_persona(args) -> int:
     return 0
 
 
+def _confirm_spend(est: dict, yes: bool) -> None:
+    how = "measured" if est["token_count_measured"] else "ESTIMATED from character count"
+    print(f"\n  requests:     {est['requests']}")
+    print(f"  mode:         {est['mode']}")
+    print(f"  input tokens: {est['input_tokens_per_request']}/request ({how})")
+    print(f"  cost:         ${est['estimated_usd']:.2f} – "
+          f"${est['estimated_usd_no_cache_hits']:.2f}")
+    print(f"                (low end assumes the cached prefix is hit on every "
+          f"request after\n                 the first; batch parallelism does not "
+          f"guarantee that)\n")
+    if yes:
+        return
+    if input("proceed? [y/N] ").strip().lower() not in ("y", "yes"):
+        sys.exit("aborted — nothing spent")
+
+
+def cmd_generate(args) -> int:
+    """Expand the seed set with Claude."""
+    from pinpoint.llm import generate as G
+
+    try:
+        client = G._client(args.api_key or None)
+        G.check_auth(client)
+    except RuntimeError as exc:          # covers NoCredentials and missing SDK
+        sys.exit(f"error: {exc}")
+
+    est = G.estimate_cost(args.n, args.per_request, args.framing,
+                          batch=not args.sync, client=client)
+    _confirm_spend(est, args.yes)
+
+    if args.sync:
+        stats = G.generate_sync(args.n, framing=args.framing,
+                                per_request=args.per_request, out_path=args.out,
+                                api_key=args.api_key or None)
+        print("\n" + stats.render())
+        print(f"\ncorpus: {G.corpus_stats(args.out)}")
+        return 0
+
+    batch_id = G.submit_batch(args.n, framing=args.framing,
+                              per_request=args.per_request,
+                              api_key=args.api_key or None)
+    print(f"\nresults land within 24h. Collect with:\n"
+          f"    python scripts/train_v4.py collect --batch-id {batch_id} "
+          f"--framing {args.framing} --out {args.out}")
+    return 0
+
+
+def cmd_collect(args) -> int:
+    from pinpoint.llm import generate as G
+
+    try:
+        G.check_auth(G._client(args.api_key or None))
+    except RuntimeError as exc:
+        sys.exit(f"error: {exc}")
+
+    stats = G.collect_batch(args.batch_id, framing=args.framing,
+                            out_path=args.out, api_key=args.api_key or None)
+    print("\n" + stats.render())
+    print(f"\ncorpus: {G.corpus_stats(args.out)}")
+    return 0
+
+
+def cmd_corpus_stats(args) -> int:
+    from pinpoint.llm import generate as G
+
+    if not os.path.exists(args.path):
+        sys.exit(f"error: no corpus at {args.path}")
+    s = G.corpus_stats(args.path)
+    print(f"total: {s['total']}")
+    print("\nby behaviour:")
+    for k, v in sorted(s["behaviours"].items(), key=lambda kv: -kv[1]):
+        print(f"  {k:24} {v:>6}  ({100*v/max(1,s['total']):.0f}%)")
+    print("\nby situation:")
+    for k, v in sorted(s["situations"].items(), key=lambda kv: -kv[1]):
+        print(f"  {k:24} {v:>6}  ({100*v/max(1,s['total']):.0f}%)")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -165,6 +243,29 @@ def main() -> int:
     d.add_argument("--out", default="data/persona_seed.jsonl")
     d.add_argument("--framing", default=P.ACCOUNTABILITY, choices=sorted(P.FRAMINGS))
     d.set_defaults(func=cmd_dump_persona)
+
+    g = sub.add_parser("generate", help="expand the seed set using Claude")
+    g.add_argument("-n", type=int, default=5000, help="target example count")
+    g.add_argument("--per-request", type=int, default=5)
+    g.add_argument("--out", default="data/persona_generated.jsonl")
+    g.add_argument("--framing", default=P.ACCOUNTABILITY, choices=sorted(P.FRAMINGS))
+    g.add_argument("--sync", action="store_true",
+                   help="generate serially instead of via the Batch API "
+                        "(immediate results, 2x the cost)")
+    g.add_argument("--api-key", default="", help="defaults to ANTHROPIC_API_KEY")
+    g.add_argument("--yes", action="store_true", help="skip the cost confirmation")
+    g.set_defaults(func=cmd_generate)
+
+    col = sub.add_parser("collect", help="collect a submitted batch")
+    col.add_argument("--batch-id", required=True)
+    col.add_argument("--out", default="data/persona_generated.jsonl")
+    col.add_argument("--framing", default=P.ACCOUNTABILITY, choices=sorted(P.FRAMINGS))
+    col.add_argument("--api-key", default="")
+    col.set_defaults(func=cmd_collect)
+
+    cs = sub.add_parser("corpus-stats", help="coverage of a generated corpus")
+    cs.add_argument("path", nargs="?", default="data/persona_generated.jsonl")
+    cs.set_defaults(func=cmd_corpus_stats)
 
     args = ap.parse_args()
     return args.func(args)

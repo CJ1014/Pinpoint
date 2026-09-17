@@ -325,3 +325,185 @@ def test_real_generation_against_a_trained_checkpoint():
     assert resp.text
     assert resp.confidence is not None
     assert resp.usage["completion_tokens"] > 0
+
+
+# --- generation -----------------------------------------------------------
+
+def test_grid_is_large_enough_for_a_full_corpus():
+    """Repeating a cell yields paraphrases, not new scenarios, so the grid has
+    to cover the target request count on its own."""
+    from pinpoint.llm import generate as G
+    cells = G.grid_cells()
+    assert len(cells) >= 1000
+    assert len(cells) * 5 >= 5000        # target corpus size at 5/request
+
+
+def test_grid_is_deterministic_for_a_seed():
+    from pinpoint.llm import generate as G
+    a = [c.key for c in G.grid_cells(seed=7)]
+    b = [c.key for c in G.grid_cells(seed=7)]
+    assert a == b
+    assert a != [c.key for c in G.grid_cells(seed=8)]
+
+
+def test_every_behaviour_appears_in_the_grid():
+    from pinpoint.llm import generate as G
+    got = {c.behaviour for c in G.grid_cells()}
+    assert got == set(P.BEHAVIOUR_SETS)
+
+
+def test_grid_pairs_behaviours_only_with_coherent_situations():
+    from pinpoint.llm import generate as G
+    for c in G.grid_cells():
+        assert c.situation.key in G.BEHAVIOUR_SITUATIONS[c.behaviour]
+
+
+def test_both_grounded_and_ungrounded_scenarios_are_generated():
+    """Half the corpus must withhold evidence, or the model learns to assert
+    verification rather than to ground it."""
+    from pinpoint.llm import generate as G
+    cells = G.grid_cells()
+    with_ev = sum(c.situation.evidence for c in cells)
+    assert 0.25 < with_ev / len(cells) < 0.75
+
+
+def test_system_prompt_is_cached_and_carries_the_framing():
+    from pinpoint.llm import generate as G
+    sysblocks = G.build_system(P.ACCOUNTABILITY)
+    assert len(sysblocks) == 1
+    assert sysblocks[0]["cache_control"] == {"type": "ephemeral"}
+    assert P.FRAMINGS[P.ACCOUNTABILITY] in sysblocks[0]["text"]
+    assert "Never invent a confidence percentage" in sysblocks[0]["text"]
+
+
+def test_request_params_use_structured_output_and_the_default_model():
+    from pinpoint.llm import generate as G
+    params = G.build_params(G.grid_cells()[0], P.ACCOUNTABILITY, 5)
+    assert params["model"] == "claude-opus-5"
+    assert params["output_config"]["format"]["type"] == "json_schema"
+    assert params["output_config"]["format"]["schema"] == G.EXAMPLE_SCHEMA
+    assert params["thinking"] == {"type": "adaptive"}
+
+
+def test_user_turn_states_the_evidence_rule_matching_the_situation():
+    from pinpoint.llm import generate as G
+    cells = G.grid_cells()
+    grounded = next(c for c in cells if c.situation.evidence)
+    ungrounded = next(c for c in cells if not c.situation.evidence)
+    assert "MUST include realistic tool output" in G.build_user_turn(grounded, 3)
+    assert "must NOT contain tool output" in G.build_user_turn(ungrounded, 3)
+
+
+def _cells():
+    from pinpoint.llm import generate as G
+    cells = G.grid_cells()
+    return (next(c for c in cells if c.situation.evidence),
+            next(c for c in cells if not c.situation.evidence))
+
+
+def test_validate_rejects_invented_confidence_percentages():
+    from pinpoint.llm import generate as G
+    _, ungrounded = _cells()
+    body = "x" * 200
+    assert G.validate("q", f"I'm about 87% confident in this. {body}",
+                      ungrounded) == "invented confidence percentage"
+    assert G.validate("q", f"Confidence: 90% on this one. {body}",
+                      ungrounded) == "invented confidence percentage"
+
+
+def test_validate_rejects_verification_claims_without_evidence():
+    """The distillation failure mode that matters: a small model learning to
+    write 'I checked' without checking."""
+    from pinpoint.llm import generate as G
+    grounded, ungrounded = _cells()
+    claim = "I ran the test suite and the tests passed. " + "x" * 200
+    assert G.validate("q", claim, ungrounded) == \
+        "asserts verification with no evidence in prompt"
+    assert G.validate("q", claim, grounded) is None     # fine when shown output
+
+
+def test_validate_rejects_preamble_and_bad_lengths():
+    from pinpoint.llm import generate as G
+    _, ungrounded = _cells()
+    body = "x" * 200
+    assert G.validate("q", f"Great question! {body}", ungrounded) == \
+        "opens with filler preamble"
+    assert G.validate("q", "Sure.", ungrounded) == \
+        "response too short to demonstrate anything"
+    assert G.validate("q", "x" * 4000, ungrounded) == "response too long"
+    assert G.validate("q", "", ungrounded) == "empty prompt or response"
+
+
+def test_validate_dedupes_on_normalised_text():
+    from pinpoint.llm import generate as G
+    _, ungrounded = _cells()
+    seen = set()
+    body = "The mount point is not something I should assume. " + "x" * 200
+    assert G.validate("q", body, ungrounded, seen) is None
+    assert G.validate("q", body.replace(" ", "  "), ungrounded, seen) == \
+        "near-duplicate of an earlier example"
+
+
+def test_seed_examples_all_survive_their_own_filter():
+    """The filter must not reject the hand-written data it was modelled on."""
+    from pinpoint.llm import generate as G
+    grounded, ungrounded = _cells()
+    for framing in (P.ACCOUNTABILITY, P.SURVIVAL):
+        for turn in P.seed_turns(framing):
+            # Seeds are judged against the permissive (evidence-present) cell,
+            # since several of them do legitimately report checked results.
+            why = G.validate(turn.prompt, turn.response, grounded)
+            assert why is None, f"{framing}/{turn.behaviour}: {why}"
+
+
+def test_parse_examples_survives_malformed_payloads():
+    from pinpoint.llm import generate as G
+    assert G._parse_examples("not json") == []
+    assert G._parse_examples('{"examples": []}') == []
+    assert G._parse_examples('{"examples": [{"prompt": "a", "response": "b"}]}') == \
+        [("a", "b")]
+    # missing keys are dropped rather than crashing the run
+    assert G._parse_examples('{"examples": [{"prompt": "a"}]}') == [("a", "")]
+
+
+def test_cost_estimate_flags_itself_as_unmeasured_without_a_client():
+    """A cost figure that cannot say where it came from invites being trusted
+    as a measurement."""
+    from pinpoint.llm import generate as G
+    est = G.estimate_cost(5000, 5, P.ACCOUNTABILITY, batch=True)
+    assert est["token_count_measured"] is False
+    assert est["requests"] == 1000
+    assert est["estimated_usd"] > 0
+
+
+def test_batch_mode_is_cheaper_than_sync():
+    from pinpoint.llm import generate as G
+    batch = G.estimate_cost(1000, 5, P.ACCOUNTABILITY, batch=True)
+    sync = G.estimate_cost(1000, 5, P.ACCOUNTABILITY, batch=False)
+    assert batch["estimated_usd"] < sync["estimated_usd"]
+
+
+def test_validation_stats_render_reports_keep_rate():
+    from pinpoint.llm import generate as G
+    s = G.ValidationStats()
+    s.kept = 80
+    s.reject("invented confidence percentage")
+    s.reject("invented confidence percentage")
+    assert s.total == 82
+    out = s.render()
+    assert "kept 80/82" in out and "invented confidence percentage" in out
+
+
+def test_corpus_stats_counts_coverage(tmp_path):
+    from pinpoint.llm import generate as G
+    p = tmp_path / "c.jsonl"
+    p.write_text(
+        '{"behaviour": "verification", "situation": "report_result"}\n'
+        '{"behaviour": "verification", "situation": "partial_completion"}\n'
+        'MALFORMED\n'
+        '{"behaviour": "uncertainty", "situation": "report_result"}\n'
+    )
+    s = G.corpus_stats(str(p))
+    assert s["total"] == 3
+    assert s["behaviours"]["verification"] == 2
+    assert s["situations"]["report_result"] == 2
