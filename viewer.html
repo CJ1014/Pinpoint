@@ -44,6 +44,43 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     text-shadow: 0 0 6px #005588;
   }
+
+  /* ── AGI Architecture sidebar ─────────────────────────── */
+  #agi-panels {
+    position: fixed; top: 235px; right: 12px; width: 315px;
+    max-height: calc(100vh - 280px); overflow-y: auto; z-index: 20;
+    background: rgba(4, 10, 18, 0.88); border: 1px solid #0a3344;
+    border-radius: 8px; font-size: 11px; color: #9fd8cc;
+    scrollbar-width: thin; scrollbar-color: #0a3344 transparent;
+  }
+  #agi-header {
+    padding: 7px 10px; cursor: pointer; user-select: none;
+    color: #55ddcc; letter-spacing: 2px; font-size: 11px;
+    text-transform: uppercase; border-bottom: 1px solid #0a3344;
+    text-shadow: 0 0 8px #00aa99;
+  }
+  #agi-body.collapsed { display: none; }
+  .agi-panel { border-bottom: 1px solid #082430; }
+  .agi-panel:last-child { border-bottom: none; }
+  .agi-panel-head {
+    padding: 4px 10px; font-size: 10px; letter-spacing: 1.5px;
+    text-transform: uppercase; opacity: 0.95;
+  }
+  .agi-panel-body {
+    max-height: 130px; overflow-y: auto; padding: 4px 10px 8px;
+    line-height: 1.55; scrollbar-width: thin;
+  }
+  .agi-empty { color: #29564d; font-style: italic; }
+  .agi-bar-track {
+    display: inline-block; width: 76px; height: 6px; vertical-align: middle;
+    background: #06202a; border-radius: 3px; margin: 0 6px; overflow: hidden;
+  }
+  .agi-bar-fill { display: block; height: 100%; border-radius: 3px; }
+  .agi-row { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .agi-pruned { color: #cc5544; text-decoration: line-through; opacity: 0.75; }
+  .agi-conflict { color: #ffcc44; }
+  .agi-synth { color: #cfe; font-weight: bold; white-space: normal; }
+  .agi-card { margin: 3px 0; padding: 3px 6px; background: #06202a; border-radius: 4px; white-space: normal; }
 </style>
 </head>
 <body>
@@ -67,6 +104,19 @@
   <div><span class="legend-dot" style="background:#ff55cc;color:#ff55cc"></span>experiment</div>
   <div><span class="legend-dot" style="background:#00ffcc;color:#00ffcc"></span>self-mod</div>
   <div><span class="legend-dot" style="background:#ff7722;color:#ff7722"></span>error</div>
+</div>
+
+<div id="agi-panels">
+  <div id="agi-header">⯆ AGI Architecture</div>
+  <div id="agi-body">
+    <div class="agi-panel"><div class="agi-panel-head" style="color:#4dff9d">Goal Tree</div><div class="agi-panel-body" id="agi-goaltree"><span class="agi-empty">waiting for data…</span></div></div>
+    <div class="agi-panel"><div class="agi-panel-head" style="color:#b98cff">Verification</div><div class="agi-panel-body" id="agi-verify"><span class="agi-empty">waiting for data…</span></div></div>
+    <div class="agi-panel"><div class="agi-panel-head" style="color:#59a8ff">Multi-Frame Analysis</div><div class="agi-panel-body" id="agi-frames"><span class="agi-empty">waiting for data…</span></div></div>
+    <div class="agi-panel"><div class="agi-panel-head" style="color:#3fd6c4">Capabilities</div><div class="agi-panel-body" id="agi-capab"><span class="agi-empty">waiting for data…</span></div></div>
+    <div class="agi-panel"><div class="agi-panel-head" style="color:#ffab52">Checkpoints</div><div class="agi-panel-body" id="agi-ckpts"><span class="agi-empty">waiting for data…</span></div></div>
+    <div class="agi-panel"><div class="agi-panel-head" style="color:#ff6fd8">Values</div><div class="agi-panel-body" id="agi-values"><span class="agi-empty">waiting for data…</span></div></div>
+    <div class="agi-panel"><div class="agi-panel-head" style="color:#ff7a66">Oversight</div><div class="agi-panel-body" id="agi-oversight"><span class="agi-empty">waiting for data…</span></div></div>
+  </div>
 </div>
 
 <div id="latest-event"></div>
@@ -434,6 +484,176 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
 });
+
+// ── AGI Architecture panels — poll memory.json every 3s ─────
+(function () {
+  const hdr = document.getElementById('agi-header');
+  const body = document.getElementById('agi-body');
+  hdr.addEventListener('click', () => {
+    body.classList.toggle('collapsed');
+    hdr.textContent = (body.classList.contains('collapsed') ? '⯈' : '⯆') + ' AGI Architecture';
+  });
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  function barColor(v) { return v >= 0.7 ? '#3fd68a' : v >= 0.4 ? '#e8c33f' : '#e0604a'; }
+  function bar(v) {
+    const t = el('span', 'agi-bar-track');
+    const f = el('span', 'agi-bar-fill');
+    f.style.width = Math.round(Math.max(0, Math.min(1, v)) * 100) + '%';
+    f.style.background = barColor(v);
+    t.appendChild(f);
+    return t;
+  }
+  function setEmpty(node, msg) {
+    node.replaceChildren(el('span', 'agi-empty', msg || 'no data yet'));
+  }
+  function pct(v) { return Math.round((v || 0) * 100) + '%'; }
+
+  function renderGoalTree(mem) {
+    const node = document.getElementById('agi-goaltree');
+    const d = mem.active_goal_decomposition;
+    if (!d || !d.tree || !d.tree.goal) return setEmpty(node, 'no active decomposition');
+    node.replaceChildren();
+    (function walk(n, depth) {
+      if (!n || !n.goal) return;
+      const row = el('div', 'agi-row' + (n.pruned ? ' agi-pruned' : ''));
+      row.style.paddingLeft = (depth * 12) + 'px';
+      row.textContent = (depth ? '└ ' : '') + n.goal + ' (' + pct(n.confidence) + ')';
+      if (n.pruned && n.prune_reason) row.title = n.prune_reason;
+      node.appendChild(row);
+      (n.tasks || []).forEach(t => {
+        const tr = el('div', 'agi-row', '· ' + (t.action || String(t)));
+        tr.style.paddingLeft = ((depth + 1) * 12) + 'px';
+        tr.style.color = '#6fa8bb';
+        node.appendChild(tr);
+      });
+      (n.subgoals || []).forEach(s => walk(s, depth + 1));
+    })(d.tree, 0);
+  }
+
+  function renderVerify(mem) {
+    const node = document.getElementById('agi-verify');
+    const log = mem.verification_log;
+    if (!Array.isArray(log) || !log.length) return setEmpty(node);
+    node.replaceChildren();
+    const acc = mem.verification_patterns && mem.verification_patterns.verification_accuracy;
+    if (typeof acc === 'number') node.appendChild(el('div', 'agi-row', 'rolling accuracy: ' + pct(acc)));
+    log.slice(-5).reverse().forEach(v => {
+      const row = el('div', 'agi-row');
+      row.appendChild(el('span', null, (v.tool || '?') + ' '));
+      row.appendChild(bar(v.confidence || 0));
+      row.appendChild(el('span', null, pct(v.confidence)));
+      node.appendChild(row);
+      const iss = Array.isArray(v.issues) && v.issues[0];
+      if (iss) {
+        const ir = el('div', 'agi-row', '⚠ ' + iss);
+        ir.style.color = '#e0a04a';
+        node.appendChild(ir);
+      }
+    });
+  }
+
+  function renderFrames(mem) {
+    const node = document.getElementById('agi-frames');
+    const list = mem.multi_frame_analyses;
+    if (!Array.isArray(list) || !list.length) return setEmpty(node);
+    const a = list[list.length - 1];
+    node.replaceChildren();
+    const frames = a.frames || {};
+    Object.keys(frames).forEach(ft => {
+      const f = frames[ft] || {};
+      const card = el('div', 'agi-card');
+      card.style.opacity = String(0.55 + 0.45 * (f.confidence || 0.5));
+      card.appendChild(el('strong', null, ft + ' ' + pct(f.confidence) + ': '));
+      card.appendChild(el('span', null, String(f.analysis || '').slice(0, 90)));
+      node.appendChild(card);
+    });
+    (a.conflicts || []).forEach(c => {
+      node.appendChild(el('div', 'agi-conflict',
+        '⚡ ' + (c.frame_a || '?') + ' vs ' + (c.frame_b || '?') + ': ' + String(c.conflict || '').slice(0, 80)));
+    });
+    if (a.synthesis) node.appendChild(el('div', 'agi-synth', '→ ' + String(a.synthesis).slice(0, 160)));
+  }
+
+  function renderCapab(mem) {
+    const node = document.getElementById('agi-capab');
+    const cap = mem.capability_map;
+    const domains = cap && cap.domains;
+    if (!domains || !Object.keys(domains).length) return setEmpty(node);
+    node.replaceChildren();
+    Object.entries(domains).sort((x, y) => y[1] - x[1]).slice(0, 8).forEach(([name, v]) => {
+      const row = el('div', 'agi-row');
+      row.appendChild(el('span', null, name + ' '));
+      row.appendChild(bar(v));
+      row.appendChild(el('span', null, pct(v)));
+      node.appendChild(row);
+    });
+  }
+
+  function renderCkpts(mem) {
+    const node = document.getElementById('agi-ckpts');
+    const chain = mem.checkpoint_chain;
+    if (!Array.isArray(chain) || !chain.length) return setEmpty(node);
+    node.replaceChildren();
+    const active = mem.active_checkpoint_id;
+    chain.slice(-5).reverse().forEach(id => {
+      const row = el('div', 'agi-row', (id === active ? '● ' : '○ ') + String(id).slice(0, 34));
+      if (id === active) row.style.color = '#ffd27a';
+      node.appendChild(row);
+    });
+  }
+
+  function renderValues(mem) {
+    const node = document.getElementById('agi-values');
+    const v = mem.values;
+    if (!v) return setEmpty(node);
+    const merged = Object.assign({}, v.seed_values || {});
+    (v.derived_values || []).forEach(d => { if (d && d.name) merged[d.name] = d.weight; });
+    if (!Object.keys(merged).length) return setEmpty(node);
+    node.replaceChildren();
+    Object.entries(merged).sort((x, y) => y[1] - x[1]).forEach(([name, w]) => {
+      const row = el('div', 'agi-row');
+      row.appendChild(el('span', null, name + ' '));
+      row.appendChild(bar(w));
+      row.appendChild(el('span', null, (w || 0).toFixed(2)));
+      node.appendChild(row);
+    });
+    (v.value_evolution || []).slice(-3).forEach(evo => {
+      node.appendChild(el('div', 'agi-row',
+        '↕ ' + (evo.value || '?') + ' ' + (evo.old ?? evo.old_weight ?? '?') + '→' + (evo.new ?? evo.new_weight ?? '?')));
+    });
+  }
+
+  function renderOversight(mem) {
+    const node = document.getElementById('agi-oversight');
+    const log = mem.human_interventions;
+    if (!Array.isArray(log) || !log.length) return setEmpty(node);
+    node.replaceChildren();
+    log.slice(-5).reverse().forEach(i => {
+      const ts = String(i.timestamp || '').slice(11, 16);
+      const mark = i.approved === true ? ' ✓' : i.approved === false ? ' ✗' : '';
+      node.appendChild(el('div', 'agi-row',
+        '[' + ts + '] ' + (i.event_type || '?') + ': ' + (i.tool || i.agent_action || '') + mark));
+    });
+  }
+
+  async function pollAGI() {
+    try {
+      const r = await fetch('memory.json?_=' + Date.now());
+      if (!r.ok) return;
+      const mem = await r.json();
+      renderGoalTree(mem); renderVerify(mem); renderFrames(mem);
+      renderCapab(mem); renderCkpts(mem); renderValues(mem); renderOversight(mem);
+    } catch (_) { /* keep polling — file appears after first memory save */ }
+  }
+  setInterval(pollAGI, 3000);
+  pollAGI();
+})();
 </script>
 </body>
 </html>
