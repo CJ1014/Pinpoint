@@ -2,3 +2,20 @@ openai
 httpx
 sounddevice
 numpy
+
+# v4 local model — training and corpus generation.
+# Absent by default: PinPoint reports the local engine as unavailable
+# rather than falling back to a remote provider.
+# anthropic     # generating persona training data with Claude
+# torch         # training the local model
+# transformers  # GPT-2 architecture and tokenizer
+
+# Development
+pytest
+
+# Optional — enable extra capabilities. PinPoint reports these as unavailable
+# and offers a workaround when they are absent, rather than pretending.
+# pyautogui   # keyboard and mouse control
+# pillow      # screenshots
+# mss         # screenshots (alternative)
+# edge-tts    # speech output
