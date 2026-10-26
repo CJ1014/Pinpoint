@@ -17,6 +17,8 @@ PRESETS = {
     "gpt2":        dict(n_layer=12, n_head=12, n_embd=768,  params=124_000_000),
     "gpt2-medium": dict(n_layer=24, n_head=16, n_embd=1024, params=355_000_000),
     "gpt2-large":  dict(n_layer=36, n_head=20, n_embd=1280, params=774_000_000),
+    "llama2-13b":  dict(n_layer=40, n_head=40, n_embd=5120, params=13_000_000_000),
+    "llama2-70b":  dict(n_layer=80, n_head=64, n_embd=8192, params=70_000_000_000),
 }
 
 
@@ -38,7 +40,22 @@ class ModelConfig:
             raise ValueError(f"unknown preset {name!r}; have {sorted(PRESETS)}")
         p = {k: v for k, v in PRESETS[name].items() if k != "params"}
         p.update(overrides)
-        return cls(init_from=name, **p)
+
+        # Map preset names to HuggingFace model names
+        hf_map = {
+            "gpt2": "gpt2",
+            "gpt2-medium": "gpt2-medium",
+            "gpt2-large": "gpt2-large",
+            "llama2-13b": "meta-llama/Llama-2-13b-hf",
+            "llama2-70b": "meta-llama/Llama-2-70b-hf",
+        }
+        init_from = hf_map.get(name, name)
+
+        # Set vocab size for Llama 2
+        if name.startswith("llama2"):
+            p["vocab_size"] = 32000
+
+        return cls(init_from=init_from, **p)
 
     def validate(self) -> None:
         if self.n_embd % self.n_head:
@@ -46,7 +63,9 @@ class ModelConfig:
                 f"n_embd ({self.n_embd}) must divide evenly by n_head "
                 f"({self.n_head}); got remainder {self.n_embd % self.n_head}"
             )
-        if self.n_positions > 1024 and self.init_from != "scratch":
+        # Llama models handle longer positions; only GPT-2 is limited to 1024
+        is_gpt2 = self.init_from.startswith("gpt2")
+        if self.n_positions > 1024 and is_gpt2 and self.init_from != "scratch":
             raise ValueError(
                 f"n_positions={self.n_positions} exceeds the 1024 learned "
                 f"position embeddings in pretrained {self.init_from}. Either "
